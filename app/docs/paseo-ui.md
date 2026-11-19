@@ -1,0 +1,537 @@
+# The Paseo UI
+
+The chat app of YYC AI and of Jarvis 4's chat (chat.deyaochen.com) is the Paseo app (getpaseo/paseo, Apache-2.0),
+copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not kept in sync with upstream
+(Deyao, 2026-10-26): change it as this fork's own code. It is one build for every deployment (see "Branding").
+
+```
+browser, or the YYC AI iOS app (paseo/packages/app; the web export is the `pigeon-app` image)
+   │  /paseo-ws: Paseo's WebSocket protocol (paseo/packages/protocol messages.ts)
+   │  /api/jarvis/...: REST for what the protocol has no message for (uploads, files, sharing, warming, /me, tasks)
+   ▼
+pigeon (DE0CH/aviary crates/pigeon: the gateway that speaks both), in front of magpie and hermit
+```
+
+How pigeon maps a conversation onto Paseo's host, project, workspace and agent, and each protocol message it
+answers, is pigeon's own documentation (DE0CH/aviary `crates/pigeon/README.md`, `src/paseo/`). This repo's CloudCLI
+server (`server/`) serves no deployment.
+
+## What changed in the app (paseo/packages/app)
+
+- **Connection**: the page connects back to its own origin (`runtime/host-runtime.ts`
+  `readPageOriginConnectionHint`) on `/paseo-ws` (`protocol/src/daemon-endpoints.ts`); no host setup, no pairing. When
+  the server cannot be reached, `app/welcome.tsx` says so and offers a retry.
+- **Signed out (web, YYC AI)**: only some paths are behind Cloudflare Access (DE0CH/yyc-code tofu `access.tf`
+  `staff_ai_paths`); a visitor without a valid Access token gets the built app and nothing else, its `index.html`
+  marked `<meta name="yyc-signed-out" content="1">`. `yyc/access-gate.tsx` then renders `yyc/signed-out-shell.tsx`
+  instead of the app: the new-chat layout with the composer disabled and 「登入」 buttons, with no host runtime, socket
+  or API call. 「登入」 opens `/api/jarvis/signin?next=<page>` (behind Access: Access's login, then a 302 back to the
+  page, now signed in).
+- **Language**: zh-HK (generated from Paseo's zh-CN with OpenCC, HK vocabulary) and English only; any Chinese or
+  unknown system locale gets zh-HK. YYC's own wording is an override layer, `i18n/resources/yyc.ts`; new strings of
+  this fork live under `conversation.*` in `en.ts`/`zh-HK.ts`.
+- **A conversation's status spot** in the list (`components/sidebar/workspace-status-indicator.tsx`; Deyao,
+  2026-11-17, design A): the ring while a reply runs, a blue dot while background tasks run after it (pigeon's
+  `backgroundTasks`, magpie's `held`), a clock while a schedule is armed (`nextScheduleAt`), the grey dot otherwise;
+  background tasks win over the clock.
+- **Layout**: a flat list of conversations (no project row, `components/sidebar-workspace-list.tsx`), home is a new
+  chat (`utils/host-routes.ts` `buildOpenProjectRoute`), no tab row (`WorkspaceDesktopTabsRow` renders nothing), no
+  project/host/mode pickers, explorer, editor, scripts, hover card or fork button; the composer has no voice,
+  `@` file completion or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
+  (`provider-selection/resolve-agent-form.ts`); where the model chip was, one button names the conversation's model and thinking
+  level and opens a menu (`yyc/model-menu.tsx`, its state in `yyc/model-menu-state.ts`): the models of the provider
+  snapshot with an (i) beside the title (ask the admin for more), then a thinking row with one position for every
+  level any model has. The row is the same for every model, so nothing moves when the model changes: a level the
+  chosen model lacks is disabled in place, and a model with no levels greys the whole row. The web menu is as
+  wide as the row needs (`menuWidth`, at least 272 px): each equal cell holds the widest level label as it renders
+  (measured by `yyc/model-menu-levels.tsx` `LevelLabelProbe` beside the button, so it fits any language and font)
+  with a menu row's 8 px each side. Like every menu, it opens with focus on its surface, not its first row, so no
+  row looks hovered until the pointer is on it (the arrow keys start from there). A conversation keeps its
+  own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next reply on: while a reply still runs on
+  another model the button says both, 「Fable 5.2 → Opus 5.5」, from the snapshot's `runtimeInfo.model`); a new conversation starts
+  on the default model at that model's own level, whatever was chosen last. A model may run in another agent
+  program than the others (the snapshot's `metadata.harness`; the programs keep separate sessions): picking one that
+  moves a conversation with messages asks first (`yyc/harness-switch-store.ts`, the dialog
+  `yyc/harness-switch-dialog.tsx` in the hosts chunk: Continue / Cancel), and during that conversation's next turn
+  the working indicator says 「正在總結至今的對話…」 (`yyc/harness-switch-label.ts`): the reply begins with a summary of
+  the conversation so far. Typing and sending are never held back.
+- **Developer controls hidden** (staff are not developers; each is a constant or a server_info feature, so the
+  upstream code path stays): the composer's 「新增 issue 或 PR」 GitHub picker (only with `features.forgeSearch`, which
+  the server never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
+  `EXPLORER_ENABLED`: no swipe, shortcut or stored layout opens it); every key-chord hint, including the composer's
+  「⌘L 聚焦」 and the Alt number badges (`components/ui/shortcut.tsx` `SHOW_SHORTCUT_HINTS`); the key handler binds only
+  new chat, search, settings, the sidebar, stop and the composer's keys (`keyboard/keyboard-shortcuts.ts`
+  `chatAppBindings`). 搜尋 is a conversation search: the palette offers 新對話, 最近刪除 and 設定, lists each
+  conversation once and searches no files (`command-center/root-registration.tsx`, `SHOW_WORKSPACE_COMMANDS`,
+  `SHOW_AGENT_CONTROL_COMMANDS`, `SEARCH_FILES`). Settings: 一般 is the language only; what sending during a reply
+  does is fixed (`composer/input/state.ts` `chatSendBehavior`): where the server keeps the conversation's queue
+  (pigeon's `midTurn`) every message goes out at once and the queue above the message box is the server's list
+  (`yyc/server-queue.ts`: the same on every device; a text message joins the running reply after its next tool
+  result, one with attachments is held until the reply ends and can be taken back; "send now" stops the reply);
+  elsewhere a message waits in the app's own queue until the reply ends; 外觀 is 淺色 /
+  深色 / 系統, the two text sizes and the content width (`SHOW_DEVELOPER_APPEARANCE`: no code fonts, syntax theme, diff
+  preview, CSS font stack, brand or plugin themes).
+- **A message the server has not confirmed** (Deyao, 2026-11-17, design A): every send goes into the outbox
+  (`yyc/outbox.ts`, `yyc/outbox-store.ts`), kept on the device (AsyncStorage `yyc-outbox`) until the server answers;
+  the message box is free again at once. The chat draws it at half strength with a clock and 「傳送中」, after 5 s
+  「等待網絡，連線後自動傳送」 with 取消 (`yyc/pending-send.tsx`); one sent during a reply is drawn the same way in the
+  queue above the message box. A failed connection keeps it, and it is sent again, in order and with the same
+  `clientMessageId` (magpie admits an id once), when the host comes online, when the outbox loads after a reload,
+  and 15 s after a failed try; the server's refusal or 取消 takes it out of the chat and puts its text back into an
+  empty message box (a refusal also shows its error there).
+- **Touch targets** (Deyao, 2026-11-18, design B): on a phone (the compact layout, below `md`) every control is at least
+  a finger's 44 px either way; from `md` up controls keep their desktop sizes. One number, `TOUCH_TARGET`, and
+  `touchSize(desktop)` (a Unistyles breakpoint value, `components/ui/control-geometry.ts`) size the shared buttons, fields,
+  switches and segmented controls; icon buttons (`components/ui/icon-button-chrome.ts`) are 44 x 44 with their glyph a
+  size up (16 to 20, 14 to 18); menu rows (`MENU_ITEM_HEIGHT`), the "/" list, tool and step rows are 44 tall. The
+  message box's +, model button and send are 44 tall and send/stop draw a 36 px disc inside their 44 px target (the box
+  grows 4 px). Small things that sit on a line of text (copy buttons, 「工作了」, the schedule and activity chips,
+  「取消」) are 44 px targets drawn as before: negative margins give the space back, so no line moves. The check is
+  `scripts/touch-targets/check.mjs DIST [OUT]` (run by `pigeon-app.yml` on every export): the export served with a
+  stand-in for pigeon (`stand-in.mjs`, pigeon's recorded answers in `pigeon-answers.json`, the sample conversations of
+  `content.mjs`), every screen and state opened on a 390 px touch phone in Chromium and every control measured; one
+  under 44 px fails it by screen, label and size. A new screen or state is a new entry in its `STATES`. An inline link
+  inside running text is exempt (WCAG 2.5.8). A question asked about a model pick (the harness switch) closes the model
+  menu first: left open, its backdrop took the first tap on 繼續 or 取消.
+- **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
+  settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
+  `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
+  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. Signed-out shell, share
+  page, 最近刪除 and the loading skeleton take the same values as the screens they stand for.
+- **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
+  `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
+  `/api/assets/files` the moment a file or a picture is attached (`yyc/asset-upload.ts`, XMLHttpRequest for the bytes
+  sent: the chip draws a bar along its foot, `components/upload-overlay.tsx`, its own chunk, and the send waits for it;
+  Deyao, 2026-11-18). A picture goes up as an image (`?kind=image`, `uploadAttachedImage`) and the send names it by
+  `images[].uploadId` (an empty `data` beside it, so every listed app build accepts the frame) instead of carrying its
+  bytes, so a send between replies and one during a reply carry the same small message and never wait on the store.
+  A picture that fails to upload leaves the message box with the server's sentence, as a file does (sending its bytes
+  instead waited on the same store and showed only as 「等待網絡」: Jarvis's chat, 2026-11-18, its bucket unreachable);
+  one uploaded over 23 h ago (magpie keeps an unsent upload a day), or to a pigeon before `?kind=image` (its answer
+  names no upload: YYC AI and the Jarvis chat move their pins apart), is sent with its bytes (`attachments/service.ts`
+  `encodeAttachmentsForSend`, `uploadAttachedImage`). The uploader is a chunk of its own, fetched when something is
+  attached; the entry keeps only `yyc/upload-progress.ts`. The entry was at 1,099.5 KB of its 1,100 KB budget
+  (2026-11-18): the upload's 1.6 KB went over it, so the uploader, the chip's upload overlay and the queue's rows
+  (`composer/queue-rows.tsx`: a queue shows only after a send during a reply) are their own chunks, the "preparing the workspace" chip (`sandbox-status.ts`,
+  `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
+  Deyao, 2026-11-03; a start that waits for the person's approval elsewhere, hermit's phase `approval`, says
+  "waiting for your approval" instead: the message's `waiting`, `nextPreparing`; a socket that connects again starts
+  with no chips and pigeon says again which are still preparing, so a `ready` sent while an iPhone app was in the
+  background does not leave the chip up), the history's images (paths on the server, `/api/blobs/…`) read from the
+  server with the iOS app's Access token (`serverImageSource`, used by every attachment image), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
+  `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`: the server sends the snapshot as timeline
+  rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
+  own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
+  (`screens/workspace/conversation-menu-items.tsx`).
+- **No New chat where the deployment starts conversations** (Deyao, 2026-11-11): `/api/jarvis/me` `newConversations:
+  false` (pigeon, from hermit's `conversations.peopleCreate`; Jarvis 4, whose sessions start in the Jarvis 4 app) greys
+  out the sidebar's 新對話, drops it from the palette and the shortcut, and `/new` says where conversations start
+  (`me.ts` `useNewConversationsAvailable`, `new-workspace-screen.tsx`).
+- **Sent files show on the call that sent them**: the SendUserFile call, or any tool call whose metadata carries
+  `sentFiles` (an agent program without that tool sends from a shell command). The cards stand for the call (a
+  command that sent files shows as its cards, not as a command row), and the call is treated the same wherever it
+  is drawn (`yyc/sent-files-text.ts` `isSentFilesCall`): never folded into a group of tool calls
+  (`tool-calls/detail-level/grouping.ts`) nor into a finished turn's summary, where its cards stay under the reply,
+  the turn folded or opened (`agent-stream/turn-collapse/model.ts`), live and from the history alike. The caption
+  over the cards is the send's: `sentCaption` on the call's metadata, whichever tool sent the files, else the
+  SendUserFile call's own `caption` input, for a server that puts no caption on the metadata (`readSentCaption`).
+- **Sent files keep their version** (Deyao, 2026-10-28): each file card carries the id of the call that sent it
+  (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
+  that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
+  file).
+- **View as** (Deyao, 2026-10-28; YYC AI only, served by pigeon): the operator page's
+  「View as」 opens the app in a new tab at `/#jarvis-view-as=<token>`. `yyc/view-as.ts` keeps the token in that tab's
+  sessionStorage (the admin's other tabs stay themselves) and adds it as `?jarvis_view_as=` to every `apiUrl` (REST,
+  file links) and the web socket (`runtime/websocket-factory.web.ts`, also used by the startup connection check in
+  `utils/test-daemon-connection.ts`, whose client can become the live one); the server answers as the person, so the
+  list, conversations, files and shares are theirs. The tab keeps the person's replica cache in an
+  IndexedDB of its own (`paseo-replica-row-store.view-as.<email>`) and their last conversation under its own key, so it
+  never starts from the admin's cached list nor writes into it. The tab is read-only: the message box shows its text
+  without an input, the composer's send (button, Enter, queue) and the new-conversation entries (sidebar 新對話
+  dimmed, the palette item, the shortcut) do nothing, and typing warms nothing. `yyc/view-as-box.tsx` above the composer is the one box only the admin sees (English, "Visible
+  only to you"): whose view it is, and the override switch (off on every load; the box turns red while on) that lets
+  the admin send and start conversations as the person. The messages look like the person's own.
+- **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
+  server writes the instance's product name into the page title. The app's own text says "YYC AI"; where the server
+  names another product (the page's `apple-mobile-web-app-title` meta, `/api/jarvis/me` `product`) every mention is
+  that name (`yyc/product.ts`: the translations through an i18next post-processor).
+- **Activity** (Deyao, 2026-11-12; `yyc/activity.tsx`, the approved mock): what a conversation runs beside its reply
+  (a background command, a subagent, a workflow, a monitor). A chip in the header (「n running」, a still icon; absent
+  until the conversation has run one) opens a 340 px panel docked beside the chat as the schedules panel is (full
+  screen with a back arrow on a phone): one section per task with its type, how long it has run, what it does now, a
+  subagent's step count and Stop; the finished ones below with their result. Nothing in it moves except the clock.
+  Data: `GET /api/jarvis/sessions/<id>/tasks`, `POST …/tasks/<taskId>/stop` (aviary's pigeon); a server without the
+  route shows no chip.
+- **Slash commands**: a message that starts with `/` opens a list over the message box of what the server answers
+  to `list_commands_request` (aviary: the commands and skills the conversation's Claude Code names, known once its
+  first reply has started), narrowed as the name is typed; ↑/↓ move, Enter, Tab or a click write the name into the
+  message, which is sent as any other. A `/` further into the text (after a space) lists only the entries of kind
+  `skill` (aviary: the project's skills and commands, which the agent takes by name anywhere in a message; its own
+  commands, `/compact` and the like, it reads only at a message's start). The list shows only when it has something
+  in it: a new chat, a `/` inside a path and a name no command has show no box, and Enter sends. The names the app runs itself when they are
+  sent (`client-slash-commands/`: `/clear`, `/new`, `/exit`, `/quit`, `/q` end the conversation) are not in the list,
+  the server's commands of those names included. The mode's switches are `showCommandAutocomplete`,
+  `showFileAutocomplete` and `showClientCommands` (`composer/input-mode.ts`); the wiring is
+  `composer/autocomplete-binding.tsx`, whose browser test mounts it against a server that answers as pigeon does.
+  A browser test of anything that reads the host runtime replaces `@/runtime/host-runtime` with `vi.mock`, as that
+  one does: the tests' server neither scans nor compiles past it (`vitest.config.ts`), since the host runtime imports
+  most of the app.
+- **Pinned conversations** (Deyao, 2026-11-19, design A): 置頂 / 取消置頂 is the first item of a conversation's ⋯ menu
+  (the sidebar row's and the header's, `screens/workspace/conversation-menu-items.tsx`, `useActiveWorkspacePin`).
+  Pinned conversations sit in Paseo's own 「已置頂」 section above 「對話」 (`components/sidebar-workspace-list.tsx`,
+  `hooks/use-sidebar-pins.ts`: the most recent pin first, the header folds it), each with its status spot like any
+  row (no project icon). The pin is the server's: `workspace.pin.set` and the workspace's `pinnedAt` (pigeon, from
+  magpie's M5 `pinned`), offered while `server_info` has `features.workspacePinning`, so it follows the person to
+  every device. The touch-target walk pins and unpins through both menus and checks the section.
+- **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
+  `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
+  entry; an agent's `closed` (a sentence: its session is paused) makes the message box read-only with that sentence
+  as its placeholder and nothing can be sent. A conversation the deployment ended just leaves the list.
+
+## Schedules (Deyao, 2026-11-06)
+
+YYC AI arms a message to be posted into the conversation once or on a repeating rule, through a REST API its managed
+skill `schedules` teaches (magpie's `/v1/sandbox/schedules`, DE0CH/aviary). The app shows them without buttons (changes
+go through the chat):
+
+- the API call (a `curl` the AI runs) as a card, 「已設定排程：每個工作日 08:30」 and the next time
+  (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall from the call's output);
+  like sent-file cards it is never folded into a group or a finished turn's summary (isScheduleCallDetail);
+- a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
+  (ScheduledMessage);
+- 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
+  from `GET /api/jarvis/sessions/<id>/schedules` (pigeon answers it).
+
+Claude Code's own CronCreate, CronList, CronDelete and ScheduleWakeup are disallowed in Jarvis mode
+(`JARVIS_DISALLOWED_TOOLS`). A message written into a running turn (`injectClaudeSDKMessage`: Claude Code takes it in at
+its next tool result or when the model stops) shows in the history from Claude Code's `queued_command` attachment.
+
+A run's outcome in the panel: 已回覆 once the conversation answered the fired message (`answered`,
+`answered_mid_turn`), 已送出，等待回覆 until then (`sent`, `sent_mid_turn`), 已送出，未有回覆 when that turn failed or
+was stopped (`unanswered`), and the skips (服務暫停，已略過 …).
+
+## Questions and waits in the chat (Deyao, 2026-11-18)
+
+**Per deployment (Deyao, 2026-11-19)**: the cards show only where the deployment turns them on (hermit's
+`features.personCards`, pigeon's `GET /api/jarvis/me` `personCards`, `usePersonCardsAvailable`). Off, the presentation
+(`agent-stream/presentation.ts`, `cardsMetadata`) leaves a card's own row out and strips the read copies, so a call that
+read an answer is an ordinary step, as before the cards. They first went live everywhere at once and misbehaved (a
+question drawn twice: fixed in `types/stream.ts` `applyTimelineTurnId`; "Not read yet" for sessions on an older
+supervisor: a card with no marker now shows answered where it was asked).
+
+A question the AI asked with `ask`, or a command's wait on the person for something outside the chat (Jarvis 4's
+Inbox requests), is one card in the history (`yyc/person-cards.tsx`, read by `yyc/person-cards-text.ts`; design: the
+approved three-state mock):
+
+- **Waiting on you:** yellow, where it was asked; a question's options are in the answer card at the bottom, which is
+  unchanged.
+- **Answered, not read yet:** still where it was asked, the answer filled in, a hollow mark and "Not read yet".
+- **Read:** on the tool call whose result first carried the answer into the AI's context (the asking command itself
+  when it waited; otherwise wherever the AI read it, e.g. a background task's output), its header saying when it was
+  asked when that was more than five minutes before.
+
+Where each shows is the server's (aviary magpie rule 11): the card's own row carries `metadata.personAsk` (nothing is
+drawn once its `readBy` is set) and the reading call carries `metadata.personRead`. Both are pinned like sent files: never
+grouped, and kept above the reply when a turn folds (`agent-stream/turn-collapse`).
+
+## Loading
+
+Deyao's order (2026-10-29): a message box people can type in at once, then the connection, then the reply's display
+(markdown, code highlighting), then the conversation list, everything else only when used; send waits for the app
+("Wait for the app") and for the reply's display ("so nothing goes out before its reply can render"). Decide by
+measuring; test on a throttled connection. So:
+- **The page frame in `public/index.html`** (`#boot`): the app's own layout (sidebar rows, logo, greeting line, the
+  message box; compact below 600px; light and dark from `styles/theme.ts`; the logo inline SVG) in plain HTML, painted
+  before any script arrives. React replaces it on its first render; while the app is still connecting,
+  `screens/startup-splash-screen.tsx` draws the same frame again (from `window.__yycBootFrame`, saved by the page;
+  marked `data-yyc-loading`; inside the app's main column, beside its sidebar, without the frame's own sidebar), so
+  the page goes frame -> app without the logo screen. Keep it in step when the layout changes.
+- **The message box is always at the bottom** (Deyao, 2026-10-29: "so it doesn't shift"): on every page and screen
+  size the composer sits at the bottom of the main column, 16 px from the edges, at most `theme.contentMaxWidth` wide
+  (the content-width setting, 820 px by default; the frame reads it as `--b-col-w`), 116 px tall
+  (104 px below 720px), as in a conversation. The new-chat screen (`screens/new-workspace-screen.tsx`, the dock never
+  centred) and the signed-out screen (`yyc/signed-out-shell.tsx`, whose 「登入」 overhangs a 28 px row) put the
+  logo and greeting just above it (the greeting a set 28 px line, `yyc/hero.ts`); the frame draws the same rows
+  (signed out, `html.yyc-out`, its second line too; conversation pages, `html.yyc-conv`, the box alone) and the
+  sidebar at the saved width, closed, or hidden by focus mode on a workspace route (`panel-state`), also in view-as
+  tabs and the desktop build (only the early box is skipped there); share pages (`html.yyc-share`) draw neither
+  sidebar nor box. Measured at 1440x900, 390x844, 700 and 650 wide: frame,
+  early box and app box within 1 px; the logo too. A conversation that is still loading (`agent-loading` in
+  `panels/agent-panel.tsx`) is a loading area, so the early box stays until the composer is there, over a hidden
+  `ComposerSlot` (`components/loading-frame.tsx`, `data-yyc-box`) that the box follows on a resize. The conversation
+  page's own loading frame (`WorkspaceLoadingFrame`) draws the box at the composer's place, so a send or a drawer tap
+  before its chunk arrives never leaves the page without one; if the chunk cannot be fetched it shows a Reload button.
+- **Installed on a phone** (Chrome on Android: menu, 「加到主畫面」 / "Add to Home screen", 「安裝」 / "Install"; the
+  native Android app, "The Android app" below, is installed from its APK instead): the deployment's `/branding/manifest.json` (Branding below; the bundle's neutral one is
+  `public/branding/manifest.json`) meets Chrome's install criteria (name, `start_url` and `scope` `/`,
+  `display: standalone`, 192 and 512 px icons that also serve as maskable ones: full-bleed, the mark inside the
+  middle 80%), with no `orientation`, so a tablet or a foldable turns freely. No service worker: Chrome asks for
+  none, and the app does nothing offline. The manifest and icons are outside Access, so the signed-out page installs
+  too; sign-in then runs inside the installed window. **The status bar of the installed app**: Chrome paints it with
+  the page's `theme-color` unless that is brighter than about `#eeeeee` (white is ignored), then with the manifest's
+  `theme_color`; in the system's dark scheme it paints its own `#121318` whatever both say. So the manifest's
+  `theme_color` is the light theme's background (`#ffffff`; a deployment's manifest keeps it), and the page's
+  `theme-color` is the page's background: one meta per system scheme in `index.html`, set to the saved theme's by
+  the early script and to the live theme's `surface0` by `appearance/system-bars.web.tsx` (a dark theme picked in
+  the app on a light phone gets its dark bar that way). Tests: `yyc/web-manifest.test.ts`,
+  `appearance/theme-color.test.ts`; the deployed site on an emulator's Chrome: workflow `yyc-web-install`
+  (`scripts/web-install/emulator_test.py`; claude-env `yyc-ai` skill, "Android app (APK) and the site installed from Chrome").
+- **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
+  send button over the frame's message box, typable before any script (font, line height and padding from
+  `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
+  inline script exposes `window.__yycEarly`; `yyc/early-input.web.ts` hands the text to the app's message box: the
+  first focused composer whose draft has loaded takes the live text and selection in one layout effect (after an IME
+  composition ends) and the box goes. A stored draft is never overwritten (the early text goes after it on a new line).
+  On a phone with the keyboard up the swap waits for the next tap or typed character (a script may only move the
+  keyboard inside one), with the box over the real one, which already holds a copy of the text (no focus), so the app's
+  own send button shows: a typed character swaps once it has landed in the box (its `input` event, after an IME
+  composition ends; never from keydown, which Android keyboards send before the character); a tap on the box itself
+  moves the keyboard over; a first tap anywhere else (the send button, the list, a menu; caught in the capture phase,
+  before it acts) or the box losing focus hands the text over without the keyboard; a composer that unmounts after
+  that point drops the box, its text kept for its own page only. Enter sends only on wide layouts, through the
+  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready: every
+  composer's send (new chat and conversation, desktop and phone, a view-as tab with the override on) stays off
+  until the reply's display has arrived (`useReplyDisplayReady` in `loading/stages.ts`: the reply chunk and the
+  highlighter; a failed fetch is tried again by itself, 1 s, 2 s ... at most 30 s apart), and an Enter or tap before
+  that does nothing and leaves the text where it is; the new-chat composer's send also waits until the connection is
+  open and the server's projects have arrived (`screens/new-workspace/send-ready.ts`), and a refused send's line
+  sits above the box, which stays put. A deep link
+  in a browser that never ran the app (no saved host) shows the connecting frame until the page's own server has
+  answered or the startup wait gives up, then opens (`navigation/host-runtime-bootstrap.ts`, host routes).
+  The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
+  `yyc/early-input-routes.ts`, equal to the page's, and a test classifies every route file: a new route file must be
+  placed there), on the welcome, signed-out and share screens, and 1.5 s after the app shows something other than the
+  connecting frame or a loading area (`data-yyc-loading`, a lazy main area; the sidebar's placeholder is not one, the
+  box never sits there); never during an IME composition or while an adoption waits for one to end. Its text then
+  stays in sessionStorage for that page, or `/new` within 60 s; only taking it clears it, and text not yet handed over
+  comes back in the box after a refresh of the same page. Skipped when signed out, in view-as tabs and in the desktop
+  build.
+- **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
+  bootstrap and the stages start when the entry runs (`index.ts`, with `runtime/host-runtime-start.ts`; never on a
+  signed-out page), and the page's language arrives meanwhile as its own chunk (`i18n/translations.web.ts`: the
+  saved language, read before the first render as the early box does, `i18n/initial-locale.ts`; zh-HK 31 KB, en 26 KB;
+  every key is in both, `resources.test.ts`; the fallback is the language loaded at start, already in the store, so a
+  switch that fails shows it rather than raw keys; another language is fetched when chosen and the page keeps the
+  current one until it lands; a failed fetch goes through `loadWithRetry`, then is tried again with a backoff capped
+  at 30 s, never given up); React renders once the language's text is in the store (`index.ts` loads it again until
+  it is; the frame and the early box are there and typable until then; native has both languages in its bundle). Stage 1 starts once the
+  server-message validator has arrived or failed: first the reply's display alone (the reply chunk,
+  `loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx`, the markdown renderer and the KaTeX and Mermaid
+  loaders, with the code highlighter beside it), which turns send on (each through `loadWithRetry`, then tried again
+  with a backoff capped at 30 s and at once on the browser's `online` event; after three failed rounds, or an error
+  the chunk threw, the composer shows a line and a Reload button beside its disabled send,
+  `ReplyDisplayLoadFailed`); stage 2, once stage 1 has settled: the sidebar chunk (`loading/sidebar-chunk.ts`), then
+  the conversation page's chunk (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels
+  and git actions; after the list, since a send or a conversation route fetches it at once anyway; before it, the list
+  came 0.5 s later on Slow 4G); stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
+  mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
+  (the host chooser, `hosts/host-chooser-modal.tsx`, whose store is `hosts/host-chooser.tsx`, and the host
+  confirmation; YYC's conversation rename/share/delete, their store `yyc/conversation-dialog-store.ts`), the download toast,
+  the sidebar callouts, the legacy skills migration). The entry keeps the new-chat screen (the landing page) and its
+  composer. A lazy area that is merely rendered waits for its stage
+  (`agent-stream/lazy-view.tsx`, `components/markdown/lazy-renderer.tsx`, `components/lazy-left-sidebar.tsx`, each with
+  its own Suspense, so the composer beside the timeline is there at once), except the conversation page, which fetches
+  its chunk as it renders (it holds that page's message box; a loading frame keeps the early box meanwhile); a send
+  fetches the reply and conversation chunks at once (`loadChunksForSend`), opening the phone drawer the sidebar. Native
+  has one bundle and starts at stage 3.
+- **Chunks fetched only when used** (Metro splits every `import()` into its own file; `utils/lazy-with-retry.ts` tries
+  a failed fetch three times, each a new fetch (`loading/stages.ts` forgets a failed import), then reloads the page, at
+  most once in ten minutes per tab (the mark is never cleared by another chunk loading, so one blocked file cannot
+  loop); a chunk that throws while it evaluates is not retried; `ChunkErrorBoundary` keeps a failed fetch local and
+  passes any other error on to `RootErrorBoundary`; `components/lazy-area.tsx`
+  wraps a component as `lazyArea`, or `lazySheet` for one fetched when first visible): the settings, schedules, sessions,
+  open-project and QR-scan screens (`screens/lazy-screens.tsx`), the diff panels (`panels/diff-panel-views.tsx`), the
+  file tree, the file-type icons (`components/material-file-icon.tsx`), the catalog providers' icons
+  (`components/provider-catalog-icons.ts`), the import-session sheet, the agent profile editor and its settings section,
+  the context window details with the usage cards, the image viewer (`components/lazy-attachment-lightbox.tsx`), the
+  voice mode's thinking tone (`voice/voice-runtime.ts`), the pull request view, the built-in file views
+  (Markdown preview, source, images), the Mermaid + KaTeX diagram runtime (`fence/mermaid/iframe-runtime.web.tsx`), the
+  terminal (`panels/terminal-panel.tsx`), KaTeX for inline math (`markdown-runtime/enriched-markdown-katex.ts`, aliased in
+  `metro.config.cjs`; the renderer has math off), the relay's end-to-end encryption (`client/src/daemon-client.ts`,
+  only for an encrypted relay connection: fetched when such a client is made, awaited before the old transport is
+  disposed, and bounded like the validator by the connect timeout, so a stalled fetch fails the attempt and it retries),
+  and the full Lucide set (`plugins/icons.ts`, the first time a plugin's Lucide icon is drawn, never when a plugin is
+  only checked; a plugin's icon name is checked only for its shape, so a plugin is accepted the same before and after
+  the set arrives; a failed fetch is forgotten and the next draw fetches again), the model browser's view
+  (`components/lazy-model-browser.tsx`; its hook is `components/model-browser-state.tsx`), the composer's agent
+  controls (`composer/agent-controls/lazy.tsx`; YYC's composer never draws them) and context window meter (drawn into
+  its fixed 28 px slot), its pull request / issue picker (`composer/forge-picker.tsx`), the dictation and voice
+  overlays (drawn over the input, so nothing moves), the plugin attachment picker's Combobox, the plugin evaluator with its UI kit (`plugins/registry.ts` `loadPluginEvaluator`, fetched by
+  `plugins/catalog-sync.tsx` only for a catalog with client bundles) and a plugin's own screen (its route). Forge icons
+  come from `git/forges/brands.ts`, not the PR-pane view modules. A split pane that has never been shown mounts
+  nothing (`components/split-container.tsx`), so the hidden explorer's diff views are not fetched.
+- **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
+  `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
+  each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The same patch
+  drops from a lazy chunk the modules that every chunk importing it has surely defined by then (its own or its
+  importers' ancestors'; an import from the entry leaves only what the entry holds), so a chunk fetched from another
+  lazy chunk carries only what is new (the diff panels 80 KB inside the conversation page, the grammars below). The
+  cost is bytes in sibling lazy chunks, so a module several lazy areas use is reached through one `import()` of its
+  own instead (the code highlighter below). Native has no chunks and is unaffected.
+- **Code highlighting loads per language** (`utils/highlight-grammars.ts`): the highlighter (`@getpaseo/highlight`,
+  about 15 KB) is one chunk shared by the reply's code blocks and tool calls, the settings preview and the source
+  view, fetched the first time any code renders; each language family's grammar is its own chunk
+  (`packages/highlight/src/grammars/`, `loadGrammarForFile`), fetched through the grammar loader
+  (`packages/highlight/src/grammar-families.ts`, 10 KB, its own chunk with the Lezer runtime every grammar uses, so
+  a grammar's chunk is the grammar alone) when code in that language first renders
+  (`useGrammarReady` re-renders the block; a failed fetch is retried with backoff while code still waits). Until then
+  the code shows plain, in the same font and lines (token styles are colours only; a Read's line-number gutter is
+  there from the first frame, also for languages with no grammar), so nothing moves. Swift, Dart, C# and Nix are CodeMirror languages and share one chunk
+  with `@codemirror/language`; the editor wraps the others (`@getpaseo/highlight/codemirror`), so the package's main
+  entry has no CodeMirror. Every value import of `@getpaseo/highlight` goes through the loader: a static one would
+  copy it into that chunk.
+- **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
+  colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
+  (`loading/zod-locales.ts`); gesture handler's legacy Hammer.js web implementation, never enabled, resolves to a stub
+  on web (`loading/gesture-handler-hammer.js`, `metro.config.cjs`), and so does Reanimated's development-only
+  worklets version check (`loading/reanimated-worklets-version.js`, which kept semver in the entry);
+  react-native-web's older `@react-native/normalize-colors` resolves to the app's one; no Buffer polyfill on web
+  (base64 and UTF-8 through `utils/bytes.ts`; the Buffer-based TextEncoder/TextDecoder fallback is
+  `polyfills/text-codec-fallback.native.ts`); the plugin requirements check (semver) comes with the plugin evaluator's
+  chunk; the desktop browser automation handler and the released-host usage icons are fetched when used; the new-chat
+  screen has no setup form (it was never drawn).
+- **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
+  from the moment the client module loads; a connect waits for it only while it is still on its way, at most the
+  connect timeout (a failed fetch is forgotten, so the next attempt fetches again)
+  (`client/src/daemon-client.ts` `loadWSOutboundValidator`; client tests load it in `src/test-setup.ts`).
+- **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
+  `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
+- **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
+  checks the entry (at most 1,100 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
+- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,093 KB, under the budget; 1,119 KB
+  with the attach menu's surface, the forge icons and expo-document-picker/expo-file-system; 1,141 KB with Buffer,
+  semver, the desktop browser automation handler and the usage icons; 1,241 KB with both
+  languages, the composer's pickers and overlays, the host sheets and the gesture handler's Hammer.js; 1,512 KB before
+  the conversation page, the plugin evaluator, the agent controls and the rest left it, 2,273 KB with `__common`,
+  3,102 KB before the stages); with it the page's language (zh-HK 31 KB or en 26 KB) and the validator 278 KB; then
+  the reply chunk 360 KB with the highlighter 15 KB (send turns on), the sidebar 178 KB, the conversation chunk
+  248 KB, the hosts 102 KB; a grammar per language when code first shows (the loader 10 KB once, then 1-50 KB each;
+  Swift/Dart/C#/Nix 154 KB). Lazy chunks carry their own copies of modules the entry no longer holds (the sidebar grew
+  from 88 KB; the menu engine, 16 KB, is in the reply, sidebar, conversation and attach-menu chunks). The attach menu's surface and
+  items are their own chunk (`composer/input/attachment-menu-content.tsx`, 19 KB), fetched at stage 3 or on the
+  first hover or press of the attach button, whichever comes first; the button and the menu's state stay in the
+  composer. The web picks files with a file input, so the native document picker is behind
+  `hooks/document-picker-files.ts` (`.web.ts` is a stub). What remains is the app shell (expo-router with React
+  Navigation, react-native-web, react-dom, Reanimated with its layout animations, gesture handler, bottom sheet,
+  keyboard controller, unistyles: about half), the protocol and zod, the host runtime, its stores and the new-chat
+  screen with its composer (its autocomplete and dictation hooks). Expo's tree shaking
+  (`EXPO_UNSTABLE_TREE_SHAKING` with `EXPO_UNSTABLE_METRO_OPTIMIZE_GRAPH`) is untried: its export ran out of memory
+  in an 8 GB session.
+  Timings, cold, Chrome's Slow 4G, desktop, the page served locally through `brotli-proxy.mjs` with no server behind it
+  (so no connection; 140ed041 -> 9e7c6bf6 -> now): the early box takes keys at 0.6-1.2 s in all three, the entry 8.1 ->
+  7.5 -> 7.45 s, the validator 10.7 -> 10.3 -> 10.2 s, the reply chunk requested as the validator lands and the reply
+  display (send on, once connected) 14.5 -> 12.9 -> 12.9 s, the conversation chunk 14.8 s, the sidebar 16.3 s, the
+  hosts 17.5 s (phone the same within 0.1 s). Earlier, signed in through a
+  test router (140ed041): typable 0.65 s, composer 11.6 s, send 12.6 s, reply chunk 15.0 s, list 16.5 s.
+- Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
+  `brotli-proxy.mjs`.
+
+## Branding
+
+The app is one build for every deployment. What names a deployment to the eye is a set of files under `/branding/`
+of the server (`paseo/packages/app/src/yyc/brand.ts` `BRAND_FILES`): `logo.png` (square, transparent, 512 px: the
+launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`, `favicon-running.png`,
+`favicon-attention.png` (the tab icon and its two states), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`
+(home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
+(`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
+when it deploys pigeon (YYC: DE0CH/yyc-code `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
+`k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only a native build's
+home-screen name, icon and launch image are build-time files (`app.config.js` `variants`, "The iOS app").
+
+## The iOS app
+
+The same `paseo/packages/app`, built natively once per deployment (`app.config.js` `variants`, picked by
+`APP_VARIANT`): **YYC AI** (`production`, `dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used to ship) and
+**Jarvis Chat** (`jarvis-chat`, `dev.de0ch.jarvis4chat`, Jarvis 4's chat; the TestFlight record "Jarvis 4 Chat").
+A variant holds only what a build cannot ask its server: the home-screen name, the bundle id (also the URL scheme
+the sign-in returns to), the icon and launch image, the product's name before the server has said it, and the texts
+of iOS's permission prompts. Jarvis Chat's icon (`assets/images/jarvis-chat-icon.png`: a chat bubble with the
+Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-icon`. What differs from the web build:
+
+- **Server**: the build's `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). YYC AI's is a build
+  secret (the repo is public, so its address appears nowhere in it or in CI logs); Jarvis Chat's is in the workflow.
+- **Sign-in**: Cloudflare Access before anything connects (`yyc/access-gate.tsx`). The server's
+  `/api/jarvis/app-signin` hands the Access token back on the app's scheme (the deployment's hermit names the scheme:
+  `signIn.appScheme`); it is kept in the Keychain (`yyc/access-token.ts`) and sent as `cf-access-token` and the
+  `CF_Authorization` cookie on REST and the socket (`runtime/websocket-factory.ts`). An expired token sends the app
+  back to the sign-in screen.
+- **Launch screen**: expo-router hides iOS's launch screen once its navigator is ready, and the sign-in screen is drawn
+  before the router mounts, so the gate hides it itself when it shows sign-in (`yyc/launch-screen.ts`); without that
+  Jarvis Chat's launch image stayed over its sign-in screen. The simulator test taps Sign in for this reason: covered
+  views are still in the accessibility tree, so a text check passes under the launch screen.
+- **Name and logo before sign-in**: the sign-in screen shows before any server has answered, and a server may sit
+  behind Access as a whole (Jarvis 4's chat). The name starts as the variant's `productName` (`yyc/product.ts`
+  `initialProductName`); the logo is the build's launch image until somebody is signed in, then the server's
+  `/branding/logo.png` asked for with the Access token (`yyc/native-brand.ts`).
+- **Files**: downloaded into the app and handed to the share sheet (`yyc/open-file.ts`).
+- **Camera**: the attach menu's first item on a phone, 「影相」 / "Take photo", opens the system camera
+  (`hooks/camera-photo.ts`, expo-image-picker; no expo-camera plugin) and attaches the photo like a picked image.
+  The prompts' texts are the variant's (`cameraPermission`, `photosPermission`).
+- **Taps** (`yyc/haptics.ts`): a light one when a message goes out, a firmer one when the reply is stopped, the
+  system's "done" when the reply of the conversation on screen ends. Nothing on the web.
+- **Not there**: push notifications.
+- **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI apps' 1.0); the build number is the CI
+  run.
+
+`.github/workflows/yyc-ios.yml` builds both (a matrix) on GitHub macOS runners on every push touching `paseo/`
+(`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there
+and taps Sign in up to iOS's sign-in prompt,
+an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
+`YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first
+exercised on TestFlight.
+
+## The Android app
+
+The same native app as the iPhone's, built for Android once per deployment by `.github/workflows/yyc-android.yml`
+(the variants of "The iOS app": YYC AI `dev.de0ch.yycai`, Jarvis Chat `dev.de0ch.jarvis4chat`) as a signed release
+APK, arm64, installed from the file (no Play Store; Deyao, 2026-11-19, for his Galaxy Z Fold). What the iPhone app
+does for comfort is the shared code's, with Android's own half: the message box rides on the keyboard
+(`keyboard/shift/internal/translate.android.tsx`, react-native-keyboard-controller, the window `adjustResize` and edge
+to edge), a flick down on the conversation puts the keyboard away (`agent-stream/scroll-keyboard-dismiss`), the edge
+swipe for the conversation list, pull to refresh, the camera in the attach menu and the taps (`yyc/haptics.ts`).
+Sign-in is the iPhone's: `/api/jarvis/app-signin` in a Chrome Custom Tab, back on the app's scheme.
+
+- **A foldable**: folding switches screens, which changes the window's size, smallest width and density. MainActivity
+  lists all of them in `configChanges` (`plugins/with-android-foldable.js`), so a fold re-lays the app out instead of
+  recreating the activity, which would restart React Native and lose the conversation, the draft and the keyboard. The
+  iPhone's portrait lock is not applied on Android: unfolded, a book-style foldable is a small tablet that turns freely,
+  and at 600 dp and wider the conversation list docks beside the chat (`constants/layout.ts`).
+- **Icon**: the adaptive icon's foreground per variant (`androidIcon` in `app.config.js`), the mark inside the middle
+  72 of 108 dp that every launcher's mask keeps.
+- **Signing and updates**: each variant has its own key (secrets `YYC_ANDROID_UPLOAD_KEYSTORE`, the old WebView app's,
+  so it installs over that one, and `JARVIS_CHAT_ANDROID_KEYSTORE`; each with its `_PASSWORD`; alias `upload`;
+  `plugins/with-android-release-signing.js`). The versionCode is the version's times 1000 plus the CI run
+  (`ANDROID_BUILD_NUMBER`), so every build installs over the one before.
+- **Out of CI**: Jarvis Chat's APK is the artifact `jarvis-chat-android`; YYC AI's carries the YYC_SITE secret, so it is
+  `yyc-ai-android-encrypted`, age-encrypted to `YYC_ANDROID_CI_AGE_KEY`'s recipient.
+- **The emulator test** (the matrix's `replica`): Jarvis Chat built with `YYC_SITE=http://127.0.0.1:8787`, the stand-in
+  for pigeon (`scripts/touch-targets/stand-in.mjs`, which with `appScheme` also answers the app's sign-in), on a
+  foldable emulator profile. `scripts/android-app/emulator-test.mjs` signs in, opens a conversation, checks that the
+  message box sits on the keyboard, types, flicks the keyboard away, then unfolds and folds between the Galaxy Z Fold7's
+  screens (cover 1080 x 2520, main 1968 x 2184, density 420; `wm size`, the same configuration change a fold sends)
+  and on the emulator's own hinge, checking the app kept its process, conversation and text, the docked list on the
+  main screen and the box on the keyboard in landscape. Artifact `android-emulator-test`: a screenshot per step,
+  `keyboard-cover.mp4`, the UI dumps, `results.json`, `logcat.txt`.
+
+## Build and run
+
+- `npm --prefix paseo ci` once (its own workspace and lockfile), then `npm run build` builds the app into `dist/`
+  (`scripts/build-paseo-ui.mjs`, about 20 minutes on 4 cores) and the server. Metro needs a big heap for the 10 MB
+  generated protocol validator: the script gives it 6 GB and `build:web` runs 3 workers. On a machine with 8 GB, stop
+  anything else heavy first.
+- A change to `paseo/packages/protocol` needs `npm --prefix paseo run build:protocol` (it regenerates the validators)
+  before the app typechecks against it.
+- For pigeon (DE0CH/aviary), `.github/workflows/pigeon-app.yml` packs the web export into
+  `ghcr.io/de0ch/pigeon-app:<commit 12>`. The image also holds the hashed chunks of recent builds and of every ui image
+  served in the last 720 h, and the workflow checks the app against pigeon's frames: `scripts/pigeon-app/README.md`.
+
+## Tests
+
+- Server: `server/modules/paseo/tests/` (tsx --test), in `npm test`.
+- App: `.github/workflows/paseo-ui.yml` typechecks the app and runs every suite of `paseo/packages` (the app's unit
+  and browser projects, protocol, client, relay, highlight, plugin) and the bridge's, on every push touching them;
+  `pigeon-app.yml` and `yyc-ios.yml` call it and build only after it passes. YYC AI is test-first: a change starts with
+  a test that fails without it. Language tests use zh-HK, the fork's second language (`fr`/`ja`/… are not shipped).
+- Protocol replies: capture a session's frames with a browser (Playwright `page.on('websocket')`) and parse each
+  server frame with `WSOutboundMessageSchema` from `paseo/packages/protocol/dist/messages.js`; zero failures is the
+  bar for a bridge change.
