@@ -1,7 +1,7 @@
 //! The app shell (spec 5.2.2): `index.html` for every page path, signed in or not, changed only by the product
 //! name in `<title>` and the app-title meta and, when nobody is signed in, the signed-out meta before `</head>`.
 //! Every other byte is served as built (the early message box and its inline script included). The admin's raw
-//! view is a chip in the app's own header (claudecodeui `yyc/raw-transcript.tsx`), not a script added here.
+//! view is a chip in the app's own header, not a script added here.
 
 use std::sync::{Arc, Mutex};
 

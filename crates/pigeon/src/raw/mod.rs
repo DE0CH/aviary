@@ -18,8 +18,8 @@
 //!   admin's first read per conversation and day in the view-as log).
 //! - `GET <compat::SESSIONS><id>/transcript?after=<ord>&<compat::VIEW_AS_QUERY>=…`: the same cells for a view-as
 //!   identity, from magpie's `GET /v1/conversations/{id}/transcript`.
-//! - The way in is the app's own "Raw transcript" chip in a view-as tab's header (claudecodeui
-//!   `yyc/raw-transcript.tsx`), which opens `/raw/<id>?back=<the page>`.
+//! - The way in is the app's own "Raw transcript" chip in a view-as tab's header, which opens
+//!   `/raw/<id>?back=<the page>`.
 
 pub mod cells;
 pub mod qwen;
