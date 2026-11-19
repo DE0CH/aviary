@@ -10,7 +10,13 @@ describe("meOf", () => {
       conversationDelete: true,
       midTurn: false,
       modelPick: false,
+      personCards: false,
     });
+  });
+
+  it("shows the question and wait cards only where the server says so", () => {
+    expect(meOf({ personCards: true }).personCards).toBe(true);
+    expect(meOf({ personCards: "yes" }).personCards).toBe(false);
   });
 
   it("a deployment that starts and ends every conversation itself offers no new one and no delete", () => {

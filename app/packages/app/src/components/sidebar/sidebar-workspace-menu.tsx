@@ -37,7 +37,9 @@ import {
 import {
   CONVERSATION_MENU_WIDTH,
   DELETE_ICON,
+  PIN_ICON,
   RENAME_ICON,
+  UNPIN_ICON,
   SHARE_ICON,
 } from "@/screens/workspace/conversation-menu-items";
 import { openConversationDialog } from "@/yyc/conversation-dialog-store";
@@ -160,6 +162,16 @@ function SidebarWorkspaceMenuItems({
   // labels or folders to act on.
   return (
     <>
+      {onTogglePin ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-pin-${workspaceKey}`}
+          leading={isPinned ? UNPIN_ICON : PIN_ICON}
+          onSelect={onTogglePin}
+        >
+          {isPinned ? t("conversation.menu.unpin") : t("conversation.menu.pin")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onRename ? (
         <WorkspaceMenuItem
           surface={surface}

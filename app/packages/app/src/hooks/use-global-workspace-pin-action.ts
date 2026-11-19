@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useSidebarWorkspacePinController } from "@/hooks/use-sidebar-workspace-pin";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
@@ -16,7 +16,11 @@ const WORKSPACE_PIN_ACTIONS: readonly KeyboardActionId[] = ["workspace.pin"];
 // "Active workspace" means the route selection, not a focused pane. Those are equivalent today
 // (panes belong to the routed workspace, and /settings parses to no selection, which correctly
 // disables the handler). Revisit this if panes ever span workspaces.
-export function useGlobalWorkspacePinAction() {
+/**
+ * The routed conversation's pin: whether it is pinned and the toggle, or null where the host does not pin or there
+ * is no conversation. Shared by the shortcut and the conversation header's ⋯ menu (置頂 / 取消置頂).
+ */
+export function useActiveWorkspacePin(): { pinned: boolean; toggle: () => boolean } | null {
   const selection = useActiveWorkspaceSelection();
   const serverId = selection?.serverId ?? null;
   const routeWorkspaceId = selection?.workspaceId ?? null;
@@ -54,11 +58,18 @@ export function useGlobalWorkspacePinAction() {
     return true;
   }, [canPin, fields, serverId, togglePin]);
 
+  const available = serverId !== null && fields !== null && canPin;
+  const pinned = fields?.pinnedAt != null;
+  return useMemo(() => (available ? { pinned, toggle: handle } : null), [available, pinned, handle]);
+}
+
+export function useGlobalWorkspacePinAction() {
+  const pin = useActiveWorkspacePin();
   useKeyboardActionHandler({
     handlerId: "workspace-pin-global",
     actions: WORKSPACE_PIN_ACTIONS,
-    enabled: serverId !== null && fields !== null && canPin,
+    enabled: pin !== null,
     priority: 0,
-    handle,
+    handle: () => pin?.toggle() ?? false,
   });
 }

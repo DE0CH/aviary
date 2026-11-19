@@ -27,6 +27,11 @@ export interface Me {
    * `conversations.peoplePickModel`). False: the model menu shows the choice and changes nothing.
    */
   modelPick: boolean;
+  /**
+   * The conversation shows a question to the person and a wait on the person as a card (pigeon's `personCards`;
+   * hermit's `features.personCards`; yyc/person-cards.tsx). False: those rows are left out.
+   */
+  personCards: boolean;
 }
 
 const DEFAULT_ME: Me = {
@@ -36,6 +41,7 @@ const DEFAULT_ME: Me = {
   conversationDelete: true,
   midTurn: false,
   modelPick: false,
+  personCards: false,
 };
 let loadedMe: Me | null = null;
 
@@ -49,6 +55,7 @@ interface MeBody {
   product?: unknown;
   midTurn?: unknown;
   modelPick?: unknown;
+  personCards?: unknown;
 }
 
 /** What the server's answer says: what it offers stays on unless it says no, what is new stays off unless it says yes. */
@@ -60,6 +67,7 @@ export function meOf(body: MeBody | null | undefined): Me {
     conversationDelete: body?.conversationDelete !== false,
     midTurn: body?.midTurn === true,
     modelPick: body?.modelPick === true,
+    personCards: body?.personCards === true,
   };
 }
 
@@ -104,6 +112,21 @@ export function useModelPickAvailable(): boolean {
     let live = true;
     void loadMe().then((me) => {
       if (live) setAvailable(me.modelPick);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return available;
+}
+
+/** Whether the conversation shows the question and wait cards: false until the server says so (`personCards`). */
+export function usePersonCardsAvailable(): boolean {
+  const [available, setAvailable] = useState(loadedMe?.personCards ?? false);
+  useEffect(() => {
+    let live = true;
+    void loadMe().then((me) => {
+      if (live) setAvailable(me.personCards);
     });
     return () => {
       live = false;
