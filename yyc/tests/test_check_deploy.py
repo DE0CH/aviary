@@ -263,7 +263,7 @@ class Seeded(unittest.TestCase):
 
     def test_unknown_secret_key(self):
         self.expect(lambda o: container(find(o, "Deployment", "hermit"), "hermit")["env"].append(
-            {"name": "HERMIT_X", "valueFrom": {"secretKeyRef": {"name": "hermit", "key": "HERMIT_X"}}}), 2, "not in infra/secrets.txt")
+            {"name": "HERMIT_X", "valueFrom": {"secretKeyRef": {"name": "hermit", "key": "HERMIT_X"}}}), 2, "not in yyc/secrets.txt")
 
     def test_max_unavailable(self):
         self.expect(lambda o: find(o, "Deployment", "tools")["spec"]["strategy"]["rollingUpdate"].update(maxUnavailable=1), 3, "maxUnavailable 0")

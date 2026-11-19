@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """YYC AI's own checks of the new stack's render (yyc-ai.yml job check; yyc/refactor spec-platform 13.3 items 2-4,
 6, 8, 13 and 25.5, WP-31). Stdlib only. Reads the render as JSON (`kustomize build F | yq ea -o=json '[.]'`), the
-folder's files and infra/secrets.txt; network checks (item 4's registry and release lookups) only with --online.
+folder's files and yyc/secrets.txt; network checks (item 4's registry and release lookups) only with --online.
 
   check_deploy.py --folder yyc/deploy --render render.json [--online]
 
 Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it asserts:
   2  no switches: pigeon and magpie take env only from Secrets and the downward API, no envFrom, no ConfigMap volume,
      args exactly [serve]; every env of every yyc-ai workload is a secretKeyRef whose Secret and key are a line of
-     infra/secrets.txt, or a fieldRef (no literal value)
+     yyc/secrets.txt, or a fieldRef (no literal value)
   B  branding: deploy/branding/ holds exactly the app's branding files, ConfigMap pigeon-branding carries them all and
      pigeon's initContainer `branding` copies it into the bundle's /branding/ after the bundle (the one ConfigMap
      volume item 2 lets pigeon have; never mounted into the pigeon container); the manifest's theme_color is white
@@ -53,15 +53,15 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      sandbox rules name /drive; the edge (drive/edge.json, the Worker's settings) names the drive
      as the server's --name does
   A  addresses: the access catalogue is people's mail addresses, so it is a Secret sealed from the store
-     (infra/secrets.txt, YYC_CATALOGUE_JSON), never a file or a ConfigMap of this folder: a workload's volume
+     (yyc/secrets.txt, YYC_CATALOGUE_JSON), never a file or a ConfigMap of this folder: a workload's volume
      `catalogue` is a Secret, no ConfigMap of the render and no .json file of the folder is a catalogue (JSON with a
      list `users`)
 """
 import argparse, json, os, re, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# YYC's cluster and its Secrets list are DE0CH/yyc-code's (infra/secrets.txt, news-stream/deploy/clusters/talos): a
-# checkout of it, YYC_CODE (yyc.yml and deploy.yml check it out), default ./yyc-code beside this repository's root
+# YYC's cluster files are DE0CH/yyc-code's (news-stream/deploy/clusters/talos): a checkout of it, YYC_CODE (yyc.yml
+# and deploy.yml check it out), default ./yyc-code in this repository's root
 YYC_CODE = os.environ.get("YYC_CODE", os.path.join(ROOT, "yyc-code"))
 GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180, "herald": 330, "drive": 120, "cloudflared": 200,
          "pg-forward": 60}
@@ -87,7 +87,7 @@ def qty(v):
 
 def secrets_map():
     out = {}
-    for ln in open(os.path.join(YYC_CODE, "infra", "secrets.txt")):
+    for ln in open(os.path.join(ROOT, "yyc", "secrets.txt")):
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
@@ -150,7 +150,7 @@ def check_env(o, secrets):
             elif "secretKeyRef" in vf:
                 r = vf["secretKeyRef"]
                 if r["key"] not in secrets.get(f'{o["metadata"]["namespace"]}/{r["name"]}', set()):
-                    fail(2, sid(o), f"env {n}: Secret {r['name']} key {r['key']} is not in infra/secrets.txt")
+                    fail(2, sid(o), f"env {n}: Secret {r['name']} key {r['key']} is not in yyc/secrets.txt")
             elif "fieldRef" not in vf:
                 fail(2, sid(o), f"env {n} is neither a secretKeyRef nor a fieldRef")
 

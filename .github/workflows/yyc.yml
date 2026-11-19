@@ -1,0 +1,108 @@
+name: yyc
+# YYC AI's deployment (yyc/: yyc/deploy and its checks; it was DE0CH/yyc-code's yyc-ai.yml job check), on every branch
+# that touches it: the gate merges only when it is green, and deploy.yml applies main (docs/DEPLOY.md). The render is
+# of the folder with this commit's tags written in (aviary-deploy yyc: the images' tags, hermit.json's release and
+# sandbox digest, gateway.release), so the checks see what main would deploy. YYC's cluster files and seal.py with the
+# cluster's certificate are DE0CH/yyc-code's (a checkout of its main); the map of YYC AI's Secrets is yyc/secrets.txt.
+on:
+  push:
+    branches: ['**']  # every branch: the gate waits for it
+    paths: [yyc/**, deploy/images.json, tools/aviary-deploy/**, .github/workflows/yyc.yml]
+  schedule:
+    - cron: "41 3 * * *"  # the ZDR guard daily: OpenRouter's endpoint lists change without a commit
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: yyc-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+env:
+  FOLDER: yyc/deploy
+  SEALED: yyc/deploy/sealed
+  NAMESPACES: yyc-ai,yyc-ai-fabric
+  SEALED_AS: system:serviceaccount:yyc-deploy:sealed-secrets-applier
+  # kubeconform's schemas: Kubernetes' own, then the CRDs (SealedSecret, CloudNativePG, CiliumNetworkPolicy, ...)
+  CRDS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+  YYC_CODE: ${{ github.workspace }}/yyc-code
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # the catalogue (people's addresses) is the `checks` environment's secret, never a file in git
+    environment: checks
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {fetch-depth: 0, filter: "blob:none"}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/yyc-code, path: yyc-code, persist-credentials: false}
+      - uses: ./yyc-code/.github/actions/k8s-tools
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: "tools/aviary-deploy\nyyc-code/tools/yyc-apply"}
+      - name: aviary-deploy and yyc-apply
+        run: |
+          cargo build --locked --release --manifest-path tools/aviary-deploy/Cargo.toml
+          cargo build --locked --release --manifest-path yyc-code/tools/yyc-apply/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp tools/aviary-deploy/target/release/aviary-deploy yyc-code/tools/yyc-apply/target/release/yyc-apply "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: this commit's tags in the folder
+        # the images of a part that changed on this branch are built by the part's workflow, which may still run:
+        # wait for them (a part that did not change has its images already)
+        run: |
+          set -euo pipefail
+          aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
+          cat "$RUNNER_TEMP/tags.json"
+          for i in $(seq 1 90); do
+            if aviary-deploy digests "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; then break; fi
+            [ "$i" = 90 ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
+            echo "waiting for: $(cat "$RUNNER_TEMP/digests.err")"; sleep 60
+          done
+          aviary-deploy yyc "$FOLDER" "$RUNNER_TEMP/tags.json"
+          git diff --stat -- "$FOLDER"
+      - name: render and validate (item 1)
+        run: |
+          set -euo pipefail
+          kustomize build "$FOLDER" > render.yaml
+          yq ea -o=json -I=0 '[.]' render.yaml > render.json
+          kubeconform -strict -summary -kubernetes-version 1.36.5 -schema-location default -schema-location "$CRDS" render.yaml
+      - name: switches, zero-downtime shape, pins, policies, gateway config, placement, sizes, one cluster (2-4, 6, 8, 13)
+        run: python3 yyc/tests/check_deploy.py --folder "$FOLDER" --render render.json --online
+      - name: the checks catch their planted violations
+        env: {RENDER: render.json}
+        run: |
+          set -euo pipefail
+          python3 yyc/tests/test_check_deploy.py
+          python3 yyc/tests/test_zdr_violations.py
+          python3 yyc/tests/test_openrouter_guardrail.py
+          python3 yyc/tests/test_system_prompt.py
+          # bridges.sh against a real HAProxy (the bridge box's)
+          sudo apt-get update -qq && sudo apt-get install -y -qq haproxy >/dev/null
+          python3 yyc/tests/test_bridges.py
+      - name: sealed folder (item 5)
+        run: python3 yyc-code/infra/seal.py --check --names-only --allow-unsealed --root . --map yyc/secrets.txt
+      - name: catalogue (item 7, this commit's hermit's own check)
+        env:
+          CATALOGUE: ${{ secrets.YYC_CATALOGUE_JSON }}
+        run: |
+          set -euo pipefail
+          [ -n "$CATALOGUE" ] || { echo "::error::the secret YYC_CATALOGUE_JSON is not set (environment checks)"; exit 1; }
+          tag=$(jq -r .hermit "$RUNNER_TEMP/tags.json")
+          mkdir -p "$RUNNER_TEMP/hermit"
+          crane export "ghcr.io/de0ch/hermit:$tag" - | tar -x -C "$RUNNER_TEMP/hermit" usr/local/bin/hermit
+          (umask 077; printf '%s' "$CATALOGUE" > "$RUNNER_TEMP/catalogue.json")
+          # hermit's words name the entry at fault: printed with every address masked
+          code=0; "$RUNNER_TEMP/hermit/usr/local/bin/hermit" catalogue-check "$RUNNER_TEMP/catalogue.json" > "$RUNNER_TEMP/catalogue-check.txt" 2>&1 || code=$?
+          sed -E 's/[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+/<address>/g' "$RUNNER_TEMP/catalogue-check.txt"
+          rm -f "$RUNNER_TEMP/catalogue.json" "$RUNNER_TEMP/catalogue-check.txt"
+          exit "$code"
+      - name: deployer rights, sealed folder, trailers, no cluster-level objects (9-12)
+        run: |
+          set -euo pipefail
+          base=$(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1)
+          access=(--access yyc-code/news-stream/deploy/clusters/talos/yyc-ai-access.yaml --access yyc-code/news-stream/deploy/clusters/talos/sealed-secrets.yaml)
+          yyc-apply check --folder "$FOLDER" --sealed "$SEALED" --namespaces "$NAMESPACES" --sealed-as "$SEALED_AS" \
+            "${access[@]}" --secrets yyc/secrets.txt --commits "$base..HEAD"
+      - name: zero data retention guard
+        run: python3 yyc/tests/test_zdr.py
