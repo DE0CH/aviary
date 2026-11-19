@@ -623,7 +623,8 @@ jobs:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a
     # running pigeon (crates/pigeon/tests/contract_server.rs) driven by the apps' client package and timeline reducers
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 30 cut the suite off on 54b0760d (2026-11-19; clients.yml's same suite ran 28 min): every listed build is checked
+    timeout-minutes: 60
     env:
       PASEO_CONTRACT_CACHE: ${{ github.workspace }}/../paseo-contract-cache
     defaults:
@@ -795,6 +796,9 @@ jobs:
       TAG: aviary-${{ needs.tags.outputs.aviary }}
       IMAGE: ghcr.io/de0ch/jarvis4-session:pin-aviary-${{ needs.tags.outputs.aviary }}
     steps:
+      # this commit (E2E_HERMIT_JARVIS builds its jarvis/hermit), then jarvis4 beside it
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
       - name: the release and its sandbox image, by digest, into the session image's aviary.json
@@ -845,6 +849,7 @@ jobs:
           JARVIS2_FLY_TOKEN: ${{ secrets.REPLICA_FLY_TOKEN }}
           E2E_HARNESS: aviary
           E2E_SESSION_IMAGE: ${{ env.IMAGE }}
+          E2E_HERMIT_JARVIS: ${{ github.workspace }}/jarvis/hermit
           E2E_LOGS: /tmp/e2e-aviary-logs
         run: |
           [ -n "$JARVIS2_FLY_TOKEN" ] || { echo "::error::secret REPLICA_FLY_TOKEN is missing from the GitHub environment 'checks'"; exit 1; }
@@ -870,6 +875,9 @@ jobs:
       SESSION: ghcr.io/de0ch/jarvis4-session:pin-aviary-${{ needs.tags.outputs.aviary }}
       FABRIC: ghcr.io/de0ch/jarvis4-session-fabric:pin-aviary-${{ needs.tags.outputs.aviary }}
     steps:
+      # this commit (E2E_HERMIT_JARVIS builds its jarvis/hermit), then jarvis4 beside it
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
       - name: free disk space (the session image and the fabric image, unpacked)
@@ -919,6 +927,7 @@ jobs:
           E2E_HARNESS: aviary
           E2E_FABRIC_IMAGE: ${{ env.FABRIC }}
           E2E_SESSION_IMAGE: ${{ env.SESSION }}
+          E2E_HERMIT_JARVIS: ${{ github.workspace }}/jarvis/hermit
           E2E_LOGS: /tmp/e2e-fabric-logs
         run: |
           (cd rust && cargo build --release --locked -p e2e-kernel)
