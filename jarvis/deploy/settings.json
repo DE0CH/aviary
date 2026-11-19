@@ -1,6 +1,7 @@
 {
   "product": { "name": "Jarvis 4", "locale": "en" },
   "signIn": { "appScheme": "dev.de0ch.jarvis4chat" },
+  "features": { "personCards": true },
   "smallModel": "claude-haiku-5-5",
   "embedding": {
     "id": "qwen/qwen3-embedding-8b",
