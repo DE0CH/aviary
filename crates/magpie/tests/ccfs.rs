@@ -1273,6 +1273,30 @@ async fn a_lease_never_records_hermits_answer_over_a_newer_feed_record() {
         .await
         .unwrap();
     let a = hermit.live(conv).unwrap();
+    // the feed's own event for the put (`a` ready) is recorded first, then the record cleared: an event still in
+    // flight would otherwise land after the test's `b` below and name the caller again (CI, 2026-11-18/19: the lease
+    // granted), and with no record the lease asks hermit
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let rec: Option<Uuid> = r
+            .pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select hermit_sandbox from conversations where id = $1", &[&conv])
+            .await
+            .unwrap()
+            .get(0);
+        if rec == Some(a.id) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the feed never recorded the put's sandbox"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    hermit_names(r.pool(), conv, None, "gone").await;
     // hermit answers `a`, but before the grant locks the row the feed records `b` (a migration)
     let hold = Hold::new();
     hermit.faults().times("get_sandbox", FaultKind::Hold(hold.clone()), 1);
