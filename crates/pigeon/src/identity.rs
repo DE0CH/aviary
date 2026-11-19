@@ -458,6 +458,12 @@ impl Identities {
         self.facts().is_some_and(|f| f.conversations.people_pick_model)
     }
 
+    /// The app shows the question and wait cards (the deployment's `features.personCards`).
+    #[must_use]
+    pub fn person_cards(&self) -> bool {
+        self.facts().is_some_and(|f| f.features.person_cards)
+    }
+
     /// The product name ("" before the facts load).
     #[must_use]
     pub fn product_name(&self) -> String {

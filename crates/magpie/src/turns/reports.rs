@@ -411,6 +411,7 @@ pub async fn ask_open(pool: &Pool, caller: &Sandbox, r: AskReport) -> Result<()>
             tool_name: r.tool_name.clone(),
             tool_use_id: r.tool_use_id.clone(),
             input: r.input.clone(),
+            marks_answers: false,
         });
         let mut ev = NewEvent::of(&body)?.turn(c.active_turn);
         ev.at = now;
@@ -450,6 +451,7 @@ pub async fn question_open(pool: &Pool, caller: &Sandbox, r: QuestionRequest) ->
             tool_name: QUESTION_TOOL.into(),
             tool_use_id: None,
             input: r.input.clone(),
+            marks_answers: r.marks_answers,
         });
         let mut ev = NewEvent::of(&body)?;
         ev.at = now;

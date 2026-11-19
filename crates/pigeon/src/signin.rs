@@ -111,6 +111,7 @@ pub async fn me(app: &App, id: &Identity) -> Response {
             // false: the deployment ends conversations itself; the app offers no delete and no Recently deleted
             "conversationDelete": app.0.identity.people_delete(),
             "modelPick": app.0.identity.people_pick_model(),
+            "personCards": app.0.identity.person_cards(),
             // a text message sent during a reply joins the running turn (magpie M7 `midTurn`): the app sends it at
             // once instead of queueing it until the reply ends
             "midTurn": true,
@@ -127,6 +128,7 @@ pub async fn me(app: &App, id: &Identity) -> Response {
                 "newConversations": app.0.identity.people_create(),
                 "conversationDelete": app.0.identity.people_delete(),
                 "modelPick": app.0.identity.people_pick_model(),
+            "personCards": app.0.identity.person_cards(),
                 // an admin's view-as send joins no running turn (magpie refuses it): it waits in the app's queue
                 "midTurn": false,
                 "viewAs": {"user": v.person, "expiresAt": expires},

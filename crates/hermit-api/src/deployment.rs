@@ -11,6 +11,26 @@ pub struct Deployment {
     /// Absent = the default (people start conversations).
     #[serde(default, skip_serializing_if = "Conversations::is_default")]
     pub conversations: Conversations,
+    /// App features a deployment turns on. Absent = all off.
+    #[serde(default, skip_serializing_if = "Features::is_default")]
+    pub features: Features,
+}
+
+/// App features a deployment turns on, each off by default, so a deployment takes one when it chooses to.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Features {
+    /// The app shows a question the AI asked and a command's wait on the person as a card in the history (magpie
+    /// rule 11; pigeon tells the app, `GET /api/jarvis/me` `personCards`). False: the app leaves those rows out.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub person_cards: bool,
+}
+
+impl Features {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Who starts conversations.
