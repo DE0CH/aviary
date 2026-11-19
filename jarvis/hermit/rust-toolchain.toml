@@ -1,0 +1,6 @@
+[toolchain]
+# the same toolchain as DE0CH/aviary, whose crates this links
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-linux-musl"]
+profile = "minimal"
