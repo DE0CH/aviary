@@ -87,5 +87,26 @@ class SealCheck(unittest.TestCase):
         self.assertEqual(seal.cert_for("news-stream/deploy/apps/sealed/x.yaml"), seal.OLD_CERT)
 
 
+class AnotherTree(unittest.TestCase):
+    def test_a_tree_and_map_elsewhere_checked_with_this_repositorys_certs(self):
+        """DE0CH/aviary's yyc/deploy/sealed with its yyc/secrets.txt (--root, --map): the Talos cert, from this repository"""
+        code = tree([], {})
+        other = tempfile.mkdtemp()
+        d = os.path.join(other, "yyc", "deploy", "sealed")
+        os.makedirs(d)
+        open(os.path.join(d, "kustomization.yaml"), "w").write("resources:\n  - a.yaml\n")
+        open(os.path.join(other, "yyc", "secrets.txt"), "w").write("yyc-ai/a Opaque yyc/deploy/sealed/a.yaml K='x'\n")
+        run = lambda: subprocess.run([sys.executable, "-I", os.path.join(code, "infra", "seal.py"), "--check", "--names-only",
+                                      "--root", other, "--map", os.path.join(other, "yyc", "secrets.txt")],
+                                     capture_output=True, text=True)
+        open(os.path.join(d, "a.yaml"), "w").write(cert_header(code, "infra/sealed-secrets-talos.pem") + "kind: SealedSecret\n")
+        r = run()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        open(os.path.join(d, "a.yaml"), "w").write(cert_header(code, "infra/sealed-secrets.pem") + "kind: SealedSecret\n")
+        r = run()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("wrong cert", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
