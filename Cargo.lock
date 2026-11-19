@@ -316,6 +316,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviary-release"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+]
+
+[[package]]
 name = "aviary-source-rules"
 version = "0.0.0"
 dependencies = [
