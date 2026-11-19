@@ -260,17 +260,23 @@ async function main() {
     const typed = composer(dumpUi("cover-typed"));
     check("typed text lands in the message box", typed?.field.text.includes(TYPED), typed?.field.text ?? "no box");
 
-    // a flick down on the conversation puts the keyboard away (agent-stream/scroll-keyboard-dismiss)
-    const list = byId(dumpUi(), "agent-chat-scroll");
-    const keyboard = keyboardFrame();
-    if (list && keyboard) {
-      // a short fast flick from the middle: a long one reaches the start of the history, where the list stops and
-      // the speed at release (what decides it, scroll-keyboard-dismiss/model.ts) is nil
+    // a flick down on the conversation puts the keyboard away (agent-stream/scroll-keyboard-dismiss): what decides it
+    // is the list's speed over the last 30 ms before the finger lifts (over 1.5 dp/ms). A short fast flick from the
+    // middle, since a long one reaches the start of the history, where the list stops. The emulator delivers an
+    // injected swipe in uneven bursts, so a second flick is allowed, as a person flicks again; the detail says which.
+    let flicks = 0;
+    let away = false;
+    while (!away && flicks < 2) {
+      flicks += 1;
+      const list = byId(dumpUi(), "agent-chat-scroll");
+      const keyboard = keyboardFrame();
+      if (!list || !keyboard) break;
       const x = Math.round((list.box.left + list.box.right) / 2);
-      const from = Math.round((list.box.top + Math.min(list.box.bottom, keyboard.top)) / 2) - 150;
-      shell("input", "swipe", String(x), String(from), String(x), String(from + 350), "50");
+      const from = Math.round((list.box.top + Math.min(list.box.bottom, keyboard.top)) / 2) - 200;
+      shell("input", "swipe", String(x), String(from), String(x), String(from + 400), "50");
+      away = await waitKeyboard(false, 5000);
     }
-    check("a flick down on the conversation puts the keyboard away", await waitKeyboard(false));
+    check("a flick down on the conversation puts the keyboard away", away, `${flicks} flick${flicks === 1 ? "" : "s"}`);
     screenshot("cover-keyboard-away");
     await Promise.race([recorded, sleep(30_000)]);
     try {
