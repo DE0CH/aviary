@@ -9,6 +9,9 @@ pub struct Run {
     pub workflow: String,
     pub status: String,
     pub conclusion: Option<String>,
+    /// a run of main itself (a push, dispatch or schedule on main), not another branch's or a pull request's run that
+    /// happens to have the same head commit (a branch the gate fast-forwarded main to has them)
+    pub on_main: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -33,7 +36,11 @@ pub fn ready(sha: &str, main_head: &str, workflows: &[String], runs: &[Run]) -> 
     }
     let (mut wait, mut fail) = (Vec::new(), Vec::new());
     for w in workflows {
-        let Some(r) = runs.iter().filter(|r| &r.workflow == w).max_by_key(|r| r.id) else {
+        let Some(r) = runs
+            .iter()
+            .filter(|r| r.on_main && &r.workflow == w)
+            .max_by_key(|r| r.id)
+        else {
             continue;
         };
         if r.status != "completed" {
@@ -61,6 +68,7 @@ mod tests {
             workflow: w.into(),
             status: status.into(),
             conclusion: conclusion.map(Into::into),
+            on_main: true,
         }
     }
     fn ws() -> Vec<String> {
@@ -107,6 +115,16 @@ mod tests {
             run(5, "ci", "completed", Some("success")),
         ];
         assert_eq!(ready("a", "a", &ws(), &runs), Ready::Go);
+    }
+
+    #[test]
+    fn a_pull_requests_run_on_the_same_commit_is_not_mains() {
+        // 2026-11-19: a branch's pull_request run of ci (red) on the commit main had just been fast-forwarded to stopped
+        // the deploy while main's own ci was still running
+        let mut pr = run(9, "ci", "completed", Some("failure"));
+        pr.on_main = false;
+        let runs = [run(1, "ci", "in_progress", None), pr];
+        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Wait(vec!["ci".into()]));
     }
 
     #[test]

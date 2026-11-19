@@ -133,6 +133,8 @@ jobs:
             key=$RUNNER_TEMP/release-tag-key
             install -m 600 /dev/null "$key"
             printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
+            # the part's commit may be older than this checkout's one commit (the tag names it, not this push)
+            git fetch -q --depth 1 origin "$PART_SHA"
             git tag "$tag" "$PART_SHA"
             GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
               git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
