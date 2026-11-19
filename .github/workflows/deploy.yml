@@ -248,10 +248,13 @@ jobs:
           export GHCR_USER=${auth%%:*} GHCR_TOKEN=${auth#*:}
           echo "::add-mask::$GHCR_TOKEN"
           cfg=$FOLDER/hermit/hermit.json
-          if jq -e '.fabric.aws.imageBucket' "$cfg" >/dev/null; then bash fabric/aws/infra.sh --config "$cfg" publish-image; fi
-          bash fabric/aws/infra.sh --config "$cfg" sync
-          bash fabric/aws/infra.sh --config "$cfg" check
-          bash fabric/aws/infra.sh --config "$cfg" current | tee -a "$GITHUB_STEP_SUMMARY"
+          # fabric-aws (crates/fabric-aws, which replaced fabric/aws/infra.sh), built from this commit
+          rustup toolchain install > /dev/null && cargo build --locked --release -q -p fabric-aws
+          fa=target/release/fabric-aws
+          if jq -e '.fabric.aws.imageBucket' "$cfg" >/dev/null; then "$fa" --config "$cfg" publish-image; fi
+          "$fa" --config "$cfg" sync --host-dir fabric/host
+          "$fa" --config "$cfg" check
+          "$fa" --config "$cfg" current | tee -a "$GITHUB_STEP_SUMMARY"
       - name: the sandbox gateway (gateway.sh setup over the jump host; nothing changes when its release is the same)
         env:
           TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.YYC_DEPLOY_ACCESS_CLIENT_ID }}

@@ -111,7 +111,7 @@ committed with the change; the suites run on every branch and the gate merges on
   cluster prints the `Deploy-Prune:` lines (a revert that removes objects carries them too).
 - **No bumps:** the images, `hermit.json`'s `fabric.sandboxd` and `sandbox.image` and `hermit/gateway.release` are
   written by the deploy run from the commit it deploys; nothing is pinned by hand.
-- **The AMI** follows by itself: the deploy run's `infra.sh sync` bakes a new `hermit-host` AMI when `sandbox.image`,
+- **The AMI** follows by itself: the deploy run's `fabric-aws sync` bakes a new `hermit-host` AMI when `sandbox.image`,
   `fabric.sandboxd` or `fabric.runsc` changed (about 15 min) and publishes the sandbox image to the bucket
   `fabric.aws.imageBucket` first; hermit starts a sandbox on a new image only once the bucket holds it.
 - **After a deploy** (spec-platform 15.6): `kubectl -n yyc-ai rollout status
