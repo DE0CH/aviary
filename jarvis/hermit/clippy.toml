@@ -1,0 +1,2 @@
+# clippy's defaults, as in DE0CH/jarvis4 (no clippy.toml there): the root's file holds aviary's services' rules
+# (configuration only through aviary_core::env), which hermit-jarvis, a Jarvis 4 component, never followed
