@@ -3,7 +3,7 @@
 //!
 //! - the host is the deployment's recipe, unchanged: `fabric/host/fetch-sandboxd.sh` with the release `hermit.json`
 //!   pins (`fabric.sandboxd`) and `fabric/host/setup.sh burst` with its gVisor release (`fabric.runsc`) and its sandbox
-//!   image (`sandbox.image`), as the AMI bake does (`fabric/aws/infra.sh bake`);
+//!   image (`sandbox.image`), as the AMI bake does (`fabric-aws ami`);
 //! - its first boot is the deployment's too: `sbx-userdata` reads the user data hermit's own
 //!   `scaler::user_data` makes from that `hermit.json`, from a stand-in of the cloud's metadata service on
 //!   169.254.169.254, then `sbx-jfs` and `sandboxd` start as on an instance;

@@ -59,8 +59,6 @@ jobs:
           shopt -s globstar nullglob
           files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
-      - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
-        run: bash fabric/aws/test-infra.sh
       - name: .github/ci/pin-dispatch.sh against a stand-in gh
         run: bash .github/ci/test-pin-dispatch.sh
       - name: ci.yml's publish runs for every gated main commit (push or dispatch), never a pull request
