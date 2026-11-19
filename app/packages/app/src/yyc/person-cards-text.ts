@@ -26,6 +26,18 @@ export interface PersonCard {
 
 export type CardView = "waiting" | "unread" | "read";
 
+/**
+ * The cards are switched off (Deyao, 2026-11-19: a question showed twice, "not read yet" was wrong for every session
+ * on an older image, and scrolling misbehaved). Off, the app is as before them: a card's own row is left out of the
+ * conversation and a call that read an answer is an ordinary step. They come back once they work on the whole stack.
+ */
+export const PERSON_CARDS = false;
+
+/** A card's own row while the cards are off: left out of the conversation altogether. */
+export function isHiddenPersonRow(metadata: unknown): boolean {
+  return !PERSON_CARDS && readPersonAsk(metadata) !== null;
+}
+
 function isCard(v: unknown): v is PersonCard {
   const c = v as Partial<PersonCard> | null;
   return !!c && typeof c.id === "string" && typeof c.state === "string" && typeof c.kind === "string";
@@ -54,6 +66,7 @@ export function cardViewWhereAsked(card: PersonCard): CardView | null {
 
 /** Whether a call carries a card in either place: it is never folded into a group or a turn's summary. */
 export function isPersonCardCall(metadata: unknown): boolean {
+  if (!PERSON_CARDS) return false;
   return readPersonAsk(metadata) !== null || readPersonRead(metadata).length > 0;
 }
 

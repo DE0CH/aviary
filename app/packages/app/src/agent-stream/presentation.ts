@@ -10,6 +10,7 @@ import {
 } from "@/tool-calls/detail-level/projection";
 import type { StreamItem, UserMessageItem } from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
+import { isHiddenPersonRow } from "@/yyc/person-cards-text";
 
 interface PresentationInput {
   tail: StreamItem[];
@@ -63,6 +64,10 @@ export function createStreamPresentation() {
   let collapsed: TurnCollapse | undefined;
 
   function presentRows(item: StreamItem): StreamItem[] {
+    // a question or wait card's own row, while the cards are off (yyc/person-cards-text.ts)
+    if (item.kind === "tool_call" && item.payload.source === "agent" && isHiddenPersonRow(item.payload.data.metadata)) {
+      return [];
+    }
     return [item.kind === "user_message" ? presentUserMessage(item) : item];
   }
 

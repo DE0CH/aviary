@@ -1666,6 +1666,10 @@ function applyTimelineTurnId(
   const index = items.length - 1;
   const last = items[index];
   if (!last || last.turnId === event.turnId) return items;
+  // A tool call takes its turn from its own events when it is made (its identity includes it): the last item may be
+  // another call than this event's (an update merges into an earlier one), and a call made with no turn (a question
+  // a command opened) stamped with this one was never found again, so its next update was appended twice.
+  if (isAgentToolCallItem(last)) return items;
   return [
     ...items.slice(0, index),
     { ...last, turnId: event.turnId } as StreamItem,
