@@ -31,10 +31,13 @@ const PORT = 8787;
 const COVER = { name: "cover", size: "1080x2520", density: 420 };
 const MAIN = { name: "main", size: "1968x2184", density: 420 };
 const CONVERSATION = "季度銷售報告"; // the stand-in's first conversation (scripts/touch-targets/content.mjs)
+const OTHER_CONVERSATION = "活動海報文案"; // its second: a row of the list, never this conversation's own header
 const TYPED = "hello fold";
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
-const adb = (...args) => execFileSync("adb", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+// every adb call has a time limit: a hung one fails its step instead of the job's two hours
+const adb = (...args) =>
+  execFileSync("adb", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 180_000 });
 const shell = (...args) => adb("shell", ...args);
 const tryShell = (...args) => {
   try {
@@ -58,7 +61,7 @@ let step = 0;
 function screenshot(name) {
   step += 1;
   const file = path.join(out, `${String(step).padStart(2, "0")}-${name}.png`);
-  const raw = execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024 });
+  const raw = execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
   // a profile with two screens (the Pixel Fold's) prints a warning ahead of the picture
   const start = raw.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   fs.writeFileSync(file, start > 0 ? raw.subarray(start) : raw);
@@ -192,6 +195,7 @@ async function main() {
     appDir: path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/packages/app/public"),
     port: PORT,
     appScheme: pkg,
+    quiet: true,
   });
   try {
     adb("reverse", `tcp:${PORT}`, `tcp:${PORT}`);
@@ -234,12 +238,19 @@ async function main() {
       const row = await waitFor((n) => byText(n, CONVERSATION), 20_000, "conversation-row");
       if (row) tap(row);
     }
-    const opened = await waitFor((n) => byId(n, "agent-chat-scroll") && composer(n), 30_000, "conversation");
+    // open: the chat and its box, and the drawer gone (the chat is in the tree under an open drawer too)
+    const opened = await waitFor((n) => byId(n, "agent-chat-scroll") && composer(n) && !byId(n, "sidebar-close"),
+      30_000, "conversation");
     screenshot("cover-conversation");
     if (!check("a conversation opens from the conversation list", opened)) return;
 
     // the keyboard comes and goes, recorded
-    const recording = spawn("adb", ["shell", "screenrecord", "--time-limit", "12", "/sdcard/keyboard.mp4"]);
+    const recording = spawn("adb", ["shell", "screenrecord", "--time-limit", "20", "/sdcard/keyboard.mp4"]);
+    // its end, caught from the start: it may well be over before the steps below are
+    const recorded = new Promise((done) => {
+      recording.on("exit", done);
+      recording.on("error", done);
+    });
     await sleep(1000);
     tap(composer(dumpUi()).field);
     await checkBoxOnKeyboard("cover");
@@ -249,21 +260,28 @@ async function main() {
     const typed = composer(dumpUi("cover-typed"));
     check("typed text lands in the message box", typed?.field.text.includes(TYPED), typed?.field.text ?? "no box");
 
-    // a flick down on the conversation puts the keyboard away (agent-stream/scroll-keyboard-dismiss)
-    const list = byId(dumpUi(), "agent-chat-scroll");
-    const keyboard = keyboardFrame();
-    if (list && keyboard) {
+    // a flick down on the conversation puts the keyboard away (agent-stream/scroll-keyboard-dismiss): what decides it
+    // is the list's speed over the last 30 ms before the finger lifts (over 1.5 dp/ms). A short fast flick from the
+    // middle, since a long one reaches the start of the history, where the list stops. The emulator delivers an
+    // injected swipe in uneven bursts, so a second flick is allowed, as a person flicks again; the detail says which.
+    let flicks = 0;
+    let away = false;
+    while (!away && flicks < 2) {
+      flicks += 1;
+      const list = byId(dumpUi(), "agent-chat-scroll");
+      const keyboard = keyboardFrame();
+      if (!list || !keyboard) break;
       const x = Math.round((list.box.left + list.box.right) / 2);
-      const top = list.box.top + 40;
-      const bottom = Math.min(list.box.bottom, keyboard.top) - 40;
-      shell("input", "swipe", String(x), String(top), String(x), String(bottom), "80");
+      const from = Math.round((list.box.top + Math.min(list.box.bottom, keyboard.top)) / 2) - 200;
+      shell("input", "swipe", String(x), String(from), String(x), String(from + 400), "50");
+      away = await waitKeyboard(false, 5000);
     }
-    check("a flick down on the conversation puts the keyboard away", await waitKeyboard(false));
+    check("a flick down on the conversation puts the keyboard away", away, `${flicks} flick${flicks === 1 ? "" : "s"}`);
     screenshot("cover-keyboard-away");
-    await new Promise((done) => recording.on("exit", done));
+    await Promise.race([recorded, sleep(30_000)]);
     try {
       fs.writeFileSync(path.join(out, "keyboard-cover.mp4"),
-        execFileSync("adb", ["exec-out", "cat", "/sdcard/keyboard.mp4"], { maxBuffer: 256 * 1024 * 1024 }));
+        execFileSync("adb", ["exec-out", "cat", "/sdcard/keyboard.mp4"], { maxBuffer: 256 * 1024 * 1024, timeout: 120_000 }));
     } catch {
       console.log("::warning title=android emulator test::no screen recording");
     }
@@ -279,26 +297,40 @@ async function main() {
     check("unfolding keeps the conversation and the typed text",
       byId(unfolded, "agent-chat-scroll") && composer(unfolded)?.field.text.includes(TYPED),
       composer(unfolded)?.field.text ?? "no box");
-    // 1968 px at density 420 is 750 dp: a docked sidebar, no drawer (constants/layout.ts, 600 dp)
-    check("the main screen docks the conversation list beside the chat",
-      byText(unfolded, CONVERSATION) && byId(unfolded, "agent-chat-scroll"));
-    if (!keyboardFrame()) {
-      const box = composer(unfolded);
-      if (box) tap(box.field);
+    // 1968 px at density 420 is 750 dp: the wide layout, whose conversation list docks beside the chat instead of
+    // covering it (constants/layout.ts, 600 dp). It keeps the phone's closed list: its button opens it.
+    check("the main screen has the wide layout", byId(unfolded, "wide-shell"));
+    if (!byText(unfolded, OTHER_CONVERSATION)) {
+      const toggle = byId(unfolded, "menu-button");
+      if (toggle) tap(toggle);
     }
+    const docked = await waitFor((n) => {
+      const row = byText(n, OTHER_CONVERSATION);
+      const chat = byId(n, "agent-chat-scroll");
+      return row && chat && chat.box.left >= row.box.right - 2 ? { row, chat } : null;
+    }, 15_000, "docked");
+    screenshot("main-list-docked");
+    check("the main screen docks the conversation list beside the chat", docked,
+      docked ? `list row to x=${docked.row.box.right}, chat from x=${docked.chat.box.left}` : "");
+    const withList = composer(dumpUi());
+    if (withList && !keyboardFrame()) tap(withList.field);
     await checkBoxOnKeyboard("main");
     screenshot("main-keyboard");
 
     // turned to landscape on the main screen
-    shell("settings", "put", "system", "user_rotation", "1");
+    shell("wm", "user-rotation", "lock", "1");
     await sleep(3000);
     screenshot("main-landscape");
     check("turning the unfolded phone keeps the app running", appPid() === pid);
-    const turned = composer(dumpUi("main-landscape"));
+    const landscape = dumpUi("main-landscape");
+    const shellBox = byId(landscape, "wide-shell")?.box;
+    check("the unfolded phone turns to landscape", shellBox && shellBox.right - shellBox.left > shellBox.bottom - shellBox.top,
+      shellBox ? `${shellBox.right - shellBox.left} x ${shellBox.bottom - shellBox.top}` : "no wide layout");
+    const turned = composer(landscape);
     check("turning keeps the typed text", turned?.field.text.includes(TYPED), turned?.field.text ?? "no box");
     if (!keyboardFrame() && turned) tap(turned.field);
     await checkBoxOnKeyboard("main landscape");
-    shell("settings", "put", "system", "user_rotation", "0");
+    shell("wm", "user-rotation", "lock", "0");
     await sleep(2000);
 
     // ---- fold again: back to the cover screen ----

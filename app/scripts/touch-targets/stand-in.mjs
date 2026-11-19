@@ -6,7 +6,8 @@
 //
 // With `appScheme` (a native app's scheme, app.config.js) it also answers the app's sign-in like pigeon's
 // /api/jarvis/app-signin after Access: straight back to the app with a token, so the Android app's emulator test
-// (scripts/android-app/emulator-test.mjs) signs in to it. `host` is where it listens (default 127.0.0.1).
+// (scripts/android-app/emulator-test.mjs) signs in to it. `host` is where it listens (default 127.0.0.1); `quiet`
+// answers with nothing running (content.mjs `quiet`).
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -33,8 +34,9 @@ const MIME = {
   ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".wasm": "application/wasm", ".ico": "image/x-icon",
 };
 
-export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null }) {
+export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null, quiet = false }) {
   const root = path.resolve(appDir);
+  if (quiet) content.quiet();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://stand-in");
     if (appScheme && url.pathname === "/api/jarvis/app-signin") {
@@ -87,7 +89,13 @@ export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme =
   return new Promise((resolve) => {
     server.listen(port, host, () => {
       const { port: bound } = server.address();
-      resolve({ url: `http://127.0.0.1:${bound}`, close: () => new Promise((done) => { sockets.close(); server.close(done); }) });
+      resolve({ url: `http://127.0.0.1:${bound}`, close: () => new Promise((done) => {
+        // a client still connected (the app) would hold the server open: end it
+        for (const client of sockets.clients) client.terminate();
+        sockets.close();
+        server.close(done);
+        server.closeAllConnections();
+      }) });
     });
   });
 }

@@ -2317,10 +2317,9 @@ function ProjectModeList({
           workspace={workspace}
           workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
-          leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-          }
+          // the list is flat (docs/paseo-ui.md "Layout"): a pinned conversation keeps its status spot, no project icon
+          leadingProjectName={null}
+          leadingProjectIconDataUri={null}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}
@@ -2346,7 +2345,6 @@ function ProjectModeList({
       showShortcutBadges,
       supportsPinningByServerId,
       onToggleWorkspacePin,
-      projectIconByProjectViewKey,
       workspaceEntriesByKey,
     ],
   );
