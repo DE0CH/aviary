@@ -1,7 +1,7 @@
 # pigeon-app
 
 The Paseo web app as an image for pigeon, DE0CH/aviary's front service. `.github/workflows/pigeon-app.yml` builds
-`ghcr.io/de0ch/pigeon-app:<commit 12>` on every push to main that touches the app (`paseo/**`, `public/sw.js`, the build
+`ghcr.io/de0ch/pigeon-app:<commit 12>` on every push to main that touches the app (`app/**` with `app/public/sw.js`, the build
 scripts). The image is `FROM scratch`: the files sit under `/app`,
 plus a static `/cp` (busybox's cp). pigeon's initContainer runs `/cp -a /app/. /srv/app/` into the emptyDir that pigeon serves. DE0CH/yyc-code pins the tag by hand,
 next to pigeon's own tag. The workflow deploys nothing.
