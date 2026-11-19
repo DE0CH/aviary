@@ -178,8 +178,6 @@ jobs:
           shopt -s globstar nullglob
           files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
-      - name: ci.yml's publish runs for every gated main commit (push or dispatch), never a pull request
-        run: bash .github/ci/test-publish-gate.sh
       - name: .github/ci/publish-images.sh against a stand-in docker (a failed push is tried again)
         run: bash .github/ci/test-publish-images.sh
 
@@ -696,12 +694,13 @@ jobs:
         run: timeout 300 testing/e2e/run.sh down
 
   publish:
-    # platform 6.1 `publish` and 5.4 (WP-28): main only, after every gate. Pushes each image as <name>:<sha12> (never
-    # `latest`; sha12 = the part's last commit, docs/DEPLOY.md) with a build-provenance attestation, then the release
-    # aviary-<sha12>. deploy.yml deploys main once this run and the other parts' are green. A run started on main by
-    # workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push that starts no
-    # workflow) and dispatches this workflow on main.
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    # platform 6.1 `publish` and 5.4 (WP-28): every pushed branch, after every gate. Pushes each image as <name>:<sha12>
+    # (never `latest`; sha12 = the part's last commit, docs/DEPLOY.md) with a build-provenance attestation, then the
+    # release aviary-<sha12>. A tag names a source, so a branch's images are that source's: the replica runs on them
+    # before the merge, and main deploys them (deploy.yml) once its runs are green; a tag that exists is left as it is.
+    # A run started by workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push
+    # that starts no workflow) and dispatches this workflow on main.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -777,3 +776,74 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/ci/release.sh dist "${PART_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
+
+  replica:
+    # Jarvis 4's replica on these images, before the merge (Deyao, 2026-11-16 and 2026-11-19; it was DE0CH/jarvis4's
+    # aviary-pin.yml): Jarvis 4's session image with this release (DE0CH/jarvis4 at main, session-image/aviary.json
+    # written here) and rust/e2e-kernel with E2E_HARNESS=aviary on a real Fly machine: a turn with a tool call in the
+    # sandbox must reach magpie. aviary moved its mount once (2026-11-13) and a release without this check shipped
+    # sessions whose chat showed no tool calls (claude-env lessons/114). The Fly token is the `checks` environment's
+    # (the replica's token: app jarvis4-sessions and the org's WireGuard peers).
+    needs: [tags, publish]
+    environment: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: aviary-${{ needs.tags.outputs.aviary }}
+      IMAGE: ghcr.io/de0ch/jarvis4-session:pin-aviary-${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
+      - name: the release and its sandbox image, by digest, into the session image's aviary.json
+        working-directory: jarvis4
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/hermit-sandbox:pull" | jq -r .token)
+          digest=$(curl -sSfI -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/de0ch/hermit-sandbox/manifests/${TAG#aviary-}" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no sandbox image for $TAG"; exit 1; }
+          printf '{\n  "release": "%s",\n  "sandbox": "%s"\n}\n' "$TAG" "ghcr.io/de0ch/hermit-sandbox@$digest" > session-image/aviary.json
+          cat session-image/aviary.json
+      - name: free disk space (the base image is large)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: the candidate's session image
+        working-directory: jarvis4
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          docker buildx build . -f session-image/Dockerfile --push --tag "$IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/DE0CH/jarvis4" \
+            --cache-from type=gha,scope=session-pin --cache-to type=gha,mode=max,scope=session-pin
+      - name: tools (crane, flyctl, the Rust toolchain of jarvis4's rust/, WireGuard)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/crane.tgz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$RUNNER_TEMP/crane.tgz" -C "$RUNNER_TEMP/bin" crane
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          curl -fsSL https://fly.io/install.sh | sh > /dev/null
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+          (cd jarvis4/rust && (rustup show active-toolchain || rustup toolchain install))
+          sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools iproute2 iptables > /dev/null
+      - name: the replica (rust/e2e-kernel, E2E_HARNESS=aviary) on this release
+        working-directory: jarvis4
+        env:
+          JARVIS2_FLY_TOKEN: ${{ secrets.REPLICA_FLY_TOKEN }}
+          E2E_HARNESS: aviary
+          E2E_SESSION_IMAGE: ${{ env.IMAGE }}
+          E2E_LOGS: /tmp/e2e-aviary-logs
+        run: |
+          [ -n "$JARVIS2_FLY_TOKEN" ] || { echo "::error::secret REPLICA_FLY_TOKEN is missing from the GitHub environment 'checks'"; exit 1; }
+          (cd rust && cargo build --release --locked -p e2e-kernel)
+          rust/target/release/e2e-kernel
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: e2e-aviary-logs, path: /tmp/e2e-aviary-logs, retention-days: 7, if-no-files-found: ignore}
