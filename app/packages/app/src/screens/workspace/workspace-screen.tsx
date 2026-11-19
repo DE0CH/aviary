@@ -9,6 +9,7 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
+import { RawTranscriptChip } from "@/yyc/raw-transcript";
 import { ScheduleChip, SchedulesPanel } from "@/yyc/schedules";
 import { ActivityChip, ActivityPanel } from "@/yyc/activity";
 import { sessionIdOfWorkspace } from "@/yyc/api";
@@ -3177,6 +3178,8 @@ function WorkspaceScreenContent({
         <ActivityChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
         {/* the conversation's schedules (yyc/schedules.tsx) */}
         <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
+        {/* the admin's raw transcript in a view-as tab (yyc/raw-transcript.tsx) */}
+        <RawTranscriptChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
           <WorkspaceScriptsButton
@@ -3346,6 +3349,7 @@ function WorkspaceScreenContent({
         >
           <ActivityChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
           <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
+          <RawTranscriptChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
