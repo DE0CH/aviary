@@ -205,6 +205,11 @@ was stopped (`unanswered`), and the skips (服務暫停，已略過 …).
 
 ## Questions and waits in the chat (Deyao, 2026-11-18)
 
+**Switched off (Deyao, 2026-11-19)**: `PERSON_CARDS` in `yyc/person-cards-text.ts` is false. A question showed twice,
+"Not read yet" stayed on every session whose sandbox predates the answer marker, and scrolling misbehaved. Off, a
+card's own row is left out of the conversation (`agent-stream/presentation.ts`) and a call that read an answer is an
+ordinary step. What follows is the design they come back with.
+
 A question the AI asked with `ask`, or a command's wait on the person for something outside the chat (Jarvis 4's
 Inbox requests), is one card in the history (`yyc/person-cards.tsx`, read by `yyc/person-cards-text.ts`; design: the
 approved three-state mock):
