@@ -1,0 +1,43 @@
+# The staff UI (app/, docs/paseo-ui.md): typecheck and every test suite of app/packages (the app's unit and browser
+# projects, protocol, client, relay, highlight, plugin), on every push touching it. YYC AI is test-first (claude-env
+# yyc-ai skill): app.yml and app-ios.yml call this workflow and build only after it passes.
+name: app-tests
+
+on:
+  push:  # every branch: the gate waits for it
+    branches: ['**']
+    paths: ["app/**", ".github/workflows/app-tests.yml"]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - run: npm ci
+      - run: npm run build:app-deps
+      - name: Typecheck the app
+        run: npx tsgo --noEmit -p packages/app/tsconfig.json
+      - name: Chromium for the browser tests
+        run: npx playwright install --with-deps chromium
+      - name: App tests (unit and browser)
+        working-directory: app/packages/app
+        run: npx vitest run
+      - name: Protocol, client, relay, highlight and plugin tests
+        if: success() || failure()   # every suite reports, not only the first red one
+        run: |
+          set -e
+          for p in protocol client relay highlight plugin; do
+            echo "::group::$p"; (cd "packages/$p" && npx vitest run); echo "::endgroup::"
+          done

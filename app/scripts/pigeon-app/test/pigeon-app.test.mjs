@@ -666,58 +666,6 @@ test('fetch-seeds keeps a Paseo image\'s hashed trees and nothing of a pre-Paseo
   rmSync(root, { recursive: true, force: true });
 });
 
-// ---------- check-frames
-
-test('unpack-harness: a harness at the tarball root, in package/, in ./package/ with dotfiles; one without it is refused', () => {
-  const root = tmp();
-  const script = path.join(here, '..', 'unpack-harness.sh');
-  const layouts = {
-    root: { dir: 'src', files: { 'validate-frames.mjs': 'v', 'package.json': '{}', 'lib/protocol.mjs': 'p' }, args: ['-C', 'src', '.'] },
-    package: { dir: 'src', files: { 'package/validate-frames.mjs': 'v', 'package/package.json': '{}', 'package/lib/protocol.mjs': 'p' }, args: ['-C', 'src', 'package'] },
-    dotfiles: { dir: 'src', files: { 'package/validate-frames.mjs': 'v', 'package/.npmrc': 'x', 'package/lib/protocol.mjs': 'p' }, args: ['-C', 'src', './package'] },
-  };
-  for (const [name, layout] of Object.entries(layouts)) {
-    const src = path.join(root, name, layout.dir);
-    for (const [rel, text] of Object.entries(layout.files)) write(path.join(src, rel), text);
-    const tgz = path.join(root, `${name}.tgz`);
-    execFileSync('tar', ['-czf', tgz, '-C', path.join(root, name), ...layout.args]);
-    const dest = path.join(root, `${name}-out`);
-    const result = spawnSync('bash', [script, tgz, dest], { encoding: 'utf8' });
-    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
-    assert.equal(readFileSync(path.join(dest, 'validate-frames.mjs'), 'utf8'), 'v', name);
-    assert.ok(existsSync(path.join(dest, 'lib/protocol.mjs')), name);
-    if (name === 'dotfiles') assert.ok(existsSync(path.join(dest, '.npmrc')));
-  }
-  write(path.join(root, 'none/src/package.json'), '{}');
-  execFileSync('tar', ['-czf', path.join(root, 'none.tgz'), '-C', path.join(root, 'none/src'), '.']);
-  const refused = spawnSync('bash', [script, path.join(root, 'none.tgz'), path.join(root, 'none-out')], { encoding: 'utf8' });
-  assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /no validate-frames\.mjs/);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('self-test-verdict: only a run that rejected the seeded frame and nothing else passes', () => {
-  const root = tmp();
-  const script = path.join(here, '..', 'self-test-verdict.sh');
-  const verdict = (status, log) => {
-    write(path.join(root, 'log'), log);
-    return spawnSync('bash', [script, String(status), path.join(root, 'log')], { encoding: 'utf8' });
-  };
-  const seeded = '     /w/scripts/pigeon-app/test/incompatible-frame.ndjson:1 out hello.rejected (seeded incompatible frame: hello.rejected with a reason no client knows): reason: invalid enum value\n';
-  const rejected = `check-frames: corpus\nFAIL protocol 0123456789 (zod 4.1.0 + zod-aot 0.4.0) of this checkout: 412 server frames, 37 client frames, 1 invalid\n${seeded}`;
-  assert.equal(verdict(1, rejected).status, 0, verdict(1, rejected).stdout);
-  // a crash under set -e, npm ci failing, node throwing: exit 1 with no verdict
-  assert.equal(verdict(1, 'npm ERR! code E404\n').status, 1);
-  assert.match(verdict(1, 'npm ERR! code E404\n').stdout, /printed no verdict/);
-  assert.match(verdict(0, rejected).stdout, /answered 0/);
-  assert.match(verdict(2, rejected).stdout, /answered 2/);
-  // another frame rejected as well, or instead
-  const other = '     /w/frames/corpus/pigeon-frames.ndjson:9 out session.update: bad\n';
-  assert.match(verdict(1, rejected.replace('1 invalid', '2 invalid') + other).stdout, /exactly one frame/);
-  assert.match(verdict(1, rejected.replace(seeded, other)).stdout, /other than the seeded one/);
-  rmSync(root, { recursive: true, force: true });
-});
-
 // ---------- clients-missing
 
 test('clients-missing: the dispatched commits clients.txt does not list yet', () => {

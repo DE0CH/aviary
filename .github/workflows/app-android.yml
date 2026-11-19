@@ -1,0 +1,179 @@
+# The Android apps (docs/paseo-ui.md "The Android app"): the same Paseo app as the iPhone's (app/), built natively
+# once per deployment as a signed release APK that is installed from the file (no Play Store): YYC AI as
+# dev.de0ch.yycai, Jarvis Chat (Jarvis 4's chat) as dev.de0ch.jarvis4chat. A third build, the replica, is Jarvis Chat
+# with the stand-in for pigeon as its server, run on a foldable emulator by app/scripts/android-app/emulator-test.mjs
+# (sign-in, the message box on the keyboard, a flick to put it away, fold and unfold on the Galaxy Z Fold's screens).
+# This repo is public: YYC AI's server is the YYC_SITE secret, so its APK leaves CI only age-encrypted to
+# YYC_ANDROID_CI_AGE_KEY's recipient; Jarvis Chat's server is named in DE0CH/jarvis4, which is public too.
+name: app-android
+
+on:
+  workflow_dispatch:
+  push:  # every branch: the gate waits for the emulator test
+    branches: ['**']
+    paths:
+      - "app/**"
+      - "app/scripts/android-app/**"
+      - "app/scripts/touch-targets/**"
+      - ".github/workflows/app-android.yml"
+
+concurrency:
+  group: yyc-android-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+  AGE_RECIPIENT: age12yv9zraqrhap54e0gqe6j38lcthysyhpz5x6c7dggxqkzjzdmeassp2849
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      # one app's failure does not stop the others
+      fail-fast: false
+      matrix:
+        include:
+          - build: yyc-ai
+            variant: production
+            abi: arm64-v8a
+            keystore: YYC_ANDROID_UPLOAD_KEYSTORE
+          - build: jarvis-chat
+            variant: jarvis-chat
+            site: https://chat.deyaochen.com
+            abi: arm64-v8a
+            keystore: JARVIS_CHAT_ANDROID_KEYSTORE
+          # the emulator's build: x86_64, the stand-in as its server, debug-signed
+          - build: replica
+            variant: jarvis-chat
+            site: http://127.0.0.1:8787
+            abi: x86_64
+    env:
+      APP_VARIANT: ${{ matrix.variant }}
+      YYC_SITE: ${{ matrix.site || secrets.YYC_SITE }}
+      ANDROID_BUILD_NUMBER: ${{ github.run_number }}
+      CI: "1"
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the Android project
+        run: |
+          : "${YYC_SITE:?the server of the app is required}"
+          npm run build:app-deps
+          cd packages/app
+          npx expo prebuild --platform android --no-install --clean
+
+      - name: Build the release APK
+        working-directory: app/packages/app/android
+        env:
+          KEYSTORE_B64: ${{ matrix.keystore && secrets[matrix.keystore] }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ matrix.keystore && secrets[format('{0}_PASSWORD', matrix.keystore)] }}
+          ANDROID_KEY_ALIAS: upload
+        run: |
+          set -o pipefail
+          if [ -n "${{ matrix.keystore }}" ]; then
+            : "${KEYSTORE_B64:?the ${{ matrix.keystore }} secret is required}"
+            export ANDROID_KEYSTORE="$RUNNER_TEMP/upload.p12"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE"
+          fi
+          ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=${{ matrix.abi }} > "$RUNNER_TEMP/gradle.log" 2>&1 \
+            || { grep -E -B2 -A12 "FAILURE|error:|e: " "$RUNNER_TEMP/gradle.log" | head -n 300; tail -n 60 "$RUNNER_TEMP/gradle.log"; exit 1; }
+          rm -f "$RUNNER_TEMP/upload.p12"
+          tail -n 5 "$RUNNER_TEMP/gradle.log"
+          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" verify --print-certs "$apk" | head -3
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp "$apk" "$GITHUB_WORKSPACE/out/${{ matrix.build }}.apk"
+          ls -l "$GITHUB_WORKSPACE/out"
+
+      - name: Enable KVM
+        if: matrix.build == 'replica'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # a book-style foldable from this runner's own device list (the names differ between cmdline-tools versions)
+      - name: Pick a foldable device
+        if: matrix.build == 'replica'
+        id: fold
+        run: |
+          avd="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          "$avd" list device -c | tee "$RUNNER_TEMP/devices.txt"
+          dev=$(grep -m1 -x -E 'pixel_9_pro_fold|pixel_fold' "$RUNNER_TEMP/devices.txt" || grep -m1 -x '7.6in Foldable' "$RUNNER_TEMP/devices.txt" || true)
+          [ -n "$dev" ] || { echo "::error title=android emulator test::no foldable device profile on this runner"; exit 1; }
+          echo "::notice title=android emulator test::foldable profile: $dev"
+          echo "device=$dev" >> "$GITHUB_OUTPUT"
+
+      - name: Emulator test
+        if: matrix.build == 'replica'
+        # the emulator's boot and the whole path take about 15 min; a hang ends here, not at the job's limit
+        timeout-minutes: 35
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APP_PACKAGE: dev.de0ch.jarvis4chat
+        with:
+          api-level: 35
+          target: google_apis_playstore
+          arch: x86_64
+          profile: ${{ steps.fold.outputs.device }}
+          ram-size: 6144M
+          cores: 4
+          disable-animations: false
+          script: node app/scripts/android-app/emulator-test.mjs "$GITHUB_WORKSPACE/out/replica.apk" "$GITHUB_WORKSPACE/out/emulator"
+
+      - name: Keep the emulator test's screens
+        if: always() && matrix.build == 'replica'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-test
+          path: out/emulator/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep the Jarvis Chat APK
+        if: matrix.build == 'jarvis-chat'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-chat-android
+          path: out/jarvis-chat.apk
+          retention-days: 30
+
+      - name: Encrypt the YYC AI APK
+        if: matrix.build == 'yyc-ai'
+        working-directory: .
+        run: |
+          sudo apt-get install -y -qq age > /dev/null
+          age -r "$AGE_RECIPIENT" -o yyc-ai-android.apk.age out/yyc-ai.apk
+          rm out/yyc-ai.apk
+          ls -l yyc-ai-android.apk.age
+
+      - name: Keep the YYC AI APK (encrypted)
+        if: matrix.build == 'yyc-ai'
+        uses: actions/upload-artifact@v4
+        with:
+          name: yyc-ai-android-encrypted
+          path: yyc-ai-android.apk.age
+          retention-days: 30

@@ -1,0 +1,67 @@
+# YYC AI installed from Chrome on Android (docs/paseo-ui.md "Installed on a phone"): there is no Android app, staff
+# install the site from Chrome's menu. app/scripts/web-install/emulator_test.py does that on an emulator's own Chrome
+# against the deployed site and checks the installed app (its own window, rotation, the status bar's colour, sign-in).
+# It checks what is deployed: deploy.yml runs it after every YYC AI deploy. This repo is
+# public: the site is the YYC_SITE secret, so the screenshots leave CI only age-encrypted to YYC_ANDROID_CI_AGE_KEY's
+# recipient (app/scripts/yyc-web-install-shots.sh downloads and decrypts them).
+name: app-web-install
+
+on:
+  # deploy.yml runs it after each YYC AI deploy: it checks what is deployed
+  workflow_call:
+    secrets:
+      YYC_SITE: {required: true}
+  workflow_dispatch:
+concurrency:
+  group: yyc-web-install
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AGE_RECIPIENT: age12yv9zraqrhap54e0gqe6j38lcthysyhpz5x6c7dggxqkzjzdmeassp2849
+  YYC_SITE: ${{ secrets.YYC_SITE }}
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Emulator check
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_7
+          # the default 2 GB runs out with Chrome, Play and the launcher up: Android's low-memory killer then takes
+          # the installed app (or Play in the middle of the install) and steps fail at random
+          ram-size: 6144M
+          cores: 4
+          disable-animations: true
+          script: python3 app/scripts/web-install/emulator_test.py "$GITHUB_WORKSPACE/out/screens"
+
+      - name: Encrypt the screenshots
+        if: always()
+        run: |
+          sudo apt-get install -y -qq age > /dev/null
+          [ -d out ] || exit 0
+          tar -czf - -C out . | age -r "$AGE_RECIPIENT" > yyc-web-install.tar.age
+          ls -l yyc-web-install.tar.age
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yyc-web-install-encrypted
+          path: yyc-web-install.tar.age
+          if-no-files-found: ignore
+          retention-days: 30

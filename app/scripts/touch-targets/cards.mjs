@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import { startStandIn } from "./stand-in.mjs";
 import * as content from "./content.mjs";
 
-const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/packages/app/package.json"));
+const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../packages/app/package.json"));
 const { chromium } = require("playwright");
 
 const [dist, out] = process.argv.slice(2);

@@ -6,16 +6,17 @@ import { cpSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// the repository's root (app/scripts/..): the app is app/ (it was paseo/ in DE0CH/claudecodeui), the export goes to dist/
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const env = {
   ...process.env,
   // Metro's transform workers hold the 10 MB generated protocol validator; the default heap is too small for it
   NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-old-space-size=6144'].filter(Boolean).join(' '),
 };
-const built = spawnSync('npm', ['--prefix', path.join(root, 'paseo'), 'run', 'build:web'], { stdio: 'inherit', env });
+const built = spawnSync('npm', ['--prefix', path.join(root, 'app'), 'run', 'build:web'], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 rmSync(path.join(root, 'dist'), { recursive: true, force: true });
-cpSync(path.join(root, 'paseo', 'packages', 'app', 'dist'), path.join(root, 'dist'), { recursive: true });
+cpSync(path.join(root, 'app', 'packages', 'app', 'dist'), path.join(root, 'dist'), { recursive: true });
 // The terminal's stylesheet is the only one Expo hoists into the page, and a <link rel="stylesheet"> holds the first
 // paint (the page frame in index.html) for a round trip. The terminal loads on demand, so its CSS loads without
 // blocking: media="print" until it arrives (docs/paseo-ui.md "Loading").
@@ -26,6 +27,6 @@ const html = readFileSync(indexPath, 'utf8')
 writeFileSync(indexPath, html);
 console.log('Paseo UI copied to dist/');
 // Chunk sizes and the loading budgets (docs/paseo-ui.md "Loading")
-spawnSync(process.execPath, [path.join(root, 'scripts', 'check-chunks.mjs'), path.join(root, 'dist')], {
+spawnSync(process.execPath, [path.join(root, 'app', 'scripts', 'check-chunks.mjs'), path.join(root, 'dist')], {
   stdio: 'inherit',
 });

@@ -14,7 +14,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import * as content from "./content.mjs";
 
-const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/package.json"));
+const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../package.json"));
 const { WebSocketServer } = require("ws");
 
 const here = path.dirname(new URL(import.meta.url).pathname);

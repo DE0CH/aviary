@@ -12,7 +12,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { startStandIn } from "./stand-in.mjs";
 
-const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/packages/app/package.json"));
+const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../packages/app/package.json"));
 const { chromium } = require("playwright");
 
 const MIN = 44;

@@ -192,7 +192,7 @@ async function checkBoxOnKeyboard(posture) {
 
 async function main() {
   const standIn = await startStandIn({
-    appDir: path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/packages/app/public"),
+    appDir: path.join(path.dirname(new URL(import.meta.url).pathname), "../../packages/app/public"),
     port: PORT,
     appScheme: pkg,
     quiet: true,
