@@ -65,8 +65,10 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/metro-cache
-          key: metro-${{ hashFiles('app/package-lock.json') }}-${{ hashFiles('app/packages/app/**') }}
-          restore-keys: metro-${{ hashFiles('app/package-lock.json') }}-
+          # the app config is in the prefix: Metro's cache holds the config it embedded, and a cache restored by the
+          # prefix across a config change built an old config into the entry (claudecodeui, 2026-11-19)
+          key: metro-${{ hashFiles('app/package-lock.json') }}-${{ hashFiles('app/packages/app/app.config.js') }}-${{ hashFiles('app/packages/app/**') }}
+          restore-keys: metro-${{ hashFiles('app/package-lock.json') }}-${{ hashFiles('app/packages/app/app.config.js') }}-
       - name: install (postinstall applies app/patches)
         run: npm --prefix app ci --no-audit --no-fund
       # an Expo bump that silently stops the no-__common patch applying would put lazy code back on the first load

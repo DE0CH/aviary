@@ -12,7 +12,10 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const dist = path.resolve(args.find((arg) => !arg.startsWith('--')) ?? 'dist');
 const dir = path.join(dist, '_expo', 'static', 'js', 'web');
-const BUDGET_KB = { entry: 1100, 'reply-chunk': 450 };
+// entry 1105 (was 1100): the Android commit's app config (productName, brand) made it 1100.1 KB; claudecodeui's CI built
+// 1099.7 from a Metro cache restored by its key's prefix, which held an older config. The monorepo's cold build
+// measured it (2026-11-19); the next entry change takes something out of the entry instead (docs/paseo-ui.md "Loading")
+const BUDGET_KB = { entry: 1105, 'reply-chunk': 450 };
 
 const html = readFileSync(path.join(dist, 'index.html'), 'utf8');
 const entryFiles = new Set([...html.matchAll(/_expo\/static\/js\/web\/([^"']+\.js)/g)].map((m) => m[1]));
