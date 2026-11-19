@@ -25,7 +25,7 @@ keeper of the same aviary commit. Ported from jarvis3's
 What is in it: Debian trixie with Node 22; documents, PDF and spreadsheet tools, CJK fonts, a Python venv `/opt/py`
 owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.325 root-owned at `/opt/claude-code` (the
 supervisor runs `/opt/claude-code/bin/claude` by that path; `/usr/local/bin/claude` links to it for shells);
-Qwen Code (a release of DE0CH/qwen-code pinned by sha256: `QWEN_CODE_RELEASE`, `QWEN_CODE_SHA256`) root-owned at
+Qwen Code (harness/qwen-code's release qwen-code-<sha12>, given by tag and sha256: `QWEN_CODE_TAG`, `QWEN_CODE_SHA256`) root-owned at
 `/opt/qwen-code` (`/opt/qwen-code/bin/qwen`, `/usr/local/bin/qwen`); the video edit engine, its tools and its asset
 library; `/usr/local/bin/supervisor`, `supervisor-keeper`, and `sandbox-secret`, `send-file`, `ask` and `video-check`, all `-> supervisor`
 (`video-check`: whether the generation's model, `$AVIARY_MODEL`, watches video and hears sound, asked of the model

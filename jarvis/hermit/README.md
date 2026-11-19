@@ -1,12 +1,13 @@
-# aviary/: Jarvis 4's side of the aviary harness
+# jarvis/hermit: Jarvis 4's side of the aviary harness
 
 Jarvis 4 dogfoods YYC AI (Deyao, 2026-11-11): a session with the harness `aviary` runs DE0CH/aviary's supervisor,
 the same build YYC AI's sandboxes run, and its conversation lives in Jarvis 4's own pigeon and magpie, the same
 builds as YYC AI's, at **https://chat.deyaochen.com**. Nothing in aviary is configured for Jarvis 4: it sees Jarvis 4
-only behind the contracts (DE0CH/aviary docs/CONTRACTS.md), through this directory's hermit and gateway.
+only behind the contracts (docs/CONTRACTS.md), through this directory's hermit and gateway. Jarvis chat's manifests
+are `jarvis/deploy`; a push to main deploys both with the rest of the repository (docs/DEPLOY.md).
 
 ```
-chat.deyaochen.com (Access "Jarvis 4 chat", Deyao)                     DE0CH/deyao-ai k8s/chat, namespace services
+chat.deyaochen.com (Access "Jarvis 4 chat", Deyao)                     jarvis/deploy, namespace services
   pigeon ─▶ magpie (Postgres chat-db, bucket deyao-chat-magpie)
      │         │
      └──────▶ hermit-jarvis ──(its service token: /api/remotes, /api/sessions/:id/start,
@@ -32,13 +33,13 @@ Jarvis 4 session machine (harness aviary)                                     �
   app's URL scheme. The scheme is the deployment's (`signIn.appScheme` in the settings file → `/v1/deployment`
   `signIn.appScheme`); it is read from the file only and never sent to a machine (`skip_serializing`: a session on
   an older image refuses a settings member it does not know).
-- The models are the deployment's settings (`HERMIT_SETTINGS`, DE0CH/deyao-ai `k8s/chat/settings.json`,
+- The models are the deployment's settings (`HERMIT_SETTINGS`, `jarvis/deploy/settings.json`,
   `src/settings.rs`: the product name, the menu, each model's thinking levels, context window and OpenRouter hosts;
   hermit-jarvis refuses to start on a file that cannot work and hands the settings to each machine's gateway in the
   boot reply). Each model names its own thinking level, `reasoning` (one of its `thinking`; Deyao, 2026-11-17: a
   per-model choice, no default): a conversation runs at it until a person picks another, and a file where a model
-  leaves it out is refused (`hermit-jarvis check-settings PATH`, which DE0CH/deyao-ai's chat-settings.yml runs with
-  the pinned image and chat-pin.yml before pinning a new one). The levels reach a machine as the boot reply's own
+  leaves it out is refused (`hermit-jarvis check-settings PATH`, which jarvis.yml runs with the build of the same
+  commit). The levels reach a machine as the boot reply's own
   `reasoning` member, not inside the settings: a session on an older image refuses a model member it does not know. The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. One owner of
   a conversation's model (Deyao, 2026-11-16): the chat's menu (magpie's `pickedModel`). The session's model
   (`SESSION_MODEL`) is only where its conversation starts: hermit-jarvis creates the conversation with it
@@ -81,14 +82,14 @@ Jarvis 4 session machine (harness aviary)                                     �
   API with `OPENROUTER_API`, the body as it came (`machine.rs`); the model reaches a machine as the boot reply's own
   `embedding`, beside the settings, as `reasoning` does. pigeon embeds a search's query through :8082
   (`src/embeddings.rs`, `HERMIT_OPENROUTER_KEY`; without it a search matches words only). magpie keeps the vectors in
-  chat-db with pgvector (DE0CH/deyao-ai `k8s/chat/db.yaml` creates the extension).
+  chat-db with pgvector (`jarvis/deploy/db.yaml` creates the extension).
 - The conversation's title is the session's name from the New session page (`SESSION_LABEL`, sent with hermit's
   create as `title`: magpie keeps it as a rename, so the title model leaves it alone), else magpie's, generated from
   the first message; a rename in the chat wins over both. It is the session's title on its card: hermit-jarvis reads it (`GET /v1/hermit/conversations/{id}`) and answers it to each health
   report, aviary-gateway serves it in `/jarvis/state`, and the harness's shim writes it as an `ai-title` line beside
   the mirrored transcripts (`aviary-title.jsonl`), where the machine's status reads a Claude session's title.
 - hermit and the gateway are Rust, here; the gateway's sandbox-facing half runs on each session machine.
-- pigeon and magpie are a DE0CH/deyao-ai tenant.
+- pigeon and magpie run in Jarvis 4's tenant namespace `services` (DE0CH/jarvis4 k8s/cluster/tenants/chat.yaml).
 - The session image's user `claude` is uid 1000 (the supervisor runs the agent as uid 1000).
 - hermit learns which session a machine is from the router (the machine signs its boot; the router checks the
   signature for hermit), never from the machine's word.
@@ -100,12 +101,12 @@ Jarvis 4 session machine (harness aviary)                                     �
 |---|---|---|
 | `hermit-jarvis` | `src/bin/hermit-jarvis.rs`, image `ghcr.io/de0ch/hermit-jarvis` | :8080 the hermit contract (`src/hermit.rs`), :8081 the gateway listener (`src/central.rs`), :8082 pigeon's models route, :9090 ops; the router as the sessions' truth (`src/reconcile.rs`, `src/jarvis.rs`) |
 | `aviary-gateway` | `src/bin/aviary-gateway.rs` → `src/machine.rs`, in the session image | the machine's half of the gateway, the signed boot, the supervisor's health, deliveries |
-| `harness-aviary.sh` | `session-image/base/` | the harness launcher |
-| `aviary-sandbox` | `session-image/tools/` (jarvis-tools) | the supervisor's namespace, with Jarvis's session commands in it |
+| `harness-aviary.sh` | DE0CH/jarvis4 `session-image/base/` | the harness launcher |
+| `aviary-sandbox` | DE0CH/jarvis4 `session-image/tools/` (jarvis-tools) | the supervisor's namespace, with Jarvis's session commands in it |
 | the session's tunnel agent | `harness-aviary.sh` `run_tunnel` (`cf-tunnel-agent.js`) | `https://<session id>-s.deyaochen.com/` → 127.0.0.1:8899 on the machine, which the sandbox shares: its drop pages and content. The agent runs on the machine's side because the tunnel proof never enters the sandbox |
-| the sandbox: supervisor, keeper, Claude Code, the agent's tools | DE0CH/aviary's sandbox image `ghcr.io/de0ch/hermit-sandbox`, pinned by digest in `session-image/aviary.json`, unpacked on the session's volume and entered by `aviary-sandbox` | the image YYC AI's sandboxes run, unmodified |
-| pigeon, magpie, pigeon-app | DE0CH/deyao-ai `k8s/chat/` | pinned by DE0CH/deyao-ai `chat-pin.yml` |
-| router | `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
+| the sandbox: supervisor, keeper, Claude Code, the agent's tools | DE0CH/aviary's sandbox image `ghcr.io/de0ch/hermit-sandbox`, pinned by digest in DE0CH/jarvis4 `session-image/aviary.json`, unpacked on the session's volume and entered by `aviary-sandbox` | the image YYC AI's sandboxes run, unmodified |
+| pigeon, magpie, pigeon-app | `jarvis/deploy` | tags written by the deploy run (docs/DEPLOY.md) |
+| router | DE0CH/jarvis4 `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
 
 ## A conversation begun in the chat (Deyao, 2026-11-18)
 
@@ -199,27 +200,27 @@ Secret `chat-hermit`). The router admits it by client id, named in git (`HERMIT_
 k8s/cluster/router/router.yaml), as it admits the health probe's: no browser login, and removing the line (or the token
 at Cloudflare) cuts it off.
 
-## Bumping aviary (dogfooding)
+## Deploying (dogfooding)
 
-`aviary-pin.yml` (every 15 min) pins DE0CH/aviary's newest release into `session-image/aviary.json` (the release
-and its sandbox image by digest) and this crate's `Cargo.toml`, once the replica below passed on the candidate (its
-session image built as `jarvis4-session:pin-<release>`, on a real Fly machine): a release that breaks a session's
-sandbox stays unpinned, with the run red. DE0CH/deyao-ai `chat-pin.yml` pins the same release's pigeon and magpie, the newest pigeon-app and
-hermit-jarvis. A release exists only when aviary's CI passed, so every green aviary commit reaches Jarvis 4 within
-the hour, before YYC AI (whose pins move by hand).
+A push to this repository's main is the deploy (docs/DEPLOY.md). Before the merge, ci.yml runs the replica below on
+the branch's images and jarvis.yml tests hermit-jarvis and checks the chat's settings with that build. deploy.yml then
+writes, in one DE0CH/jarvis4 commit, the sessions' release and sandbox and aviary-gateway's release
+(`session-image/aviary.json`), Jarvis chat's source tag and image tags (`k8s/cluster/tenants/chat.yaml`) and the
+fabric's hermit and sandboxd (`k8s/cluster/fabric`); Flux and jarvis4's images.yml roll them out, Jarvis chat before
+YYC AI.
 
 ## Developing
 
-- `./dev-patch.sh ~/workspace/aviary test` builds and tests against a local DE0CH/aviary checkout (before an aviary
-  change is pushed). `HERMIT_TEST_DATABASE_URL`: a TLS Postgres server (aviary-pg requires TLS); `tests/flow.rs`
-  runs the whole life above against it, aviary's FakeMagpie and a stand-in router.
+- `cargo test` here builds against this checkout's crates (by path). `HERMIT_TEST_DATABASE_URL`: a TLS Postgres
+  server (aviary-pg requires TLS); `tests/flow.rs` runs the whole life above against it, aviary's FakeMagpie and a
+  stand-in router.
 - Pitfall: `reqwest` here has no default TLS provider (`rustls-no-provider`, as in aviary): every client takes
   `aviary_core::http::tls_config()`, or it panics at build.
 
 ## End to end, with no Inbox: `rust/e2e-kernel` with `E2E_HARNESS=aviary`
 
-The whole harness on a replica: aviary-pin.yml's `replica` job on every aviary release before it is pinned, and by
-hand from a session (needs `JARVIS2_FLY_TOKEN`, store `infra`; sudo, crane, flyctl):
+The whole harness on a replica: ci.yml's `replica` job on every branch's images before the merge, and by
+hand from a DE0CH/jarvis4 checkout in a session (needs `JARVIS2_FLY_TOKEN`, store `infra`; sudo, crane, flyctl):
 `(cd rust && cargo build --release -p e2e-kernel)`, then `session-secret --keys JARVIS2_FLY_TOKEN --exec env
 E2E_HARNESS=aviary rust/target/release/e2e-kernel` (about 8 minutes; logs in `$E2E_LOGS`, default
 `/tmp/jarvis2-e2e-kernel-logs`). A throwaway kernel line and router on the session (the TEST master key, a root key of

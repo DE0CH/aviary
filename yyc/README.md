@@ -2,10 +2,10 @@
 
 YYC AI (`https://ai.yyc-internal.com`; the old `ai.yyc.deyaochen.com` answers 301 to the same path there) is the staff
 AI chat of YYC: **Claude Code runs in a gVisor sandbox per conversation**, and staff use it through the web and iOS
-apps of DE0CH/claudecodeui (`paseo/`, built as the `pigeon-app` bundle). Staff sign in through Cloudflare Access; only
+apps of this repository's `app/` (built as the `pigeon-app` bundle). Staff sign in through Cloudflare Access; only
 the addresses in the access catalogue's `users` get in ("The staff allowlist"). Design and history: `refactor/` (DESIGN.md, the specs,
-DECISIONS); the code: DE0CH/aviary (pigeon, magpie, hermit, sandboxd, the supervisor) and DE0CH/jarvis3 (egress and
-tools, image `jarvis3-chat`).
+DECISIONS); the code: this repository, DE0CH/aviary (`crates/`: pigeon, magpie, hermit, sandboxd, the supervisor;
+`egress/`: egress and tools, image `egress`; `drive/`: YYC Drive).
 
 What runs where (the Talos cluster `yyc-talos`, `../news-stream/deploy/clusters/talos/README.md`):
 - namespace `yyc-ai`: **pigeon** (the stateless gateway the apps talk to: Paseo's protocol on `/paseo-ws`, the REST
@@ -56,20 +56,21 @@ YYC's Cloudflare account: `/news-stream/deploy/cloudflare/tofu/` (`access.tf`, `
 
 | Path | What |
 |---|---|
-| `deploy/` | the deploy tree, applied to `yyc-talos` by `.github/workflows/yyc-ai.yml` (below) |
-| `deploy/sealed/` | the SealedSecrets (sealed with `/infra/sealed-secrets-talos.pem`), applied by the workflow's fenced step |
-| `oneshot/` | Jobs run by hand outside the inventory (`run.sh`, on the images `deploy/` pins): `jfs-owner.yaml` |
+| `deploy/` | the deploy tree, applied to `yyc-talos` by the repository's `.github/workflows/deploy.yml` (below; `docs/DEPLOY.md`) |
+| `deploy/sealed/` | the SealedSecrets, sealed by DE0CH/yyc-code's `infra/seal.py --root <this repo> --map yyc/secrets.txt` with its Talos cert, applied by the deploy's fenced step |
+| `secrets.txt` | the map of those Secrets and the store `yyc` keys their values come from |
+| `oneshot/` | Jobs run by hand outside the inventory (`run.sh`, on the deployed images: the tags of the last Deployment `yyc-ai`): `jfs-owner.yaml` |
 | `infra/bridges.sh`, `bridges.json` | the cross-cluster bridges (DESIGN 15.5) |
 | `infra/talos-ready.sh` | the new cluster's footing checks N1-N12 (DESIGN 15.2) |
 | `infra/make-keys.py` | new store keys (pair tokens, URLs, the fabric PKI) |
 | `infra/openrouter.py` | the key `yyc-chat`'s guardrail (models from `deploy/egress/egress.json`; `--verify` checks it live) |
-| `tests/` | `check_deploy.py` and its seeded violations, `check_pins_green.py`, the ZDR guard, the bridges and seal tests, `check_pg_ingress.py`, `e2e/` (the live end-to-end) |
+| `tests/` | `check_deploy.py` and its seeded violations, the ZDR guard (on this repository's `egress/`), the bridges test, `e2e/` (the live end-to-end) |
 | `refactor/` | the design and plan of record of the stack (history; not operational) |
 
 ## The deploy tree (`deploy/`, spec-platform 9.1)
 
-- `kustomization.yaml`: image pins (one aviary sha12 for pigeon, magpie, hermit and sandboxd; `pigeon-app` at a
-  claudecodeui sha12; `jarvis3-chat` at a jarvis3 sha12) and the ConfigMap generators: `hermit-config` (hashed:
+- `kustomization.yaml`: the images (their tags are written by the deploy run: each the last commit that changed its
+  part, `deploy/images.json`; `deploy` in git is a placeholder) and the ConfigMap generators: `hermit-config` (hashed:
   `hermit/hermit.json`, `system-prompt.md`, `sandbox-rules.md`, `title-system.md`), `hermit-skills` (hashed: the
   managed skills), `catalogue` (fixed name: a change reaches hermit and tools in place), `pg-forward-config`,
   `egress-config`, `tools-config`. The patches carry each Deployment's
@@ -86,34 +87,32 @@ YYC's Cloudflare account: `/news-stream/deploy/cloudflare/tofu/` (`access.tf`, `
 - Every Deployment that serves rolls with `maxUnavailable: 0` and at least two replicas; the overlay route is a
   DaemonSet on its nodes.
 
-## Deploying (`.github/workflows/yyc-ai.yml`, `tools/yyc-apply/README.md`)
+## Deploying (`docs/DEPLOY.md`: a push to main is the deploy)
 
-Edit `deploy/`, `git pull --rebase origin main`, push to main. Job `check` gates: the render and kubeconform (also of
-both `db` folders), `tests/check_deploy.py` (no behaviour configuration on pigeon and magpie, env only from Secrets in
-`infra/secrets.txt`, the zero-downtime shape, one aviary sha12 and every pin pullable, policies matching workloads,
-egress.json against hermit.json, placement in network `yyc` and fsn1, pigeon's sizes, the gateway's host.json, nothing
-in `jarvis`/`kube-system`/`flux-system`, magpie-pg's WAL sizes) and its seeded-violation tests, `/infra/seal.py
---check --names-only`, the pinned hermit's `catalogue-check`, `tests/check_pg_ingress.py`, `yyc-apply check`
-(deployer rights, the sealed fence, trailers), the ZDR guard, `tests/check_pins_green.py` (every pinned image's commit
-passed its own CI: aviary `ci`, claudecodeui `pigeon-app`, jarvis3 `chat`; a pin on a red, running or untested commit
-is refused), and the applier's own tests when the applier changed. Job `deploy` plans, applies in order, waits for
-every rollout and prunes; it also runs every 3 h (reverting drift) and on dispatch (`mode: plan` only plans). Job
-`e2e`, after an applying push or dispatch (not the 3-hourly run), tests the live site with `tests/e2e/live_chat.py`:
-signs in as bot@deyaochen.com by Access's e-mailed code (read through the bot-mail Worker's Access-gated
-`/access-code`, service token `yyc-ai-e2e` = Actions secrets `E2E_CODE_CLIENT_ID`/`_SECRET`), `/api/jarvis/me`, one
-chat turn the model must answer; a red e2e goes to YYC's Discord like a red deploy, screenshots in the run's artifact.
+Change `deploy/` (or any code YYC AI runs: `crates/`, `app/`, `egress/`, `drive/`, `harness/qwen-code/`) on a branch
+and push it. `.github/workflows/yyc.yml` checks the folder with that commit's tags written in (aviary-deploy yyc):
+the render and kubeconform, `tests/check_deploy.py` (no behaviour configuration on pigeon and magpie, env only from
+Secrets in `secrets.txt`, the zero-downtime shape, one aviary tag and every image pullable, policies matching
+workloads, egress.json against hermit.json, placement in network `yyc` and fsn1, pigeon's sizes, the gateway's
+host.json, nothing in `jarvis`/`kube-system`/`flux-system`, magpie-pg's WAL sizes) and its seeded-violation tests,
+`seal.py --check`, that commit's hermit's `catalogue-check`, `yyc-apply check` (deployer rights, the sealed fence,
+trailers) and the ZDR guard; the parts' own workflows run their suites. The gate merges the branch once all are
+green. On main, `deploy.yml` deploys Jarvis chat, then this folder: plans, applies in order, waits for every rollout
+and prunes (also every 3 h, reverting drift), deploys YYC Drive's edge, bakes the host AMI when the sandbox image,
+sandboxd, runsc or the disk changed, updates the sandbox gateway when its release changed, then tests the live site
+with `tests/e2e/live_chat.py` (signs in as bot@deyaochen.com by Access's e-mailed code, read through the bot-mail
+Worker's `/access-code` with the service token `yyc-ai-e2e`; `/api/jarvis/me`; one chat turn the model must answer)
+and `live_drive.py`, and the site's install from Chrome on Android. A red run goes to YYC's Discord.
 
-**Test first.** Every YYC AI change, in any of its repos, starts with a test that fails without it (a bug: the test
-that reproduces it), committed with the change; the suites run on every push and gate what ships (aviary `ci`,
-jarvis3 `chat`, claudecodeui `paseo-ui`, which `pigeon-app` and `yyc-ios` run before building, this workflow).
+**Test first.** Every YYC AI change starts with a test that fails without it (a bug: the test that reproduces it),
+committed with the change; the suites run on every branch and the gate merges only green ones.
 
 - **Removing an object** needs its trailer in the commit message: `yyc-apply plan … --trailers` against the live
   cluster prints the `Deploy-Prune:` lines (a revert that removes objects carries them too).
-- **Bumps:** one aviary sha12 for pigeon, magpie, hermit and sandboxd, and `hermit.json` `fabric.sandboxd` =
-  `aviary-<sha12>`; the sandbox image by digest in `hermit.json` `sandbox.image`; `jarvis3-chat` at a jarvis3 commit
-  whose `chat` workflow passed (the ZDR guard reads that tag; `check_pins_green.py` refuses any other).
-- **The AMI** follows `hermit.json` by itself: `.github/workflows/hermit-ami.yml` bakes a new `hermit-host` AMI when
-  `sandbox.image`, `fabric.sandboxd` or `fabric.runsc` changed (about 15 min) and publishes the sandbox image to the bucket
+- **No bumps:** the images, `hermit.json`'s `fabric.sandboxd` and `sandbox.image` and `hermit/gateway.release` are
+  written by the deploy run from the commit it deploys; nothing is pinned by hand.
+- **The AMI** follows by itself: the deploy run's `infra.sh sync` bakes a new `hermit-host` AMI when `sandbox.image`,
+  `fabric.sandboxd` or `fabric.runsc` changed (about 15 min) and publishes the sandbox image to the bucket
   `fabric.aws.imageBucket` first; hermit starts a sandbox on a new image only once the bucket holds it.
 - **After a deploy** (spec-platform 15.6): `kubectl -n yyc-ai rollout status
   deploy/{pigeon,magpie,hermit,egress,tools,cloudflared}` and the ops snapshot's `health.state` `ok`.
@@ -134,10 +133,9 @@ restarts Claude Code at an idle point).
 
 ## Code access: YYC AI reads its own source and deployment (Deyao, 2026-11-12)
 
-Every conversation can clone, read-only, the four repositories YYC's systems are made of (managed skill `code`):
-this repository through egress's sandbox route `code` (`git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code`),
-and DE0CH/aviary, DE0CH/jarvis3 and DE0CH/claudecodeui straight from github.com. All four are public: whatever is
-committed here is readable by anyone.
+Every conversation can clone, read-only, the two repositories YYC's systems are made of (managed skill `code`):
+DE0CH/yyc-code through egress's sandbox route `code` (`git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code`),
+and this one, DE0CH/aviary, straight from github.com. Both are public: whatever is committed here is readable by anyone.
 
 - **The route:** `egress.json` route `code` → `https://github.com` (through the socks pool), `allowPaths`
   `/DE0CH/yyc-code/`, `identity: false` (no `Aviary-*` header, so no staff e-mail reaches GitHub; egress's log row still
@@ -163,7 +161,7 @@ schedules), but it never acts outside YYC: nothing that sends, posts, pays or re
   `wisers_*` tools, seen as `data_wisers_*` (prefix `data`: the agent's tool names carry no company name, 2026-11-02).
   yyc-mcp's tools pass only if listed in `deploy/tools/tools.json` `upstreams[0].tools` (default deny). Never list
   anything that sends mail, posts or changes data outside YYC.
-- **Sandbox internet = every site except a deny list** (Deyao, 2026-11-10: fewer false refusals; jarvis3
+- **Sandbox internet = every site except a deny list** (Deyao, 2026-11-10: fewer false refusals;
   egress/CHAT.md "The sandbox internet rules", `generatedAllowlist`): refused are pastebins, file sharing and object
   storage, webhooks and request catchers, tunnels, anyone-runs-a-server platforms, form builders, webmail, open
   proxies/VPNs/shorteners and the other risky UT1 categories; every destination also against Cloudflare's
@@ -227,16 +225,16 @@ Staff only ever reach models through YYC's own infra, which keeps every request 
 1. **A fixed shortlist:** `deploy/egress/egress.json` `models` (plus `smallModel`, `titleModel`). Egress's route
    `model` refuses any other model (400, `deny:model`). Every model on it must have ZDR endpoints
    (`GET https://openrouter.ai/api/v1/endpoints/zdr`).
-2. **Every request forces ZDR:** jarvis3's egress merges `provider: {zdr: true, data_collection: "deny"}` into the
+2. **Every request forces ZDR:** egress merges `provider: {zdr: true, data_collection: "deny"}` into the
    body of every request on a route with `"model": true` (`model`), over whatever the caller sent, and refuses a body
-   that is not a JSON object (`ModelBodyRewriter`, `chat/src/egress/modelbody.ts`, as the body streams through `proxy.ts`). It is code, not a setting. OpenRouter treats
+   that is not a JSON object (`ModelBodyRewriter`, `egress/src/egress/modelbody.ts`, as the body streams through `proxy.ts`). It is code, not a setting. OpenRouter treats
    per-request `zdr` as OR with the key's and account's settings.
 3. **The key's guardrail** `yyc-chat` (`infra/openrouter.py`) is a third layer. Deyao's personal account settings are
    no guard.
 
-`tests/test_zdr.py` (CI `.github/workflows/yyc-ai-zdr.yml` on every change and daily; also a step of `yyc-ai.yml`)
-fails when a shortlisted model has no ZDR endpoint, when a route to openrouter.ai is not a forced model route, or when
-the pinned jarvis3 commit lacks the forcing or its test.
+`tests/test_zdr.py` (CI `yyc.yml` on every change and daily) fails when a shortlisted model has no ZDR endpoint,
+when a route to openrouter.ai is not a forced model route, or when this repository's egress lacks the forcing or its
+test.
 
 ## Models and budget (Deyao, 2026-10-21: demo stage)
 
@@ -292,8 +290,8 @@ addresses, so it is never a file in git (Deyao, 2026-11-16; check item A): it li
 `YYC_CATALOGUE_JSON`, and its readers get it from there. hermit and tools read the Secret `yyc-ai/catalogue`
 (`sealed/catalogue.yaml`, re-read every 30 s), yyc-mcp checks the Secret `yyc/yyc-catalogue` on every call (key
 `config.json`, applied by `yyc-apps.yml`), and tofu builds the Access policy `YYC users` from the Actions secret
-`YYC_CATALOGUE_JSON` (`/news-stream/deploy/cloudflare/tofu/access.tf`, variable `catalogue`), which `yyc-ai.yml`'s
-catalogue check reads too. Access doesn't send a code to an unlisted address.
+`YYC_CATALOGUE_JSON` (DE0CH/yyc-code `news-stream/deploy/cloudflare/tofu/access.tf`, variable `catalogue`), which
+`yyc.yml`'s and `deploy.yml`'s catalogue check reads too (this repository's environments `checks` and `yyc-ai`). Access doesn't send a code to an unlisted address.
 
 To change it: `/infra/catalogue.sh get FILE`, edit, `/infra/catalogue.sh put FILE` (the store key, both sealed files
 and the Actions secret in one go), commit and push the two sealed files, and `gh workflow run cloudflare.yml` (or its
@@ -301,7 +299,7 @@ next half hour) for the Access policy.
 
 ## Taking YYC AI offline, rolling back
 
-- **A bad deploy:** revert the commit and push; `yyc-ai.yml` applies the previous state pod by pod (with the
+- **A bad deploy:** revert the commit (on a branch; the gate merges it) and `deploy.yml` applies the previous state pod by pod (with the
   revert's `Deploy-Prune` trailers if it removes objects).
 - **Offline for staff:** point the Access app `staff_ai` in `/news-stream/deploy/cloudflare/tofu/access.tf` at the
   `admins` policy and push (`users` is every YYC app's list, so emptying it would lock staff out of all of them).
@@ -335,7 +333,7 @@ sealed from the store `yyc` with `/infra/seal.py`; the authoritative map of Secr
 `/infra/secrets.txt` (pair tokens: `<CALLER>_TOKEN_<CALLEE>` = `<CALLEE>_ACCEPT_<CALLER>`, store
 `YYC_TOKEN_<CALLER>_<CALLEE>`). New keys: `infra/make-keys.py OUT` (random keys and the URLs made from them),
 `--derived` (from existing keys), `--fabric AVIARY` (the fabric PKI and the gateway's WireGuard key) write files and
-print the `scripts/store-put.py yyc …` command. Change one: put the new value into the store, `infra/seal.py
-yyc-ai/<name>`, bump the readers' `yyc/secrets-rev`, commit, push. A NEW Secret must be a SealedSecret too (a line in
-`/infra/secrets.txt`, then seal.py); a plain Secret must never be committed. `yyc-ai.yml`'s fenced step applies
+print the `scripts/store-put.py yyc …` command. Change one: put the new value into the store, DE0CH/yyc-code's `infra/seal.py --root
+. --map yyc/secrets.txt yyc-ai/<name>`, bump the readers' `yyc/secrets-rev`, commit, push. A NEW Secret must be a SealedSecret too (a line in
+`secrets.txt`, then seal.py); a plain Secret must never be committed. `deploy.yml`'s fenced step applies
 `deploy/sealed/` and can create SealedSecrets and nothing else. The key that opens them exists only in the cluster.

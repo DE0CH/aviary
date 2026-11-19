@@ -1,7 +1,7 @@
 # Harnesses
 
 A conversation's turns run in a harness: the agent program in the sandbox. There are two, **Claude Code**
-(`claude`) and **Qwen Code** (`qwen`, the fork DE0CH/qwen-code, whose upstream is merged by hand only). Both are
+(`claude`) and **Qwen Code** (`qwen`, the fork in harness/qwen-code, whose upstream is merged by hand only). Both are
 first-class: the supervisor drives each natively, and the store (magpie) turns each one's transcript into the same
 events and rows. Nothing above magpie knows which harness a conversation is in, except that the app asks before a
 conversation moves from one to the other. `aviary_core::harness::Harness` is the type; `claude` is the default
@@ -102,7 +102,7 @@ can be taken up there, with no message from anyone.
   harness and session the conversation last ran. The driver gets it a sandbox as for any turn.
 - **What the supervisor does:** it hands the harness its own request to go on instead of a message. Qwen Code has
   one, `continue_last_turn` (tool results whose reply never came are sent again; tool calls nothing answered are
-  closed; the messages that failed after them are left out, DE0CH/qwen-code `de0ch/continue-last-turn.e2e.mjs`).
+  closed; the messages that failed after them are left out, harness/qwen-code `de0ch/continue-last-turn.e2e.mjs`).
   Its answer says whether a turn was cut off: when none was, the turn fails with that. What the harness then
   writes is the turn, and its `result` ends it.
 - **Claude Code has no such request:** magpie refuses (409 `nothing_to_continue`), and a supervisor asked anyway
