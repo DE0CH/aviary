@@ -176,6 +176,13 @@ server (`server/`) serves no deployment.
   A browser test of anything that reads the host runtime replaces `@/runtime/host-runtime` with `vi.mock`, as that
   one does: the tests' server neither scans nor compiles past it (`vitest.config.ts`), since the host runtime imports
   most of the app.
+- **Pinned conversations** (Deyao, 2026-11-19, design A): 置頂 / 取消置頂 is the first item of a conversation's ⋯ menu
+  (the sidebar row's and the header's, `screens/workspace/conversation-menu-items.tsx`, `useActiveWorkspacePin`).
+  Pinned conversations sit in Paseo's own 「已置頂」 section above 「對話」 (`components/sidebar-workspace-list.tsx`,
+  `hooks/use-sidebar-pins.ts`: the most recent pin first, the header folds it), each with its status spot like any
+  row (no project icon). The pin is the server's: `workspace.pin.set` and the workspace's `pinnedAt` (pigeon, from
+  magpie's M5 `pinned`), offered while `server_info` has `features.workspacePinning`, so it follows the person to
+  every device. The touch-target walk pins and unpins through both menus and checks the section.
 - **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
   `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
   entry; an agent's `closed` (a sentence: its session is paused) makes the message box read-only with that sentence
