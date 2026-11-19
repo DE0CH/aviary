@@ -845,6 +845,7 @@ jobs:
           JARVIS2_FLY_TOKEN: ${{ secrets.REPLICA_FLY_TOKEN }}
           E2E_HARNESS: aviary
           E2E_SESSION_IMAGE: ${{ env.IMAGE }}
+          E2E_HERMIT_JARVIS: ${{ github.workspace }}/jarvis/hermit
           E2E_LOGS: /tmp/e2e-aviary-logs
         run: |
           [ -n "$JARVIS2_FLY_TOKEN" ] || { echo "::error::secret REPLICA_FLY_TOKEN is missing from the GitHub environment 'checks'"; exit 1; }
@@ -919,6 +920,7 @@ jobs:
           E2E_HARNESS: aviary
           E2E_FABRIC_IMAGE: ${{ env.FABRIC }}
           E2E_SESSION_IMAGE: ${{ env.SESSION }}
+          E2E_HERMIT_JARVIS: ${{ github.workspace }}/jarvis/hermit
           E2E_LOGS: /tmp/e2e-fabric-logs
         run: |
           (cd rust && cargo build --release --locked -p e2e-kernel)
