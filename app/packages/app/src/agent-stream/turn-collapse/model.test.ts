@@ -72,19 +72,17 @@ describe("collapseTurns", () => {
     expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
   });
 
-  it("keeps question and wait cards where they were asked or read, above the reply, when the turn folds", () => {
+  it("while the cards are off, folds a call that read an answer like any other step", () => {
     const card = { kind: "question", id: "q-1", input: {}, marker: "(answer to q-1)", state: "answered", askedAt: "x" };
     const withMeta = (id: string, metadata: Record<string, unknown>): ToolCallItem => {
       const base = shell(id);
       const data = (base.payload as { data: object }).data;
       return { ...base, payload: { source: "agent", data: { ...data, metadata } } } as ToolCallItem;
     };
-    const asked = withMeta("q-1", { personAsk: { ...card, readBy: "c2" } });
     const read = withMeta("c2", { personRead: [{ ...card, readBy: "c2" }] });
-    const result = collapse([user("u1"), shell("c1"), asked, read, reply("final")]);
-    expect(ids(result.tail)).toEqual(["u1", "q-1", "c2", "final"]);
-    // neither card's call counts as a step of the folded turn
-    expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
+    const result = collapse([user("u1"), shell("c1"), read, reply("final")]);
+    expect(ids(result.tail)).toEqual(["u1", "final"]);
+    expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 2 }));
   });
 
   it("keeps a call that sent files (its cards) under the reply when the turn folds", () => {

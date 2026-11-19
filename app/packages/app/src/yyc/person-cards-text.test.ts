@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  PERSON_CARDS,
+  isHiddenPersonRow,
   cardAnswers,
   cardQuestions,
   cardViewWhereAsked,
@@ -42,9 +44,13 @@ describe("where a card shows", () => {
     expect(readPersonAsk({ personAsk: { id: 3 } })).toBeNull();
     expect(readPersonRead({ personRead: [question, { nope: true }] }).map((c) => c.id)).toEqual(["q-1"]);
     expect(readPersonRead(undefined)).toEqual([]);
-    expect(isPersonCardCall({ personRead: [question] })).toBe(true);
-    expect(isPersonCardCall({ personAsk: question })).toBe(true);
+    // switched off (Deyao, 2026-11-19): no call is a card's, and a card's own row is hidden
+    expect(PERSON_CARDS).toBe(false);
+    expect(isPersonCardCall({ personRead: [question] })).toBe(false);
+    expect(isPersonCardCall({ personAsk: question })).toBe(false);
     expect(isPersonCardCall({ background: true })).toBe(false);
+    expect(isHiddenPersonRow({ personAsk: question })).toBe(true);
+    expect(isHiddenPersonRow({ personRead: [question] })).toBe(false);
   });
 });
 
