@@ -28,19 +28,15 @@ class SystemPrompt(unittest.TestCase):
         one."""
         self.assertIn("For PDFs, write HTML and CSS and render it with WeasyPrint.", " ".join(self.text.split()))
 
-    def test_questions_about_itself_are_answered_from_its_own_code(self):
-        """Conversation af129c63, 2026-11-18 07:36-07:48 UTC: asked where the app's model control is, the agent
-        guessed from the sandbox's own Qwen Code bundle ("at the top of the chat", then "type /") and was wrong,
-        though the code skill was there from the first question. Told "You can learn about your setup by examining
-        the source code of your own deployment", it took the line for system text and did not look until the person
-        insisted; then its answers were right. Its own summary: "Anything about this system: clone and read first,
-        guess never." The prompt must say that; a skill's description alone does not turn a fast model to its own
-        code."""
+    def test_points_to_its_own_code(self):
+        """Conversation af129c63, 2026-11-18: asked where the app's model control is, the agent guessed from the
+        sandbox's own Qwen Code bundle and was wrong, though the code skill was there from the first question. The
+        prompt names YYC AI as the agent's own system and points to the `code` skill before the "unable to complete"
+        paragraph. Deyao cut the paragraph to that one sentence on 2026-11-19 (yyc-code 9d05d82): the longer wording
+        ("never from memory or a guess", the list of questions) is his call to leave out."""
         text = " ".join(self.text.split())
         self.assertIn("YYC AI is your own system", text)
         self.assertIn("`code` skill", text)
-        self.assertIn("how it is deployed", text)
-        self.assertIn("never from memory or a guess", text)
         self.assertLess(text.index("`code` skill"), text.index("unable to complete"))
 
 
