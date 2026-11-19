@@ -58,7 +58,10 @@ let step = 0;
 function screenshot(name) {
   step += 1;
   const file = path.join(out, `${String(step).padStart(2, "0")}-${name}.png`);
-  fs.writeFileSync(file, execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024 }));
+  const raw = execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024 });
+  // a profile with two screens (the Pixel Fold's) prints a warning ahead of the picture
+  const start = raw.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  fs.writeFileSync(file, start > 0 ? raw.subarray(start) : raw);
   return file;
 }
 
@@ -99,6 +102,20 @@ const within = (inner, outer) =>
 const centre = (n) => [Math.round((n.box.left + n.box.right) / 2), Math.round((n.box.top + n.box.bottom) / 2)];
 const tap = (n) => shell("input", "tap", ...centre(n).map(String));
 
+// Dialogs that are neither the app's nor the test's: the emulator's "… isn't responding" (its launcher, on a slow
+// runner: Wait) and Chrome's first-run offers in the sign-in tab
+const NUISANCE = /^(Wait|Use without an account|No thanks|No, thanks|Not now|Got it|Accept & continue|Don.t allow|Dismiss|Skip)$/;
+function answerNuisance(nodes) {
+  if (nodes.some((n) => n.text.includes("isn't responding"))) {
+    const wait = byText(nodes, "Wait");
+    if (wait) tap(wait);
+    return true;
+  }
+  const button = nodes.find((n) => n.cls.endsWith("Button") && NUISANCE.test(n.text));
+  if (button) tap(button);
+  return Boolean(button);
+}
+
 async function waitFor(find, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
   let nodes = [];
@@ -106,6 +123,7 @@ async function waitFor(find, timeoutMs, label) {
     nodes = dumpUi();
     const found = find(nodes);
     if (found) return found;
+    if (answerNuisance(nodes)) await sleep(2000);
     await sleep(1000);
   }
   if (label) dumpUi(`timeout-${label}`);
@@ -180,6 +198,9 @@ async function main() {
     // Chrome opens the sign-in (a Custom Tab): no first-run screens in the way
     tryShell("am", "set-debug-app", "--persistent", "com.android.chrome");
     tryShell("sh", "-c", "echo '_ --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line");
+    shell("logcat", "-G", "32M"); // room for the whole run's log
+    // a fresh emulator's Play Store updates itself and starves everything else (the launcher stops responding)
+    tryShell("pm", "disable-user", "--user", "0", "com.android.vending");
     // the emulator has a hardware keyboard: show the on-screen one anyway, as on a phone
     shell("settings", "put", "secure", "show_ime_with_hard_keyboard", "1");
     shell("settings", "put", "system", "accelerometer_rotation", "0");
@@ -188,8 +209,17 @@ async function main() {
 
     // ---- folded: the cover screen ----
     setScreen(COVER);
-    shell("monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1");
-    const signIn = await waitFor((n) => byId(n, "yyc-sign-in"), 120_000, "sign-in");
+    // let the freshly booted emulator settle (its launcher's "isn't responding" comes in the first minute)
+    for (let i = 0; i < 10; i += 1) {
+      answerNuisance(dumpUi());
+      await sleep(3000);
+    }
+    // a freshly booted emulator sometimes drops the first start: ask again
+    let signIn = null;
+    for (let attempt = 0; attempt < 3 && !signIn; attempt += 1) {
+      shell("am", "start", "-W", "-n", `${pkg}/.MainActivity`);
+      signIn = await waitFor((n) => byId(n, "yyc-sign-in"), 60_000, attempt === 2 ? "sign-in" : undefined);
+    }
     screenshot("cover-sign-in");
     if (!check("the app starts on its sign-in screen", signIn)) return;
     tap(signIn);
