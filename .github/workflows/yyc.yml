@@ -27,7 +27,8 @@ env:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # the wait for this commit's images (up to 90 min, while ci builds them) and the checks after it
+    timeout-minutes: 120
     # the catalogue (people's addresses) is the `checks` environment's secret, never a file in git
     environment: checks
     steps:
