@@ -5,8 +5,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # applied by the deploy run into Jarvis 4's tenant namespace (it was the Flux tenant's targetNamespace)
 namespace: services
-# branding.yaml: the chat's own look (app/packages/app src/yyc/brand.ts: the app bundle holds
-# neutral files under /branding/, pigeon mounts these over them), written by jarvis/branding.py from branding/
+# branding.yaml: the chat's own look (DE0CH/claudecodeui paseo/packages/app src/yyc/brand.ts: the app bundle holds
+# neutral files under /branding/, pigeon mounts these over them), written by infra/branding.py from branding/
 resources: [db.yaml, magpie.yaml, pigeon.yaml, hermit.yaml, network.yaml, branding.yaml]
 # The tags are written by the deploy run (docs/DEPLOY.md: aviary-deploy set, from deploy/images.json): each image's tag
 # is the last commit that changed its part, the same builds as YYC AI's. `deploy` is a placeholder, never what runs.
@@ -17,7 +17,8 @@ images:
   - {name: hermit-jarvis, newName: ghcr.io/de0ch/hermit-jarvis, newTag: "deploy"}
 # settings.json: what is Deyao's own about the chat (its name and language, the model menu, each model's thinking
 # levels and its own level `reasoning` (required, no default: chat-settings.yml fails without it), context window and
-# OpenRouter hosts), read by hermit-jarvis at its start (HERMIT_SETTINGS; jarvis/hermit/src/settings.rs) and handed to each session machine's gateway at boot. Hashed: a change rolls hermit.
+# OpenRouter hosts), read by hermit-jarvis at its start (HERMIT_SETTINGS; DE0CH/jarvis4
+# aviary/src/settings.rs) and handed to each session machine's gateway at boot. Hashed: a change rolls hermit.
 configMapGenerator:
   - name: hermit-settings
     namespace: services
