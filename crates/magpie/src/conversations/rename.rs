@@ -1,5 +1,6 @@
 //! M5 `PATCH /v1/conversations/{id}`: a rename (magpie 9.4-9.5: it always wins over a generated or provisional
-//! title), a model pick (the conversation's turns run on it from the next one), or both.
+//! title), a model pick (the conversation's turns run on it from the next one), a pin to the top of the person's list,
+//! or several.
 
 use aviary_pg::Pool;
 use magpie_api::conversations::{Conversation, MODEL_MAX_CHARS, RenameRequest};
@@ -16,8 +17,8 @@ use crate::limits;
 /// M5.
 ///
 /// # Errors
-/// 400 `empty_title` / `title_too_long` / `bad_request` (neither a title nor a model, or a model id that is empty
-/// or over 200 characters), 403 `view_as_read_only`, 404; a statement error.
+/// 400 `empty_title` / `title_too_long` / `bad_request` (none of a title, a model, a level or a pin, or a model id
+/// that is empty or over 200 characters), 403 `view_as_read_only`, 404; a statement error.
 pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) -> Result<Conversation> {
     person.refuse_view_as()?;
     let title = match req.title {
@@ -54,8 +55,11 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
             Some((!l.is_empty()).then_some(l))
         }
     };
-    if title.is_none() && model.is_none() && thinking.is_none() {
-        return Err(Error::bad_request("a title, a model or a thinking level is required"));
+    let pinned = req.pinned;
+    if title.is_none() && model.is_none() && thinking.is_none() && pinned.is_none() {
+        return Err(Error::bad_request(
+            "a title, a model, a thinking level or a pin is required",
+        ));
     }
     // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let (title, model, thinking) = (&title, &model, &thinking);
@@ -88,6 +92,21 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
                 &[&id, level],
             )
             .await?;
+        }
+        // a second pin keeps when it was pinned: the list orders the pinned ones by it
+        match pinned {
+            Some(true) => {
+                t.execute(
+                    "update conversations set pinned_at = coalesce(pinned_at, now()) where id = $1",
+                    &[&id],
+                )
+                .await?;
+            }
+            Some(false) => {
+                t.execute("update conversations set pinned_at = null where id = $1", &[&id])
+                    .await?;
+            }
+            None => {}
         }
         changes::upserted(t, &person.email, id).await?;
         Ok(())

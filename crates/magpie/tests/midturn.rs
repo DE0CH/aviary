@@ -844,6 +844,7 @@ async fn a_person_picks_the_conversations_model() {
                 model: Some("claude-fable-5-2".into()),
                 thinking: None,
                 harness: None,
+                pinned: None,
             },
         )
         .await

@@ -138,6 +138,7 @@ async fn handshake_ping_and_protocols() {
     assert_eq!(info["hostname"], common::PRODUCT);
     assert_eq!(info["version"], "0.14.1");
     assert_eq!(info["features"]["creationLifecycle"], true);
+    assert_eq!(info["features"]["workspacePinning"], true, "the app offers 置頂");
     assert!(info["features"].get("forgeSearch").is_none());
     let early = ws.drain_for(Duration::from_millis(300)).await;
     assert!(
@@ -1277,6 +1278,68 @@ async fn a_deployment_that_starts_conversations_refuses_a_persons_create() {
 }
 
 #[tokio::test]
+async fn a_person_pins_a_conversation_and_unpins_it() {
+    let e = env().await;
+    let c = e.m.add(STAFF, Some("trip"));
+    let mut ws = e.ws(STAFF).await;
+    let (k, r) = ws
+        .rpc(
+            "workspace.pin.set.request",
+            json!({"workspaceId": format!("wks_{c}"), "pinned": true}),
+        )
+        .await;
+    assert_eq!(k, "workspace.pin.set.response");
+    assert_eq!(
+        (r["accepted"].clone(), r["error"].clone()),
+        (json!(true), Value::Null),
+        "{r}"
+    );
+    assert_eq!(r["workspaceId"], format!("wks_{c}"));
+    let at = r["pinnedAt"].as_str().expect("pinnedAt").to_owned();
+    assert!(e.m.st().convs[&c].conv.pinned_at.is_some(), "magpie keeps it");
+    // the conversation list carries when it was pinned
+    let (_, l) = ws.rpc("fetch_workspaces_request", json!({})).await;
+    let row = l["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["id"] == format!("wks_{c}"))
+        .expect("listed")
+        .clone();
+    assert_eq!(row["pinnedAt"], at, "{row}");
+    // unpinned
+    let (_, r) = ws
+        .rpc(
+            "workspace.pin.set.request",
+            json!({"workspaceId": format!("wks_{c}"), "pinned": false}),
+        )
+        .await;
+    assert_eq!(
+        (r["accepted"].clone(), r["pinnedAt"].clone()),
+        (json!(true), Value::Null),
+        "{r}"
+    );
+    assert!(e.m.st().convs[&c].conv.pinned_at.is_none());
+    // someone else's conversation, and one that is no conversation id
+    let other = e.m.add("other@example.org", None);
+    let (_, r) = ws
+        .rpc(
+            "workspace.pin.set.request",
+            json!({"workspaceId": format!("wks_{other}"), "pinned": true}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    assert!(r["error"].is_string());
+    let (_, r) = ws
+        .rpc(
+            "workspace.pin.set.request",
+            json!({"workspaceId": "wks_nope", "pinned": true}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+}
+
+#[tokio::test]
 async fn rename_delete_restore_and_asks() {
     let e = env().await;
     let c = e.m.add(STAFF, Some("old"));
@@ -1404,6 +1467,10 @@ async fn view_as_refuses_changes_without_a_call_and_sends_with_the_viewer() {
         (
             "workspace.title.set.request",
             json!({"workspaceId": format!("wks_{c}"), "title": "x"}),
+        ),
+        (
+            "workspace.pin.set.request",
+            json!({"workspaceId": format!("wks_{c}"), "pinned": true}),
         ),
         ("archive_agent_request", json!({"agentId": c})),
         ("archive_workspace_request", json!({"workspaceId": format!("wks_{c}")})),

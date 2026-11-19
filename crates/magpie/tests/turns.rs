@@ -3941,3 +3941,51 @@ async fn a_continue_keeps_the_first_unanswered_message_and_needs_a_harness_that_
     assert_eq!(code(&e), ErrorCode::NothingToContinue);
     assert!(shown(&w, claude).await.contains("it broke"));
 }
+
+#[tokio::test]
+async fn a_person_pins_a_conversation_to_the_top_of_their_list_and_unpins_it() {
+    use magpie_api::conversations::{ListQuery, RenameRequest};
+    let w = World::new("pin", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let me = w.a.pigeon();
+    let pin = |pinned: bool| RenameRequest {
+        pinned: Some(pinned),
+        ..Default::default()
+    };
+    let fresh = me.person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!(fresh.pinned_at, None, "a new conversation is not pinned");
+
+    // pinned (M5 without a rename, a model or a level): the time it was pinned, kept by a second pin
+    let pinned = me.person(ALICE).rename_conversation(conv, &pin(true)).await.unwrap();
+    let at = pinned.pinned_at.expect("pinnedAt");
+    assert_eq!(
+        (pinned.title_source, pinned.picked_model),
+        (None, None),
+        "a pin is no rename and no pick"
+    );
+    let again = me.person(ALICE).rename_conversation(conv, &pin(true)).await.unwrap();
+    assert_eq!(
+        again.pinned_at,
+        Some(at),
+        "pinning a pinned conversation keeps when it was pinned"
+    );
+    let listed = me
+        .person(ALICE)
+        .list_conversations(&ListQuery::default())
+        .await
+        .unwrap();
+    let row = listed.conversations.iter().find(|c| c.id == conv).expect("listed");
+    assert_eq!(row.pinned_at, Some(at), "the list carries it");
+
+    // another person's conversation is not theirs to pin
+    assert!(
+        me.person("bob@example.com")
+            .rename_conversation(conv, &pin(true))
+            .await
+            .is_err()
+    );
+
+    // unpinned
+    let unpinned = me.person(ALICE).rename_conversation(conv, &pin(false)).await.unwrap();
+    assert_eq!(unpinned.pinned_at, None);
+}
