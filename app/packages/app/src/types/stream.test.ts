@@ -157,6 +157,43 @@ describe("plugin timeline rows", () => {
   });
 });
 
+describe("a timeline event's turn", () => {
+  // 2026-11-19, the question cards: a tool row with no turn (a question opened by a command, not by a turn) sat last;
+  // an update to another call stamped its turn onto that row, so the row's own next update found nothing with its
+  // identity and was appended again: two cards with one id, and the list scrolled wrongly
+  it("goes to the item the event concerns, never to whichever item is last", () => {
+    const at = new Date("2026-11-19T02:20:00Z");
+    const call = (callId: string, status: "running" | "completed", turnId?: string): AgentStreamEventPayload => ({
+      type: "timeline",
+      provider: "claude",
+      ...(turnId ? { turnId } : {}),
+      item: {
+        type: "tool_call",
+        callId,
+        name: callId === "q-1" ? "ask" : "Bash",
+        status,
+        error: null,
+        detail: { type: "unknown", input: { callId }, output: null },
+      },
+    });
+    let state: { tail: StreamItem[]; head: StreamItem[] } = { tail: [], head: [] };
+    for (const event of [
+      call("toolu_1", "running", "turn-a"),
+      call("q-1", "running"),
+      call("toolu_1", "completed", "turn-a"),
+      call("q-1", "completed"),
+    ]) {
+      state = applyStreamEvent({ ...state, event, timestamp: at });
+    }
+    const items = [...state.tail, ...state.head].filter(isAgentToolCallItem);
+    expect(items.map((item) => [item.payload.data.callId, item.payload.data.status, item.turnId])).toEqual([
+      ["toolu_1", "completed", "turn-a"],
+      ["q-1", "completed", undefined],
+    ]);
+    expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+  });
+});
+
 describe("user message identity", () => {
   it("replaces provisional optimistic turn membership with canonical membership", () => {
     const optimistic = createUserMessage({

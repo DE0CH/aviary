@@ -4,6 +4,8 @@
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 const iso = (min) => new Date(T0 + min * 60000).toISOString();
 const project = (name) => ({ checkout: { currentBranch: null, cwd: "/workspace", isGit: false, isPaseoOwnedWorktree: false, mainRepoRoot: null, remoteUrl: null, worktreeRoot: null }, projectKey: "prj_conversations", projectName: "YYC AI", workspaceName: name });
+/** Conversation 6 runs a turn while cards.mjs pushes its question card (the bug showed in a running turn). */
+const running = (c) => c.running || (options.cardsLive && c.n === 6);
 const CONVS = [
   { n: 1, title: "季度銷售報告", min: 50 },
   { n: 2, title: "活動海報文案", min: 40, running: true },
@@ -18,19 +20,19 @@ const CONVS = [
 export const wid = (n) => `wks_0000000${n}-0000-4000-8000-000000000000`;
 export const aid = (n) => `0000000${n}-0000-4000-8000-00000000000a`;
 function agent(c) {
-  return { activeTurn: c.running || c.attention ? { startedAt: iso(c.min), turnId: `turn-${c.n}-r` } : null, archivedAt: null,
+  return { activeTurn: running(c) || c.attention ? { startedAt: iso(c.min), turnId: `turn-${c.n}-r` } : null, archivedAt: null,
     attentionReason: c.attention ? "finished" : null, attentionTimestamp: c.attention ? iso(c.min) : null, availableModes: [],
     capabilities: { supportsDynamicModes: false, supportsMcpServers: false, supportsReasoningStream: true, supportsRewindBoth: false, supportsRewindConversation: false, supportsRewindFiles: false, supportsSessionListing: false, supportsSessionPersistence: true, supportsStreaming: true, supportsToolInvocations: true },
     closed: null, createdAt: iso(c.min - 5), currentModeId: null, cwd: "/workspace", effectiveThinkingOptionId: "high", features: [], id: aid(c.n), labels: {},
     lastUserMessageAt: iso(c.min), model: "deepseek/deepseek-v4.1-flash-1017", pendingMessages: [], pendingPermissions: c.attention ? [ASK] : [], persistence: null, provider: "claude",
     requiresAttention: !!c.attention, runtimeInfo: { modeId: null, model: "deepseek/deepseek-v4.1-flash-1017", provider: "claude", sessionId: aid(c.n) },
-    status: c.running || c.attention ? "running" : "idle", thinkingOptionId: "high", title: c.title, updatedAt: iso(c.min), workspaceId: wid(c.n) };
+    status: running(c) || c.attention ? "running" : "idle", thinkingOptionId: "high", title: c.title, updatedAt: iso(c.min), workspaceId: wid(c.n) };
 }
 function workspace(c) {
   return { activityAt: iso(c.min), archivingAt: null, background: false, backgroundTasks: c.background || 0, createdAt: iso(c.min - 5), diffStat: null, id: wid(c.n),
     lastUserMessageAt: iso(c.min), name: c.title, nextScheduleAt: c.schedule ? iso(24 * 60) : null, pinnedAt: null, project: project(c.title),
     projectCustomIconRevision: null, projectCustomName: null, projectDisplayName: "YYC AI", projectId: "prj_conversations", projectKind: "directory", projectRootPath: "/workspace",
-    scripts: [], setupStatus: null, status: c.running ? "running" : "done", statusEnteredAt: iso(c.min), title: c.title, workspaceDirectory: "/workspace", workspaceKind: "directory" };
+    scripts: [], setupStatus: null, status: running(c) ? "running" : "done", statusEnteredAt: iso(c.min), title: c.title, workspaceDirectory: "/workspace", workspaceKind: "directory" };
 }
 
 // the rich conversation (n = 1)
@@ -97,8 +99,46 @@ const SCHEDULES = [
   { id: "s2", conversationId: aid(3), kind: "once", prompt: "提醒我交季度報告。", at: iso(3 * 24 * 60), tz: "Asia/Hong_Kong", describe: "11 月 21 日 18:00", next: iso(3 * 24 * 60), state: "active", createdBy: "Jackie", createdAt: iso(-100), runs: [] },
 ];
 export function status(s) { s.payload.hostname = "YYC AI"; return s; }
+/** What a check turns on: `personCards` (the deployment's switch), `cardsLive` (conversation 6 gets the live pushes
+ * of a question card, cards.mjs). */
+export const options = { personCards: false, cardsLive: false };
+
+// The sequence that drew one question twice (Deyao, 2026-11-19; session "Fix CI failure blocking YYC AI system prompt
+// deploy"): the `ask` call runs in the turn, the question's card row opens with no turn and is answered, then the
+// `ask` call completes (an update of an earlier row: the app put its turn on the card, the last item), and the app
+// loads the timeline again (here a replacement; a reconnect or a scroll does the same), whose card row has no turn.
+const CARD_INPUT = { questions: [{ question: "點樣入 main？", header: "入 main", multiSelect: false, options: [{ label: "而家合併" }, { label: "等 gate" }] }] };
+const cardOf = (state) => ({ kind: "question", id: "q-6", marker: "(answer to q-6)", state, askedAt: iso(-59), input: CARD_INPUT,
+  ...(state === "open" ? {} : { answeredAt: iso(-58), answer: { behavior: "allow", updatedInput: { answers: { "點樣入 main？": "而家合併" } } } }) });
+const cardItem = (state) => ({ type: "tool_call", callId: "q-6", name: "ask", status: state === "open" ? "running" : "completed", error: null,
+  detail: { type: "unknown", input: CARD_INPUT, output: null }, metadata: { personAsk: cardOf(state) } });
+const askItem = (status) => ({ type: "tool_call", callId: "toolu_6", name: "Bash", status, error: null,
+  detail: { type: "shell", command: "ask < q.json", ...(status === "completed" ? { output: "Question q-6 is open; waiting for the answer.\n→ 而家合併" } : {}) } });
+export const cards = { reloaded: false };
+function cardPushes(agentId, send) {
+  const push = (item, turnId, seq) => ({ type: "agent_stream", payload: { subscriptionId: "00000000-0000-4000-8000-000000000000", agentId,
+    event: { type: "timeline", provider: "claude", ...(turnId ? { turnId } : {}), item }, timestamp: iso(-58), seq, epoch: "e1" } });
+  const frames = [push(askItem("running"), "turn-6-r", 3), push(cardItem("open"), null, 4), push(cardItem("answered"), null, 5),
+    push(askItem("completed"), "turn-6-r", 6)];
+  frames.forEach((frame, i) => setTimeout(() => send(frame), 600 + i * 250));
+  setTimeout(() => {
+    cards.reloaded = true;
+    send({ type: "agent.timeline.replacement", payload: { subscriptionId: "00000000-0000-4000-8000-000000000000", agentId, epoch: "e2" } });
+  }, 600 + frames.length * 250 + 500);
+}
+// conversation 6's timeline after the reload: the same rows as pushed, the card's with no turn
+function reloadedTimeline(c) {
+  seq = 0;
+  return [
+    e({ clientMessageId: `cm-${c.n}`, messageId: `cm-${c.n}`, text: `關於「${c.title}」，幫我整理一下。`, type: "user_message" }, null, c.min),
+    e({ text: "整理緊…", type: "reasoning" }, `turn-${c.n}-r`, c.min + 0.1),
+    e(askItem("completed"), `turn-${c.n}-r`, c.min + 0.2),
+    e(cardItem("answered"), null, c.min + 0.3),
+  ];
+}
+
 export function rest(method, p) {
-  if (p === "/api/jarvis/me") return { firstName: "Jackie", sharing: true, newConversations: true, conversationDelete: true, product: "YYC AI", midTurn: true, modelPick: true };
+  if (p === "/api/jarvis/me") return { firstName: "Jackie", sharing: true, newConversations: true, conversationDelete: true, product: "YYC AI", midTurn: true, modelPick: true, personCards: options.personCards };
   if (p.startsWith("/api/blobs/") || p.includes("/files/raw")) return { svg: CHART };
   if (/\/api\/jarvis\/sessions\/[^/]+\/tasks$/.test(p)) return { tasks: p.includes("/00000004-") ? TASKS : [] }; // the session id is the workspace's uuid
   if (/\/api\/jarvis\/sessions\/[^/]+\/schedules$/.test(p)) return { schedules: p.includes("/00000003-") ? SCHEDULES : [] };
@@ -123,9 +163,11 @@ export function answer(m, send, tpl) {
     case "fetch_agent_request": { const c = CONVS.find((c) => aid(c.n) === m.agentId) ?? CONVS[0]; return p({ agent: agent(c), project: project(c.title), error: null }); }
     case "fetch_agent_timeline_request": {
       const c = CONVS.find((c) => aid(c.n) === m.agentId) ?? CONVS[0];
-      const entries = c.n === 1 ? richTimeline() : (seq = 0, [e({ clientMessageId: `cm-${c.n}`, messageId: `cm-${c.n}`, text: `關於「${c.title}」，幫我整理一下。`, type: "user_message" }, null, c.min), ...(c.running ? [e({ text: "整理緊…", type: "reasoning" }, `turn-${c.n}-r`, c.min + 0.1)] : [e({ messageId: `m-${c.n}`, text: "好，以下係整理好嘅重點：\n\n- 第一點\n- 第二點\n- 第三點", type: "assistant_message" }, `turn-${c.n}`, c.min + 0.5)])]);
+      const entries = options.cardsLive && c.n === 6 && cards.reloaded ? reloadedTimeline(c) : c.n === 1 ? richTimeline() : (seq = 0, [e({ clientMessageId: `cm-${c.n}`, messageId: `cm-${c.n}`, text: `關於「${c.title}」，幫我整理一下。`, type: "user_message" }, null, c.min), ...(running(c) ? [e({ text: "整理緊…", type: "reasoning" }, `turn-${c.n}-r`, c.min + 0.1)] : [e({ messageId: `m-${c.n}`, text: "好，以下係整理好嘅重點：\n\n- 第一點\n- 第二點\n- 第三點", type: "assistant_message" }, `turn-${c.n}`, c.min + 0.5)])]);
       if (c.attention) setTimeout(() => send({ type: "agent_permission_request", payload: { agentId: aid(c.n), request: ASK } }), 300);
-      return p({ agent: agent(c), agentId: m.agentId, entries, direction: "after", startCursor: { epoch: "e1", seq: 1 }, endCursor: { epoch: "e1", seq }, epoch: "e1", window: { maxSeq: seq, minSeq: 1, nextSeq: seq + 1 }, hasNewer: false, hasOlder: false, gap: false, reset: true, staleCursor: false, error: null });
+      const ep = options.cardsLive && c.n === 6 && cards.reloaded ? "e2" : "e1";
+      if (options.cardsLive && c.n === 6 && !cards.reloaded) cardPushes(aid(c.n), send);
+      return p({ agent: agent(c), agentId: m.agentId, entries, direction: "after", startCursor: { epoch: ep, seq: 1 }, endCursor: { epoch: ep, seq }, epoch: ep, window: { maxSeq: seq, minSeq: 1, nextSeq: seq + 1 }, hasNewer: false, hasOlder: false, gap: false, reset: true, staleCursor: false, error: null });
     }
     case "get_providers_snapshot_request": {
       const snap = { entries: [{ defaultModeId: null, description: "", enabled: true, label: "YYC AI", models: SNAPSHOT_MODELS, modes: [], provider: "claude", source: "builtin", status: "ready" }],
@@ -134,6 +176,8 @@ export function answer(m, send, tpl) {
     }
     case "list_commands_request": return p({ agentId: m.agentId, commands: [{ argumentHint: "<instructions>", description: "總結對話，騰出空間", kind: "command", name: "compact" }, { argumentHint: "", description: "整一份報告", kind: "skill", name: "report" }], error: null });
     case "agent.timeline.list_prompts.request": return p({ agentId: m.agentId, prompts: [] });
+    // the agents the app asked for (the recorded answer names another): their live pushes reach the app
+    case "agent.timeline.set_subscription.request": return p({ agentIds: m.agentIds ?? [], subscriptionId: m.subscriptionId ?? tpl.payload.subscriptionId });
   }
   return false;
 }

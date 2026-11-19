@@ -3,6 +3,7 @@ import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { PersonCardView } from "@/yyc/person-cards";
 import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
+import { usePersonCardsAvailable } from "@/yyc/me";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -516,6 +517,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
     const presentStream = useMemo(() => createStreamPresentation(), []);
+    const personCards = usePersonCardsAvailable();
     const presentation = useMemo(
       () =>
         presentStream({
@@ -525,8 +527,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           display: chatDisplay,
           expandedTurnHostIds,
           isTurnActive,
+          personCards,
         }),
       [
+        personCards,
         presentStream,
         effectiveStreamItems,
         effectiveStreamHead,
