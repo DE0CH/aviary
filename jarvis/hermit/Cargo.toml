@@ -7,8 +7,7 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 publish = false
 
-# One aviary commit for every contract crate; bumped together with the images Jarvis 4's sessions and the services
-# tenant run (aviary/README.md "Bumping aviary").
+# aviary's crates by path: this tree is deployed with them (docs/DEPLOY.md), so there is nothing to bump
 [dependencies]
 aviary-core = { path = "../../crates/aviary-core" }
 aviary-pg = { path = "../../crates/aviary-pg" }
