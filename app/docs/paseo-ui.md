@@ -247,8 +247,8 @@ measuring; test on a throttled connection. So:
   `ComposerSlot` (`components/loading-frame.tsx`, `data-yyc-box`) that the box follows on a resize. The conversation
   page's own loading frame (`WorkspaceLoadingFrame`) draws the box at the composer's place, so a send or a drawer tap
   before its chunk arrives never leaves the page without one; if the chunk cannot be fetched it shows a Reload button.
-- **Installed on a phone** (Chrome on Android: menu, 「加到主畫面」 / "Add to Home screen", 「安裝」 / "Install"; there
-  is no Android app): the deployment's `/branding/manifest.json` (Branding below; the bundle's neutral one is
+- **Installed on a phone** (Chrome on Android: menu, 「加到主畫面」 / "Add to Home screen", 「安裝」 / "Install"; the
+  native Android app, "The Android app" below, is installed from its APK instead): the deployment's `/branding/manifest.json` (Branding below; the bundle's neutral one is
   `public/branding/manifest.json`) meets Chrome's install criteria (name, `start_url` and `scope` `/`,
   `display: standalone`, 192 and 512 px icons that also serve as maskable ones: full-bleed, the mark inside the
   middle 80%), with no `orientation`, so a tablet or a foldable turns freely. No service worker: Chrome asks for
@@ -465,6 +465,39 @@ and taps Sign in up to iOS's sign-in prompt,
 an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
 `YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first
 exercised on TestFlight.
+
+## The Android app
+
+The same native app as the iPhone's, built for Android once per deployment by `.github/workflows/yyc-android.yml`
+(the variants of "The iOS app": YYC AI `dev.de0ch.yycai`, Jarvis Chat `dev.de0ch.jarvis4chat`) as a signed release
+APK, arm64, installed from the file (no Play Store; Deyao, 2026-11-19, for his Galaxy Z Fold). What the iPhone app
+does for comfort is the shared code's, with Android's own half: the message box rides on the keyboard
+(`keyboard/shift/internal/translate.android.tsx`, react-native-keyboard-controller, the window `adjustResize` and edge
+to edge), a flick down on the conversation puts the keyboard away (`agent-stream/scroll-keyboard-dismiss`), the edge
+swipe for the conversation list, pull to refresh, the camera in the attach menu and the taps (`yyc/haptics.ts`).
+Sign-in is the iPhone's: `/api/jarvis/app-signin` in a Chrome Custom Tab, back on the app's scheme.
+
+- **A foldable**: folding switches screens, which changes the window's size, smallest width and density. MainActivity
+  lists all of them in `configChanges` (`plugins/with-android-foldable.js`), so a fold re-lays the app out instead of
+  recreating the activity, which would restart React Native and lose the conversation, the draft and the keyboard. The
+  iPhone's portrait lock is not applied on Android: unfolded, a book-style foldable is a small tablet that turns freely,
+  and at 600 dp and wider the conversation list docks beside the chat (`constants/layout.ts`).
+- **Icon**: the adaptive icon's foreground per variant (`androidIcon` in `app.config.js`), the mark inside the middle
+  72 of 108 dp that every launcher's mask keeps.
+- **Signing and updates**: each variant has its own key (secrets `YYC_ANDROID_UPLOAD_KEYSTORE`, the old WebView app's,
+  so it installs over that one, and `JARVIS_CHAT_ANDROID_KEYSTORE`; each with its `_PASSWORD`; alias `upload`;
+  `plugins/with-android-release-signing.js`). The versionCode is the version's times 1000 plus the CI run
+  (`ANDROID_BUILD_NUMBER`), so every build installs over the one before.
+- **Out of CI**: Jarvis Chat's APK is the artifact `jarvis-chat-android`; YYC AI's carries the YYC_SITE secret, so it is
+  `yyc-ai-android-encrypted`, age-encrypted to `YYC_ANDROID_CI_AGE_KEY`'s recipient.
+- **The emulator test** (the matrix's `replica`): Jarvis Chat built with `YYC_SITE=http://127.0.0.1:8787`, the stand-in
+  for pigeon (`scripts/touch-targets/stand-in.mjs`, which with `appScheme` also answers the app's sign-in), on a
+  foldable emulator profile. `scripts/android-app/emulator-test.mjs` signs in, opens a conversation, checks that the
+  message box sits on the keyboard, types, flicks the keyboard away, then unfolds and folds between the Galaxy Z Fold7's
+  screens (cover 1080 x 2520, main 1968 x 2184, density 420; `wm size`, the same configuration change a fold sends)
+  and on the emulator's own hinge, checking the app kept its process, conversation and text, the docked list on the
+  main screen and the box on the keyboard in landscape. Artifact `android-emulator-test`: a screenshot per step,
+  `keyboard-cover.mp4`, the UI dumps, `results.json`, `logcat.txt`.
 
 ## Build and run
 
