@@ -20,7 +20,7 @@ spec:
       initContainers:
         # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
         - name: app
-          image: ghcr.io/de0ch/pigeon-app:305be7e0b052@sha256:125fa142baf06bfd3ca1daeb7b454dde7717a09acca21c3b33d48ba1a7b2b314
+          image: pigeon-app
           command: [/cp, -a, /app/., /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
@@ -31,14 +31,14 @@ spec:
         # files are links). Not mounted over it in pigeon: the bundle is read-only there, and a mount point that does
         # not exist cannot be made (2026-11-13)
         - name: branding
-          image: ghcr.io/de0ch/pigeon-app:305be7e0b052@sha256:125fa142baf06bfd3ca1daeb7b454dde7717a09acca21c3b33d48ba1a7b2b314
+          image: pigeon-app
           command: [/cp, -rL, /branding, /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }, { name: branding, mountPath: /branding, readOnly: true }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: pigeon
-          image: ghcr.io/de0ch/pigeon:a14e0a9ae331@sha256:a27ab18ab1250fd6fbfc2fd651e17800217e21d0cf832e102c9ac9872126826f
+          image: pigeon
           envFrom: [{ secretRef: { name: chat-pigeon } }]
           env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
           ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
