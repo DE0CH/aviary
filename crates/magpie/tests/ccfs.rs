@@ -1290,7 +1290,10 @@ async fn a_lease_never_records_hermits_answer_over_a_newer_feed_record() {
         if rec == Some(a.id) {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "the feed never recorded the put's sandbox");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the feed never recorded the put's sandbox"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     hermit_names(r.pool(), conv, None, "gone").await;
