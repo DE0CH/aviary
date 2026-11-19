@@ -1,0 +1,221 @@
+# egress (DE0CH/jarvis3 chat, `args: [egress]`; spec-platform 9.7, 17.2; jarvis3 docs/CHAT.md "egress"): YYC's sandbox
+# gateway. The sandboxes' only way out: the proxy on 3128 (reached at the egress VIP 10.202.1.1 through the sandbox gateway,
+# which forwards to the load balancer of Service egress-lb below; a sandbox is known by its token alone), the fixed names model/tools/magpie/hermit, the package
+# mirror; the in-cluster API on 8082 (pigeon's models list, hermit's ops summary); health on 9090. Configuration:
+# egress.json (ConfigMap egress-config, hashed). Internet connections and OpenRouter go out by name through YYC's socks
+# pool (egress.json `exit`, Deyao 2026-11-04).
+#
+# Placement: network yyc required (the overlay route), any location: its internet traffic leaves through the socks
+# pool, whose exit is yyc-nat1's WARP in fsn1 wherever the pod runs (DESIGN 15.7, change of 2026-11-05).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress
+  namespace: yyc-ai
+  labels: {app: egress}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: egress}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      # sandbox-lb: what Service egress-lb (the balancer in network yyc) selects, beside pg-forward's pods
+      labels: {app: egress, sandbox-lb: "true"}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 625
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: yyc.hetzner/network, operator: In, values: ["yyc"]}
+                  - {key: pool, operator: In, values: ["apps"]}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: egress}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: egress
+          image: jarvis3-chat
+          args: [egress]
+          ports:
+            - {name: proxy, containerPort: 3128}
+            - {name: api, containerPort: 8082}
+            - {name: ops, containerPort: 9090}
+          env:
+            - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+            - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: EGRESS_DATABASE_URL, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_DATABASE_URL}}}
+            - {name: OPENROUTER_API_KEY, valueFrom: {secretKeyRef: {name: egress, key: OPENROUTER_API_KEY}}}
+            - {name: EGRESS_ACCEPT_PIGEON, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_ACCEPT_PIGEON}}}
+            - {name: EGRESS_ACCEPT_HERMIT, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_ACCEPT_HERMIT}}}
+            - {name: EGRESS_ACCEPT_ADMIN, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_ACCEPT_ADMIN}}}
+            - {name: EGRESS_TOKEN_MAGPIE, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_TOKEN_MAGPIE}}}
+            - {name: EGRESS_TOKEN_HERMIT, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_TOKEN_HERMIT}}}
+            - {name: EGRESS_TOKEN_TOOLS, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_TOKEN_TOOLS}}}
+            - {name: EGRESS_TOKEN_HERALD, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_TOKEN_HERALD}}}
+            # the sandbox route feishu-files: feishu-index's /v1 API (DE0CH/yyc-code feishu-index/README.md)
+            - {name: EGRESS_TOKEN_FEISHU_FILES, valueFrom: {secretKeyRef: {name: egress, key: EGRESS_TOKEN_FEISHU_FILES}}}
+            # the sandbox route labels (WP-61): the label store's Access service token yyc-labels-ai
+            - {name: LABELS_AI_CLIENT_ID, valueFrom: {secretKeyRef: {name: egress, key: LABELS_AI_CLIENT_ID}}}
+            - {name: LABELS_AI_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: egress, key: LABELS_AI_CLIENT_SECRET}}}
+            # the sandbox route code: read-only on DE0CH/yyc-code (GitHub token yyc-ai-code-read)
+            - {name: CODE_GITHUB_BASIC, valueFrom: {secretKeyRef: {name: egress, key: CODE_GITHUB_BASIC}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 10}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 1Gi}
+            limits: {cpu: "1", memory: 256Mi, ephemeral-storage: 7Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: cache, mountPath: /var/cache/jarvis-egress}
+            - {name: tmp, mountPath: /tmp}
+            - {name: config, mountPath: /etc/egress, readOnly: true}
+      volumes:
+        - {name: cache, emptyDir: {sizeLimit: 6Gi}}   # egress.json cacheGiB (5) + headroom
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+        - {name: config, configMap: {name: egress-config}}
+---
+# hermit's fabric targets (the EndpointSlices of this Service, hermit 13.8) and hermit's ops reads
+apiVersion: v1
+kind: Service
+metadata: {name: egress, namespace: yyc-ai}
+spec:
+  selector: {app: egress}
+  ports:
+    - {name: proxy, port: 3128, targetPort: proxy}
+    - {name: http, port: 80, targetPort: api}
+---
+# The one stable address in network yyc for what comes through the sandbox gateway: a Hetzner load balancer (no
+# public address), made and kept by the Hetzner cloud controller from this Service. Port 3128 is the sandboxes' proxy
+# (the egress pods), port 5432 the sandbox hosts' JuiceFS metadata (pg-forward, hermit/pg-forward.yaml; one balancer
+# for both: the controller allows one Service per balancer, and Hetzner refused a second balancer for the project's
+# primary IP limit, 2026-11-17). It health-checks each port's NodePort on the apps nodes and sends connections only
+# to nodes that run a ready pod of that port (externalTrafficPolicy Local, which also keeps the balancer's own
+# address as the source: NetworkPolicies egress-in and pg-forward-in admit exactly that). The sandbox gateway
+# forwards the sandboxes' proxy connections here and balances nothing itself (Deyao, 2026-11-16: the single point
+# only passes packets). egress identifies a sandbox by its token alone, so the balancer hiding the sandbox's
+# address changes nothing. Type lb11 (EUR 6.99 a month net; EXPENSES.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-lb
+  namespace: yyc-ai
+  annotations:
+    load-balancer.hetzner.cloud/name: yyc-ai-egress
+    load-balancer.hetzner.cloud/type: lb11
+    load-balancer.hetzner.cloud/location: nbg1
+    load-balancer.hetzner.cloud/use-private-ip: "true"
+    load-balancer.hetzner.cloud/disable-public-network: "true"
+    load-balancer.hetzner.cloud/private-ipv4: 10.0.0.50
+    # the address is not written into the Service's status: kube-proxy takes a listed address for itself on every
+    # node and, with externalTrafficPolicy Local, drops connections to it on a node without a pod of that port
+    # (trial of 2026-11-16, when the sandbox gateway was a cluster node: every connection dropped)
+    load-balancer.hetzner.cloud/disable-private-ingress: "true"
+    load-balancer.hetzner.cloud/node-selector: pool=apps
+    load-balancer.hetzner.cloud/health-check-interval: 5s
+    load-balancer.hetzner.cloud/health-check-timeout: 3s
+    load-balancer.hetzner.cloud/health-check-retries: "2"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  allocateLoadBalancerNodePorts: true
+  # both workloads behind the balancer carry the label; a port reaches the one that declares its target port's name
+  # (check_deploy.py item L): 3128 the egress pods, 5432 pg-forward (hermit/pg-forward.yaml)
+  selector: {sandbox-lb: "true"}
+  ports:
+    - {name: proxy, port: 3128, targetPort: proxy, protocol: TCP}
+    - {name: pg, port: 5432, targetPort: pg, protocol: TCP}
+---
+# the fixed endpoint name `model` for in-cluster callers (pigeon's models list)
+apiVersion: v1
+kind: Service
+metadata: {name: model, namespace: yyc-ai}
+spec:
+  selector: {app: egress}
+  ports: [{name: http, port: 80, targetPort: api}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: egress, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: egress}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: egress-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: egress}}
+  policyTypes: [Ingress]
+  ingress:
+    # the sandboxes' proxy connections arrive from the load balancer of Service egress-lb (its address in network
+    # yyc): the proxy port only
+    - from: [{ipBlock: {cidr: 10.0.0.50/32}}]
+      ports: [{port: 3128, protocol: TCP}]
+    - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8082, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: egress-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: egress}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app: magpie}}
+        - podSelector: {matchLabels: {app: hermit}}
+        - podSelector: {matchLabels: {app: tools}}
+        - podSelector: {matchLabels: {app: herald}}
+      ports: [{port: 8080, protocol: TCP}]
+    # feishu-index (route feishu-files), in its own namespace
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: feishu-index}}
+          podSelector: {matchLabels: {app: feishu-index}}
+      ports: [{port: 8080, protocol: TCP}]
+    # the sandboxes' replies within their connections need no rule; the allowlist in egress decides what a sandbox
+    # reaches on the internet
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+    # the socks pool (egress.json exit): host-network pods on nodes' private addresses. On another cluster's nodes an
+    # ipBlock matches them; on this cluster's nodes only the Cilium entities do (egress-out-socks below)
+    - to: [{ipBlock: {cidr: 10.0.0.0/16}}]
+      ports: [{port: 1080, protocol: TCP}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: egress-out-socks, namespace: yyc-ai}
+spec:
+  endpointSelector: {matchLabels: {app: egress}}
+  egress:
+    - toEntities: [host, remote-node]
+      toPorts: [{ports: [{port: "1080", protocol: TCP}]}]

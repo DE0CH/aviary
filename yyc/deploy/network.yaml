@@ -1,0 +1,62 @@
+# The namespace-wide NetworkPolicies of yyc-ai (spec-platform 10.1, 25.3). Per-component policies sit beside each
+# component. Cilium (DESIGN 15.2 N3): an ipBlock matches only addresses outside this cluster (the old cluster's nodes,
+# the bridge load balancers, 10.202.0.0/15, the internet), never a pod or node of this one; pods by selector; the API
+# server by the entity kube-apiserver (CiliumNetworkPolicy).
+#
+# nothing in yyc-ai accepts or opens a connection unless a policy says so
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: yyc-ai}
+spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: dns, namespace: yyc-ai}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}},
+            podSelector: {matchLabels: {k8s-app: kube-dns}}}]
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+# Cluster pg (old cluster) through db/pg-shared (bridge B3): the Service's manual EndpointSlice is pg-hosts' NodePort on
+# yyc-pool-db-worker1, so the connection leaves for 10.0.0.2:30432 (policies match after Service translation). Every
+# pod with a pg database: hermit, egress, tools. After T5 a commit adds the new pg pods by selector (DESIGN 15.8).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres-shared, namespace: yyc-ai}
+spec:
+  podSelector: {matchExpressions: [{key: app, operator: In, values: [hermit, egress, tools, pg-forward]}]}
+  policyTypes: [Egress]
+  egress:
+    # Cluster pg on this cluster since T5 (pg-shared's endpoint is its primary pod)
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: db}},
+            podSelector: {matchLabels: {cnpg.io/cluster: pg}}}]
+      ports: [{port: 5432, protocol: TCP}]
+---
+# magpie's own Cluster magpie-pg (decision 2; news-stream/deploy/clusters/talos/db/magpie-pg.yaml): magpie only;
+# magpie-pg-ingress admits it from its side
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres-magpie, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: magpie}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: db}},
+            podSelector: {matchLabels: {cnpg.io/cluster: magpie-pg}}}]
+      ports: [{port: 5432, protocol: TCP}]
+---
+# reads of each pigeon replica's ops port :9090 through the API server's pods/proxy (made for the switch runner's
+# /internal/switch/activity; the runner is gone since A6, so nothing reads it now: it goes in a commit with its
+# Deploy-Prune trailer). A proxied request arrives from a control-plane node's cilium_host address (10.210.0.x), which
+# Cilium labels remote-node, not kube-apiserver (cilium-dbg monitor's drop, 2026-11-05): both entities
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: ops-from-apiserver, namespace: yyc-ai}
+spec:
+  endpointSelector: {matchLabels: {app: pigeon}}
+  ingress:
+    - fromEntities: [kube-apiserver, remote-node]
+      toPorts: [{ports: [{port: "9090", protocol: TCP}]}]
