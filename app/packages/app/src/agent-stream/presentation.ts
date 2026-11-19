@@ -11,6 +11,7 @@ import {
 import type { StreamItem, UserMessageItem } from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
 import { cardsMetadata } from "@/yyc/person-cards-text";
+import { oneItemPerId } from "./one-item-per-id";
 
 interface PresentationInput {
   tail: StreamItem[];
@@ -126,16 +127,18 @@ export function createStreamPresentation() {
       const blocks = presentRows(item, input.personCards);
       head.push(...blocks);
     }
-    if (preparedTail !== historyRows || preparedLevel !== level) {
-      preparedHistory = prepareToolCallHistory(level, historyRows);
-      preparedTail = historyRows;
+    // one item per id, however a second copy came about (one-item-per-id.ts)
+    const unique = oneItemPerId(historyRows, head);
+    if (preparedTail !== unique.tail || preparedLevel !== level) {
+      preparedHistory = prepareToolCallHistory(level, unique.tail);
+      preparedTail = unique.tail;
       preparedLevel = level;
     }
     return collapse(
       projectToolCallDetailLevel({
         level,
-        tail: historyRows,
-        head,
+        tail: unique.tail,
+        head: unique.head,
         preparedHistory,
         isTurnActive: input.isTurnActive,
       }),
