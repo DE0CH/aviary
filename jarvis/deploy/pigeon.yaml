@@ -20,7 +20,7 @@ spec:
       initContainers:
         # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
         - name: app
-          image: ghcr.io/de0ch/pigeon-app:1fd4e7506b09@sha256:e705ff7865229c256b80b510f6d030ca4b2c24e70a9f7d43439c11f7e702f626
+          image: ghcr.io/de0ch/pigeon-app:bd467705fcd6@sha256:e2887ec680d9ec49acf96d05751a8a6ea31599514bf523bf07fdebcfc33d49c3
           command: [/cp, -a, /app/., /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
@@ -31,7 +31,7 @@ spec:
         # files are links). Not mounted over it in pigeon: the bundle is read-only there, and a mount point that does
         # not exist cannot be made (2026-11-13)
         - name: branding
-          image: ghcr.io/de0ch/pigeon-app:1fd4e7506b09@sha256:e705ff7865229c256b80b510f6d030ca4b2c24e70a9f7d43439c11f7e702f626
+          image: ghcr.io/de0ch/pigeon-app:bd467705fcd6@sha256:e2887ec680d9ec49acf96d05751a8a6ea31599514bf523bf07fdebcfc33d49c3
           command: [/cp, -rL, /branding, /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }, { name: branding, mountPath: /branding, readOnly: true }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
