@@ -411,8 +411,9 @@ fn named_index() -> String {
         .replace("content=\"App\"", &format!("content=\"{PRODUCT}\""))
 }
 
+/// Signed in, the shell is the named index with nothing added (the raw view's chip is the app's own).
 fn signed_in_index() -> String {
-    named_index().replace("</body>", &format!("{}</body>", pigeon::raw::toggle_script()))
+    named_index()
 }
 
 #[tokio::test]

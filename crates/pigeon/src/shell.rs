@@ -1,7 +1,7 @@
 //! The app shell (spec 5.2.2): `index.html` for every page path, signed in or not, changed only by the product
-//! name in `<title>` and the app-title meta and, when nobody is signed in, the signed-out meta before `</head>`;
-//! when signed in, the raw view's button script before `</body>` (`raw::toggle_script`: it shows only in a view-as
-//! tab). Every other byte is served as built (the early message box and its inline script included).
+//! name in `<title>` and the app-title meta and, when nobody is signed in, the signed-out meta before `</head>`.
+//! Every other byte is served as built (the early message box and its inline script included). The admin's raw
+//! view is a chip in the app's own header (claudecodeui `yyc/raw-transcript.tsx`), not a script added here.
 
 use std::sync::{Arc, Mutex};
 
@@ -90,15 +90,6 @@ fn signed_out(html: &str) -> String {
     }
 }
 
-/// Inserts the raw view's button script before the last `</body>`.
-fn raw_toggle(html: &str) -> String {
-    let lower = html.to_ascii_lowercase();
-    match lower.rfind("</body>") {
-        Some(i) => format!("{}{}{}", &html[..i], crate::raw::toggle_script(), &html[i..]),
-        None => html.to_owned(),
-    }
-}
-
 /// The two variants of `index` for `product`: (signed in, signed out).
 #[must_use]
 pub fn render(index: &[u8], product: &str) -> (Vec<u8>, Vec<u8>) {
@@ -106,7 +97,7 @@ pub fn render(index: &[u8], product: &str) -> (Vec<u8>, Vec<u8>) {
     let name = escape(product);
     let named = set_app_title(&set_title(&html, &name), &name);
     let out = signed_out(&named);
-    (raw_toggle(&named).into_bytes(), out.into_bytes())
+    (named.into_bytes(), out.into_bytes())
 }
 
 impl Shell {
@@ -178,10 +169,8 @@ mod tests {
         let expected_in = INDEX
             .replace("<title>App</title>", "<title>Team &lt;AI&gt;</title>")
             .replace("content=\"App\"", "content=\"Team &lt;AI&gt;\"");
-        assert_eq!(
-            inn,
-            expected_in.replace("</body>", &format!("{}</body>", crate::raw::toggle_script()))
-        );
+        // signed in: nothing added (the raw view's chip is the app's own, Deyao 2026-11-19)
+        assert_eq!(inn, expected_in);
         assert_eq!(
             out,
             expected_in.replace("</head>", &format!("{}</head>", compat::SIGNED_OUT_META))
