@@ -623,7 +623,8 @@ jobs:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a
     # running pigeon (crates/pigeon/tests/contract_server.rs) driven by the apps' client package and timeline reducers
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 30 cut the suite off on 54b0760d (2026-11-19; clients.yml's same suite ran 28 min): every listed build is checked
+    timeout-minutes: 60
     env:
       PASEO_CONTRACT_CACHE: ${{ github.workspace }}/../paseo-contract-cache
     defaults:
