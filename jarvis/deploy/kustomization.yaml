@@ -6,7 +6,7 @@ kind: Kustomization
 # applied by the deploy run into Jarvis 4's tenant namespace (it was the Flux tenant's targetNamespace)
 namespace: services
 # branding.yaml: the chat's own look (app/packages/app src/yyc/brand.ts: the app bundle holds
-# neutral files under /branding/, pigeon mounts these over them), written by infra/branding.py from branding/
+# neutral files under /branding/, pigeon mounts these over them), written by jarvis/branding.py from branding/
 resources: [db.yaml, magpie.yaml, pigeon.yaml, hermit.yaml, network.yaml, branding.yaml]
 # The tags are written by the deploy run (docs/DEPLOY.md: aviary-deploy set, from deploy/images.json): each image's tag
 # is the last commit that changed its part, the same builds as YYC AI's. `deploy` is a placeholder, never what runs.

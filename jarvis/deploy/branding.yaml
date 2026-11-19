@@ -1,4 +1,4 @@
-# Written by infra/branding.py from k8s/chat/branding/ (do not edit): the chat's own logo, tab and home-screen
+# Written by jarvis/branding.py from jarvis/deploy/branding/ (do not edit): the chat's own logo, tab and home-screen
 # icons and web manifest, which pigeon mounts over the app bundle's neutral /branding/ (pigeon.yaml).
 apiVersion: v1
 kind: ConfigMap
