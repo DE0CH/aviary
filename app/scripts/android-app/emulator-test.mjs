@@ -236,7 +236,9 @@ async function main() {
       const row = await waitFor((n) => byText(n, CONVERSATION), 20_000, "conversation-row");
       if (row) tap(row);
     }
-    const opened = await waitFor((n) => byId(n, "agent-chat-scroll") && composer(n), 30_000, "conversation");
+    // open: the chat and its box, and the drawer gone (the chat is in the tree under an open drawer too)
+    const opened = await waitFor((n) => byId(n, "agent-chat-scroll") && composer(n) && !byId(n, "sidebar-close"),
+      30_000, "conversation");
     screenshot("cover-conversation");
     if (!check("a conversation opens from the conversation list", opened)) return;
 
