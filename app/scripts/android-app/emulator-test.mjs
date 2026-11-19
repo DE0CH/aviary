@@ -31,6 +31,7 @@ const PORT = 8787;
 const COVER = { name: "cover", size: "1080x2520", density: 420 };
 const MAIN = { name: "main", size: "1968x2184", density: 420 };
 const CONVERSATION = "季度銷售報告"; // the stand-in's first conversation (scripts/touch-targets/content.mjs)
+const OTHER_CONVERSATION = "活動海報文案"; // its second: a row of the list, never this conversation's own header
 const TYPED = "hello fold";
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -263,10 +264,11 @@ async function main() {
     const list = byId(dumpUi(), "agent-chat-scroll");
     const keyboard = keyboardFrame();
     if (list && keyboard) {
+      // a short fast flick from the middle: a long one reaches the start of the history, where the list stops and
+      // the speed at release (what decides it, scroll-keyboard-dismiss/model.ts) is nil
       const x = Math.round((list.box.left + list.box.right) / 2);
-      const top = list.box.top + 40;
-      const bottom = Math.min(list.box.bottom, keyboard.top) - 40;
-      shell("input", "swipe", String(x), String(top), String(x), String(bottom), "80");
+      const from = Math.round((list.box.top + Math.min(list.box.bottom, keyboard.top)) / 2) - 150;
+      shell("input", "swipe", String(x), String(from), String(x), String(from + 350), "50");
     }
     check("a flick down on the conversation puts the keyboard away", await waitKeyboard(false));
     screenshot("cover-keyboard-away");
@@ -289,26 +291,40 @@ async function main() {
     check("unfolding keeps the conversation and the typed text",
       byId(unfolded, "agent-chat-scroll") && composer(unfolded)?.field.text.includes(TYPED),
       composer(unfolded)?.field.text ?? "no box");
-    // 1968 px at density 420 is 750 dp: a docked sidebar, no drawer (constants/layout.ts, 600 dp)
-    check("the main screen docks the conversation list beside the chat",
-      byText(unfolded, CONVERSATION) && byId(unfolded, "agent-chat-scroll"));
-    if (!keyboardFrame()) {
-      const box = composer(unfolded);
-      if (box) tap(box.field);
+    // 1968 px at density 420 is 750 dp: the wide layout, whose conversation list docks beside the chat instead of
+    // covering it (constants/layout.ts, 600 dp). It keeps the phone's closed list: its button opens it.
+    check("the main screen has the wide layout", byId(unfolded, "wide-shell"));
+    if (!byText(unfolded, OTHER_CONVERSATION)) {
+      const toggle = byId(unfolded, "menu-button");
+      if (toggle) tap(toggle);
     }
+    const docked = await waitFor((n) => {
+      const row = byText(n, OTHER_CONVERSATION);
+      const chat = byId(n, "agent-chat-scroll");
+      return row && chat && chat.box.left >= row.box.right - 2 ? { row, chat } : null;
+    }, 15_000, "docked");
+    screenshot("main-list-docked");
+    check("the main screen docks the conversation list beside the chat", docked,
+      docked ? `list row to x=${docked.row.box.right}, chat from x=${docked.chat.box.left}` : "");
+    const withList = composer(dumpUi());
+    if (withList && !keyboardFrame()) tap(withList.field);
     await checkBoxOnKeyboard("main");
     screenshot("main-keyboard");
 
     // turned to landscape on the main screen
-    shell("settings", "put", "system", "user_rotation", "1");
+    shell("wm", "user-rotation", "lock", "1");
     await sleep(3000);
     screenshot("main-landscape");
     check("turning the unfolded phone keeps the app running", appPid() === pid);
-    const turned = composer(dumpUi("main-landscape"));
+    const landscape = dumpUi("main-landscape");
+    const shellBox = byId(landscape, "wide-shell")?.box;
+    check("the unfolded phone turns to landscape", shellBox && shellBox.right - shellBox.left > shellBox.bottom - shellBox.top,
+      shellBox ? `${shellBox.right - shellBox.left} x ${shellBox.bottom - shellBox.top}` : "no wide layout");
+    const turned = composer(landscape);
     check("turning keeps the typed text", turned?.field.text.includes(TYPED), turned?.field.text ?? "no box");
     if (!keyboardFrame() && turned) tap(turned.field);
     await checkBoxOnKeyboard("main landscape");
-    shell("settings", "put", "system", "user_rotation", "0");
+    shell("wm", "user-rotation", "lock", "0");
     await sleep(2000);
 
     // ---- fold again: back to the cover screen ----
