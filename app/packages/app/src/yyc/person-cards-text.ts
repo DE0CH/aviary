@@ -27,15 +27,14 @@ export interface PersonCard {
 export type CardView = "waiting" | "unread" | "read";
 
 /**
- * The cards are switched off (Deyao, 2026-11-19: a question showed twice, "not read yet" was wrong for every session
- * on an older image, and scrolling misbehaved). Off, the app is as before them: a card's own row is left out of the
- * conversation and a call that read an answer is an ordinary step. They come back once they work on the whole stack.
+ * The rows as the deployment shows them (its `personCards`, Deyao 2026-11-19: one deployment at a time). Off, the app
+ * is as before the cards: a card's own row is left out (`null`) and a call that read an answer loses the copies, so it
+ * is an ordinary step. On, the metadata is as the server sent it. Everything after this reads the metadata only.
  */
-export const PERSON_CARDS = false;
-
-/** A card's own row while the cards are off: left out of the conversation altogether. */
-export function isHiddenPersonRow(metadata: unknown): boolean {
-  return !PERSON_CARDS && readPersonAsk(metadata) !== null;
+export function cardsMetadata(metadata: unknown, on: boolean): "hide" | "strip" | "keep" {
+  if (on) return "keep";
+  if (readPersonAsk(metadata)) return "hide";
+  return readPersonRead(metadata).length > 0 ? "strip" : "keep";
 }
 
 function isCard(v: unknown): v is PersonCard {
@@ -61,12 +60,14 @@ export function readPersonRead(metadata: unknown): PersonCard[] {
  */
 export function cardViewWhereAsked(card: PersonCard): CardView | null {
   if (card.readBy) return null;
-  return card.state === "open" ? "waiting" : "unread";
+  if (card.state === "open") return "waiting";
+  // no marker: the asking command (an older supervisor) prints none, so where the AI read it is unknown; the card
+  // shows the answer here and never says "not read yet"
+  return card.marker ? "unread" : "read";
 }
 
 /** Whether a call carries a card in either place: it is never folded into a group or a turn's summary. */
 export function isPersonCardCall(metadata: unknown): boolean {
-  if (!PERSON_CARDS) return false;
   return readPersonAsk(metadata) !== null || readPersonRead(metadata).length > 0;
 }
 
@@ -212,6 +213,6 @@ export function clock(iso: string | null | undefined): string {
 
 /** Whether the card moved: it is shown where it was read, a while after it was asked (its header says when). */
 export function moved(card: PersonCard): boolean {
-  if (!card.answeredAt) return false;
+  if (!card.answeredAt || !card.readBy) return false;
   return Date.parse(card.answeredAt) - Date.parse(card.askedAt) > 5 * 60_000;
 }

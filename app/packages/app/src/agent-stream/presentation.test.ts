@@ -102,6 +102,7 @@ const presentationOptions = {
   display: "collapseToolCalls" as const,
   expandedTurnHostIds: new Set<string>(),
   isTurnActive: true,
+  personCards: false,
 };
 
 function streamHarness(transform?: TimelineItemTransform) {
@@ -150,23 +151,33 @@ describe("whole-message Markdown presentation", () => {
   });
 });
 
-describe("question and wait cards while they are off (yyc/person-cards-text.ts)", () => {
-  it("leaves a card's own row out of the conversation; a call that read an answer stays an ordinary step", () => {
-    const card = { kind: "question", id: "q-1", input: {}, marker: "(answer to q-1)", state: "answered", askedAt: "x" };
-    const withMeta = (item: ToolCallItem, metadata: Record<string, unknown>): ToolCallItem => {
-      const payload = item.payload as { source: "agent"; data: object };
-      return { ...item, payload: { ...payload, data: { ...payload.data, metadata } } } as ToolCallItem;
-    };
-    const asked = withMeta(toolCall("q-1", "ask"), { personAsk: card });
-    const read = withMeta(toolCall("call-2", "Bash"), { personRead: [{ ...card, readBy: "call-2" }] });
-    const rendered = createStreamPresentation()({
-      ...presentationOptions,
-      display: "full",
-      tail: [toolCall("call-1", "Bash"), asked, read],
-      head: [asked],
-      transform: undefined,
-    });
-    expect(rows(rendered).map((item) => item.id)).toEqual(["tool-call-1", "tool-call-2"]);
+describe("question and wait cards as the deployment shows them (yyc/person-cards-text.ts)", () => {
+  const card = { kind: "question", id: "q-1", input: {}, marker: "(answer to q-1)", state: "answered", askedAt: "x" };
+  const withMeta = (item: ToolCallItem, metadata: Record<string, unknown>): ToolCallItem => {
+    const payload = item.payload as { source: "agent"; data: object };
+    return { ...item, payload: { ...payload, data: { ...payload.data, metadata } } } as ToolCallItem;
+  };
+  const asked = withMeta(toolCall("q-1", "ask"), { personAsk: card });
+  const read = withMeta(toolCall("call-2", "Bash"), { personRead: [{ ...card, readBy: "call-2" }], background: true });
+  const present = (personCards: boolean) =>
+    rows(
+      createStreamPresentation()({
+        ...presentationOptions,
+        display: "full",
+        tail: [toolCall("call-1", "Bash"), asked, read],
+        head: [],
+        transform: undefined,
+        personCards,
+      }),
+    );
+  it("off: leaves a card's own row out and makes the call that read an answer an ordinary step", () => {
+    const shown = present(false);
+    expect(shown.map((item) => item.id)).toEqual(["tool-call-1", "tool-call-2"]);
+    const step = shown[1] as ToolCallItem;
+    expect((step.payload as { data: { metadata?: unknown } }).data.metadata).toEqual({ background: true });
+  });
+  it("on: keeps both as the server sent them", () => {
+    expect(present(true).map((item) => item.id)).toEqual(["tool-call-1", "tool-q-1", "tool-call-2"]);
   });
 });
 
@@ -393,6 +404,7 @@ describe("stream presentation through installed plugins", () => {
     const result = createStreamPresentation()({
       ...presentationOptions,
       isTurnActive: false,
+      personCards: false,
       tail: calls,
       head: [],
       transform: installedTransform(installProbe("tool_call", 'item.name === "bash"')),
@@ -541,6 +553,7 @@ describe("timeline presentation", () => {
           tail: source === "history" ? [item] : [],
           head: source === "live" ? [item] : [],
           transform: undefined,
+          personCards: false,
         });
       const projected = rows(presentMessage());
       expect(projected).toEqual([{ ...item, text: "Please fix the voice chat." }]);
@@ -707,6 +720,7 @@ describe("a call that sent files to the person", () => {
       display,
       expandedTurnHostIds,
       isTurnActive: false,
+      personCards: false,
       transform: undefined,
     });
   }
@@ -758,6 +772,7 @@ describe("a call that sent files to the person", () => {
       display: "collapseTurns",
       expandedTurnHostIds: new Set<string>(),
       isTurnActive: true,
+      personCards: false,
       transform: undefined,
     });
     expect(rows(result).map(label)).toEqual(["prompt", "read", "send"]);

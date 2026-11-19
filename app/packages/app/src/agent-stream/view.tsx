@@ -2,7 +2,8 @@ import { isSentFilesCall, openConversationFile, readSentCaption, readSentFiles, 
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { PersonCardView } from "@/yyc/person-cards";
-import { cardViewWhereAsked, PERSON_CARDS, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
+import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
+import { usePersonCardsAvailable } from "@/yyc/me";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -516,6 +517,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
     const presentStream = useMemo(() => createStreamPresentation(), []);
+    const personCards = usePersonCardsAvailable();
     const presentation = useMemo(
       () =>
         presentStream({
@@ -525,8 +527,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           display: chatDisplay,
           expandedTurnHostIds,
           isTurnActive,
+          personCards,
         }),
       [
+        personCards,
         presentStream,
         effectiveStreamItems,
         effectiveStreamHead,
@@ -889,12 +893,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           // a question to the person or a wait on the person (yyc/person-cards.tsx): where it was asked until the AI
           // has read the answer, then on the call that read it
-          const asked = PERSON_CARDS ? readPersonAsk(data.metadata) : null;
+          const asked = readPersonAsk(data.metadata);
           if (asked) {
             const view = cardViewWhereAsked(asked);
             return view ? <PersonCardView card={asked} view={view} /> : null;
           }
-          const read = PERSON_CARDS ? readPersonRead(data.metadata) : [];
+          const read = readPersonRead(data.metadata);
           if (read.length > 0) {
             return (
               <>
