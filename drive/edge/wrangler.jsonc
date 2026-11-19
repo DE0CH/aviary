@@ -1,0 +1,20 @@
+// YYC Drive's edge (src/index.js; YYC-DRIVE.md "The edge"). The page's build is the static assets (assets/: dist/ with
+// the theme at themes/opencloud/ and _headers), served before the Worker; the Worker runs first only for the paths
+// the server's API had. A deployment adds its own name, vars (ACCESS_TEAM, ACCESS_AUD, DRIVE_NAME) and route.
+{
+  "name": "yyc-drive",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-15",
+  // no workers.dev or preview address: the only way in is the route, behind Access
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "assets",
+    // files at their own names (oidc-callback.html, index.html), as the page asks for them
+    "html_handling": "none",
+    // a path that is no file is a page of the single-page app
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/config.json", "/.well-known/*", "/oidc/*", "/graph/*", "/ocs/*", "/api/*", "/dav/*", "/data/*", "/app/*", "/archiver*"]
+  },
+  "observability": { "enabled": true }
+}

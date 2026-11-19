@@ -1,0 +1,8 @@
+{
+  "extends": "@opencloud-eu/tsconfig",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  // `services` holds node services with their own tsconfig, checked separately
+  "exclude": ["node_modules", "services"]
+}

@@ -1,0 +1,6 @@
+{
+  "repoOwner": "opencloud-eu",
+  "repoName": "web",
+  "targetBranchChoices": ["main", "stable-2.1", "stable-4.2", "stable-7.1"],
+  "fork": false
+}

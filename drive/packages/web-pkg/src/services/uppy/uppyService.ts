@@ -1,0 +1,437 @@
+import Uppy, { BasePlugin, UnknownPlugin, UppyFile } from '@uppy/core'
+import Tus from '@uppy/tus'
+import { TusOptions } from '@uppy/tus'
+import XHRUpload, { XHRUploadOptions } from '@uppy/xhr-upload'
+import { Language } from 'vue3-gettext'
+import { omit } from 'lodash-es'
+import { eventBus } from '../eventBus'
+import DropTarget from './DropTarget/plugin'
+import { Resource, urlJoin } from '@opencloud-eu/web-client'
+import { generateFileID, Body, MinimalRequiredUppyFile } from '@uppy/utils'
+
+type UppyServiceTopics =
+  | 'uploadStarted'
+  | 'uploadCancelled'
+  | 'uploadCompleted'
+  | 'uploadSuccess'
+  | 'uploadError'
+  | 'filesSelected'
+  | 'progress'
+  | 'addedForUpload'
+  | 'upload-progress'
+  | 'drag-over'
+  | 'drag-out'
+  | 'drop'
+
+export type uppyHeaders = {
+  [name: string]: string | number
+}
+
+export type UploadResult = {
+  successful: OcUppyFile[]
+  failed: OcUppyFile[]
+  uploadID?: string
+}
+
+interface UppyServiceOptions {
+  language: Language
+}
+
+type FileWithPath = File & {
+  readonly path?: string
+  readonly relativePath?: string
+}
+
+// IMPORTANT: must only contain primitive types, complex types won't be serialized properly!
+export type OcUppyMeta = {
+  name?: string
+  mtime?: number
+  // current space & folder
+  spaceId: string
+  spaceName: string
+  driveAlias: string
+  driveType: string
+  currentFolder: string // current folder path during upload initiation
+  currentFolderId?: string
+  fileId?: string
+  // upload data
+  uppyId?: string
+  relativeFolder: string
+  relativePath: string
+  tusEndpoint: string
+  uploadId: string
+  topLevelFolderId?: string
+  // route data
+  routeName?: string
+  routeDriveAliasAndItem?: string
+  routeShareId?: string
+
+  isFolder: boolean
+}
+export type OcUppyBody = Body
+
+// Meta fields safe to put in the tus `Upload-Metadata` header. This should
+// only include fields that are part of the TUS spec.
+export const TUS_ALLOWED_META_FIELDS: (keyof OcUppyMeta)[] = ['name', 'mtime']
+
+export type OcUppyFile = UppyFile<OcUppyMeta, OcUppyBody>
+type OcUppyPlugin = typeof BasePlugin<any, OcUppyMeta, OcUppyBody>
+export type OcMinimalUppyFile = MinimalRequiredUppyFile<OcUppyMeta, OcUppyBody>
+
+export type OcTusOptions = TusOptions<OcUppyMeta, OcUppyBody>
+
+/** `OmitFirstArg<typeof someArray>` is the type of the returned value of `someArray.slice(1)`. */
+type OmitFirstArg<T> = T extends [any, ...infer U] ? U : never
+
+export class UppyService {
+  uppy: Uppy<OcUppyMeta, OcUppyBody>
+  uploadInputs: HTMLInputElement[] = []
+  uploadFolderMap: Record<string, Resource> = {}
+  private heldBackFiles = new Map<string, OcUppyFile>()
+
+  constructor({ language }: UppyServiceOptions) {
+    const { $gettext } = language
+    this.uppy = new Uppy<OcUppyMeta, OcUppyBody>({
+      autoProceed: false,
+      onBeforeFileAdded: (file, files) => {
+        if (file.id in files && !files[file.id].error) {
+          // file is currently being uploaded, no need to add it again
+          return false
+        }
+        file.name = file.name.normalize('NFC')
+        file.meta.relativePath = this.getRelativeFilePath(file)?.normalize('NFC')
+        // id needs to be generated after the relative path has been set.
+        file.id = this.generateUploadId(file)
+        if (this.heldBackFiles.has(file.id)) {
+          // file is currently being prepared for upload
+          return false
+        }
+        if (this.isInRunningUpload(file.id)) {
+          // failed file whose upload run is still going, removing it would break that run
+          return false
+        }
+        return file
+      }
+    })
+
+    // FIXME: move to importer plugin, as strings are only visible in the dashboard anyhow
+    this.uppy.setOptions({
+      locale: {
+        strings: {
+          addedNumFiles: $gettext('Added %{numFiles} file(s)'), // for some reason this string is required and missing in uppy
+          authenticate: $gettext('Connect'),
+          authenticateWith: $gettext('Connect to %{pluginName}'),
+          authenticateWithTitle: $gettext('Please authenticate with %{pluginName} to select files'),
+          cancel: $gettext('Cancel'),
+          companionError: $gettext('Connection with Companion failed'),
+          loadedXFiles: $gettext('Loaded %{numFiles} files'),
+          loading: $gettext('Loading...'),
+          logOut: $gettext('Log out'),
+          pluginWebdavInputLabel: $gettext('Public link without password protection'),
+          selectX: {
+            0: $gettext('Select %{smart_count}'),
+            1: $gettext('Select %{smart_count}')
+          },
+          signInWithGoogle: $gettext('Sign in with Google')
+        }
+      }
+    })
+
+    this.setUpEvents()
+  }
+
+  getRelativeFilePath = (file: OcUppyFile): string | undefined => {
+    const relativePath =
+      (file.data as FileWithPath).relativePath || (file.data as File).webkitRelativePath
+    return relativePath ? urlJoin(relativePath) : undefined
+  }
+
+  addPlugin<T extends OcUppyPlugin>(
+    Plugin: T,
+    // We want to let the plugin decide whether `opts` is optional or not
+    // so we spread the argument rather than defining `opts:` ourselves.
+    ...args: OmitFirstArg<ConstructorParameters<T>>
+  ) {
+    this.uppy.use(Plugin, ...args)
+  }
+
+  removePlugin(plugin: UnknownPlugin<OcUppyMeta, OcUppyBody>) {
+    this.uppy.removePlugin(plugin)
+  }
+
+  getPlugin<
+    T extends UnknownPlugin<OcUppyMeta, OcUppyBody> = UnknownPlugin<OcUppyMeta, OcUppyBody>
+  >(name: string): T | undefined {
+    return this.uppy.getPlugin(name)
+  }
+
+  useTus({
+    chunkSize,
+    overridePatchMethod,
+    uploadDataDuringCreation,
+    onBeforeRequest,
+    headers
+  }: TusOptions<OcUppyMeta, OcUppyBody>) {
+    const tusPluginOptions: TusOptions<any, OcUppyBody> = {
+      chunkSize,
+      removeFingerprintOnSuccess: true,
+      overridePatchMethod,
+      retryDelays: [0, 500, 1000],
+      uploadDataDuringCreation,
+      limit: 5,
+      headers,
+      // Allowlist which meta fields go into the `Upload-Metadata` header.
+      // Without this, @uppy/tus defaults to sending *all* of file.meta, which
+      // for a vault upload would leak the cleartext directory structure
+      // (currentFolder / relativeFolder / relativePath / routeDriveAliasAndItem)
+      // to the server even though the endpoint path itself is ciphertext. The
+      // server gets everything it needs from the endpoint (path) and headers
+      // (mtime / auth), so metadata is client bookkeeping; we send only the
+      // non-path-revealing fields. Allowlisting (not denylisting) keeps this
+      // fail-closed: a new meta field is not leaked until it is explicitly added.
+      allowedMetaFields: TUS_ALLOWED_META_FIELDS,
+      onBeforeRequest,
+      onShouldRetry: (err, retryAttempt, options, next) => {
+        // status code 5xx means the upload is gone on the server side
+        if (err?.originalResponse?.getStatus() >= 500) {
+          return false
+        }
+        if (err?.originalResponse?.getStatus() === 401) {
+          return true
+        }
+        return next(err)
+      }
+    }
+
+    const xhrPlugin = this.uppy.getPlugin('XHRUpload')
+    if (xhrPlugin) {
+      this.uppy.removePlugin(xhrPlugin)
+    }
+
+    const tusPlugin = this.uppy.getPlugin('Tus')
+    if (tusPlugin) {
+      tusPlugin.setOptions(tusPluginOptions)
+      return
+    }
+
+    this.uppy.use(Tus, tusPluginOptions)
+  }
+
+  useXhr({
+    headers,
+    timeout,
+    endpoint,
+    withCredentials
+  }: XHRUploadOptions<OcUppyMeta, OcUppyBody>) {
+    const xhrPluginOptions: XHRUploadOptions<OcUppyMeta, OcUppyBody> = {
+      endpoint,
+      method: 'put',
+      headers,
+      withCredentials,
+      formData: false,
+      timeout,
+      getResponseData() {
+        return {}
+      },
+      shouldRetry(xhr) {
+        // only retry network failures, the server's answer won't change on a retry
+        return xhr.status === 0
+      }
+    }
+
+    const tusPlugin = this.uppy.getPlugin('Tus')
+    if (tusPlugin) {
+      this.uppy.removePlugin(tusPlugin)
+    }
+
+    const xhrPlugin = this.uppy.getPlugin('XHRUpload')
+    if (xhrPlugin) {
+      xhrPlugin.setOptions(xhrPluginOptions)
+      return
+    }
+
+    this.uppy.use(XHRUpload, xhrPluginOptions)
+  }
+
+  tusActive() {
+    return !!this.uppy.getPlugin('Tus')
+  }
+
+  useDropTarget({ targetSelector }: { targetSelector: string }) {
+    if (!this.uppy.getPlugin('DropTarget')) {
+      this.uppy.use(DropTarget, { target: targetSelector, uppyService: this })
+    }
+  }
+
+  removeDropTarget() {
+    const dropTargetPlugin = this.uppy.getPlugin('DropTarget')
+    if (dropTargetPlugin) {
+      this.uppy.removePlugin(dropTargetPlugin)
+    }
+  }
+
+  subscribe<T>(topic: UppyServiceTopics, callback: (data?: T) => void): string {
+    return eventBus.subscribe(topic, callback)
+  }
+
+  unsubscribe(topic: UppyServiceTopics, token: string): void {
+    eventBus.unsubscribe(topic, token)
+  }
+
+  publish(topic: UppyServiceTopics, data?: unknown): void {
+    eventBus.publish(topic, data)
+  }
+
+  private setUpEvents() {
+    this.uppy.on('progress', (value) => {
+      this.publish('progress', value)
+    })
+    this.uppy.on('upload-progress', (file, progress) => {
+      this.publish('upload-progress', { file, progress })
+    })
+    this.uppy.on('cancel-all', () => {
+      // Uppy clears the files after this event, so capture the result before they are removed.
+      const files = this.uppy.getFiles()
+      const result: UploadResult = {
+        successful: files.filter((file) => file.progress.uploadComplete),
+        failed: files.filter((file) => file.error)
+      }
+      this.publish('uploadCancelled', result)
+      this.clearInputs()
+    })
+    this.uppy.on('complete', (result) => {
+      if (!result || (!result.successful.length && !result.failed.length)) {
+        return
+      }
+      this.publish('uploadCompleted', result)
+      for (let i = 0; i < result.successful.length; i++) {
+        this.uppy.removeFile(result.successful[i].id)
+      }
+      this.clearInputs()
+    })
+    this.uppy.on('upload-success', (file) => {
+      this.publish('uploadSuccess', file)
+    })
+    this.uppy.on('upload-error', (file, error) => {
+      this.publish('uploadError', { file, error })
+    })
+  }
+
+  registerUploadInput(el: HTMLInputElement) {
+    const listenerRegistered = el.getAttribute('listener')
+    if (listenerRegistered !== 'true') {
+      el.setAttribute('listener', 'true')
+      el.addEventListener('change', (event) => {
+        const target = event.target as HTMLInputElement
+        const files = Array.from(target.files)
+        this.addFiles(files)
+      })
+      this.uploadInputs.push(el)
+    }
+  }
+
+  removeUploadInput(el: HTMLInputElement) {
+    this.uploadInputs = this.uploadInputs.filter((input) => input !== el)
+  }
+
+  generateUploadId(uppyFile: OcUppyFile): string {
+    return generateFileID(uppyFile, this.uppy.getID())
+  }
+
+  log(message: unknown, type?: 'error' | 'warning'): void {
+    this.uppy.log(message, type)
+  }
+
+  /**
+   * Takes files out of Uppy's state so that upload() ignores them while their batch is being
+   * prepared. Adding them again is rejected until releaseHeldBackFiles is called.
+   */
+  holdBackFiles(files: OcUppyFile[]) {
+    files.forEach((file) => this.heldBackFiles.set(file.id, file))
+    this.uppy.setState({
+      files: omit(
+        this.uppy.getState().files,
+        files.map(({ id }) => id)
+      )
+    })
+  }
+
+  /**
+   * Allows adding held back files again. Does not put them back into Uppy's state.
+   */
+  releaseHeldBackFiles(files: OcUppyFile[]) {
+    files.forEach(({ id }) => this.heldBackFiles.delete(id))
+  }
+
+  private isInRunningUpload(fileId: string) {
+    return Object.values(this.uppy.getState().currentUploads).some(({ fileIDs }) =>
+      fileIDs.includes(fileId)
+    )
+  }
+
+  addFiles(files: OcMinimalUppyFile[] | File[]) {
+    // uppy types say they do not accept File[] but they are wrong
+    this.uppy.addFiles(files as OcMinimalUppyFile[])
+  }
+
+  uploadFiles() {
+    return this.uppy.upload()
+  }
+
+  retryAllUploads() {
+    return this.uppy.retryAll()
+  }
+
+  pauseAllUploads() {
+    return this.uppy.pauseAll()
+  }
+
+  resumeAllUploads() {
+    return this.uppy.resumeAll()
+  }
+
+  cancelAllUploads() {
+    return this.uppy.cancelAll()
+  }
+
+  removeFailedFiles() {
+    const { files } = this.uppy.getState()
+    const failedFiles = Object.values(files).filter((f) => f.error)
+    if (failedFiles.length) {
+      this.uppy.removeFiles(failedFiles.map(({ id }) => id))
+    }
+  }
+
+  getCurrentUploads(): Record<string, unknown> {
+    return this.uppy.getState().currentUploads
+  }
+
+  isRemoteUploadInProgress(): boolean {
+    return [...this.uppy.getFiles(), ...this.heldBackFiles.values()].some(
+      (f) => f.isRemote && !f.error
+    )
+  }
+
+  clearInputs() {
+    this.uploadInputs.forEach((item) => {
+      item.value = null
+    })
+  }
+
+  /**
+   * Set a specific upload folder for an upload. The HandleUpload plugin
+   * checks, if a specific folder has been specified as upload destination.
+   * If not, it falls back to the current folder.
+   * The uploadId needs to be set within the meta object of the upload files
+   * for the plugin to connect an upload to its destination folder.
+   **/
+  setUploadFolder(uploadId: string, folder: Resource) {
+    this.uploadFolderMap[uploadId] = folder
+  }
+
+  removeUploadFolder(uploadId: string) {
+    if (this.uploadFolderMap[uploadId]) {
+      delete this.uploadFolderMap[uploadId]
+    }
+  }
+}

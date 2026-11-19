@@ -1,0 +1,260 @@
+import DriveResolver from '../../../../src/views/spaces/DriveResolver.vue'
+import {
+  queryItemAsString,
+  useDriveResolver,
+  useRouteParam,
+  useSpacesStore
+} from '@opencloud-eu/web-pkg'
+import { computed, ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+import { mock, mockDeep } from 'vitest-mock-extended'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { locationPublicUpload } from '@opencloud-eu/web-pkg'
+import { PublicSpaceResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { SharePermissionBit } from '@opencloud-eu/web-client'
+import {
+  defaultPlugins,
+  mount,
+  defaultComponentMocks,
+  defaultStubs,
+  RouteLocation,
+  useGetMatchingSpaceMock
+} from '@opencloud-eu/web-test-helpers'
+
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useGetMatchingSpace: vi.fn(),
+  useDriveResolver: vi.fn(),
+  useRouteParam: vi.fn(),
+  queryItemAsString: vi.fn()
+}))
+
+describe('DriveResolver view', () => {
+  it('renders the "drive-redirect"-component when no space is given', async () => {
+    const { wrapper } = getMountedWrapper({ fileId: '' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('drive-redirect-stub').exists()).toBeTruthy()
+  })
+  it('renders the "generic-trash"-component when on a trash route', async () => {
+    const { wrapper } = getMountedWrapper({
+      space: mock<SpaceResource>({ driveType: 'project' }),
+      currentRouteName: 'files-trash-generic'
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('generic-trash-stub').exists()).toBeTruthy()
+  })
+  it('renders the "generic-space"-component when a space is given', async () => {
+    const { wrapper } = getMountedWrapper({
+      space: mock<SpaceResource>({ driveType: 'project' })
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('generic-space-stub').exists()).toBeTruthy()
+  })
+  it('redirects to the public drop page in a public context with "upload-only"-permissions', async () => {
+    const space = mock<SpaceResource>({
+      id: '1',
+      fileId: '1',
+      getDriveAliasAndItem: vi.fn(),
+      driveType: 'public'
+    })
+    const clientService = mockDeep<ClientService>()
+    clientService.webdav.getFileInfo.mockResolvedValue(
+      mockDeep<PublicSpaceResource>({ publicLinkPermission: SharePermissionBit.Create })
+    )
+    const { wrapper, mocks } = getMountedWrapper({
+      space,
+      mocks: { $clientService: clientService }
+    })
+
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(mocks.$router.push).toHaveBeenCalledWith({
+      name: locationPublicUpload.name,
+      params: { token: space.id }
+    })
+  })
+  it('sets the real file id of a public folder link after a reload', async () => {
+    const space = mock<SpaceResource>({
+      id: 'token',
+      fileId: 'token',
+      getDriveAliasAndItem: vi.fn(),
+      driveType: 'public'
+    })
+    const clientService = mockDeep<ClientService>()
+    clientService.webdav.getFileInfo.mockResolvedValue(
+      mock<PublicSpaceResource>({ fileId: 'storage$space!folder', publicLinkPermission: 15 })
+    )
+    const { wrapper } = getMountedWrapper({ space, mocks: { $clientService: clientService } })
+    await flushPromises()
+
+    const { updateSpaceField } = useSpacesStore()
+    expect(updateSpaceField).toHaveBeenCalledWith({
+      id: 'token',
+      field: 'fileId',
+      value: 'storage$space!folder'
+    })
+    expect(wrapper.find('generic-space-stub').exists()).toBeTruthy()
+  })
+  it('redirects to personal space if user has access to the resource via their personal space', async () => {
+    const space = mock<SpaceResource>({
+      id: '1',
+      getDriveAliasAndItem: vi.fn(),
+      driveType: 'public'
+    })
+    const internalSpace = mock<SpaceResource>({
+      id: '1',
+      getDriveAliasAndItem: vi.fn(),
+      driveType: 'personal'
+    })
+    const clientService = mockDeep<ClientService>()
+    clientService.webdav.getPathForFileId.mockResolvedValue('/path')
+    clientService.webdav.getFileInfo.mockResolvedValue(mock<Resource>())
+    const { wrapper, mocks } = getMountedWrapper({
+      space,
+      internalSpace,
+      mocks: { $clientService: clientService },
+      userContextReady: true
+    })
+
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(mocks.$router.push).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'files-spaces-generic' })
+    )
+  })
+  it('redirects to private link if user has access to the resource via a share', async () => {
+    const space = mock<SpaceResource>({
+      id: '1',
+      getDriveAliasAndItem: vi.fn(),
+      driveType: 'public'
+    })
+    const clientService = mockDeep<ClientService>()
+    clientService.webdav.getPathForFileId.mockResolvedValue('/path')
+    const { wrapper, mocks } = getMountedWrapper({
+      space,
+      mocks: { $clientService: clientService },
+      userContextReady: true
+    })
+
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(mocks.$router.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'resolvePrivateLink'
+      })
+    )
+  })
+  it('redirects to private link if no drive alias but a fileId is given', async () => {
+    const { wrapper, mocks } = getMountedWrapper({ driveAliasAndItem: '' })
+    await wrapper.vm.$nextTick()
+
+    expect(mocks.$router.replace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'resolvePrivateLink'
+      })
+    )
+  })
+  it("resolves the fileId via private link for another user's personal space", async () => {
+    const { wrapper, mocks } = getMountedWrapper({
+      driveAliasAndItem: 'personal/other-user/folder/sub',
+      fileId: 'storage$space!sub'
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(mocks.$router.replace).toHaveBeenCalledWith({
+      name: 'resolvePrivateLink',
+      params: { fileId: 'storage$space!sub' }
+    })
+    expect(wrapper.find('drive-redirect-stub').exists()).toBeFalsy()
+  })
+  it('keeps the details query when resolving the fileId via private link', async () => {
+    const { wrapper, mocks } = getMountedWrapper({
+      driveAliasAndItem: 'personal/other-user/folder',
+      query: { details: 'sharing' }
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(mocks.$router.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'resolvePrivateLink', query: { details: 'sharing' } })
+    )
+  })
+  it('renders the "drive-redirect"-component for an unknown project space with a fileId', async () => {
+    const { wrapper, mocks } = getMountedWrapper({ driveAliasAndItem: 'project/unknown/folder' })
+    await wrapper.vm.$nextTick()
+
+    expect(mocks.$router.replace).not.toHaveBeenCalled()
+    expect(mocks.$router.push).not.toHaveBeenCalled()
+    expect(wrapper.find('drive-redirect-stub').exists()).toBeTruthy()
+  })
+})
+
+function getMountedWrapper({
+  mocks = {},
+  space = undefined,
+  internalSpace = undefined,
+  currentRouteName = 'files-spaces-generic',
+  userContextReady = false,
+  driveAliasAndItem = 'personal/einstein/file',
+  fileId = '1',
+  query = {}
+}: {
+  mocks?: Record<string, unknown>
+  space?: SpaceResource
+  internalSpace?: SpaceResource
+  currentRouteName?: string
+  userContextReady?: boolean
+  driveAliasAndItem?: string
+  fileId?: string
+  query?: Record<string, string>
+} = {}) {
+  vi.mocked(useRouteParam).mockReturnValue(ref(driveAliasAndItem))
+  vi.mocked(queryItemAsString).mockReturnValue(fileId)
+  vi.mocked(useDriveResolver).mockImplementation(() => ({
+    space: ref(space),
+    item: ref('/'),
+    itemId: computed(() => 'id'),
+    loading: ref(false)
+  }))
+  vi.mocked(useGetMatchingSpace).mockImplementation(() =>
+    useGetMatchingSpaceMock({
+      getInternalSpace: () => internalSpace
+    })
+  )
+
+  const currentRoute = mock<RouteLocation>({
+    name: currentRouteName,
+    params: { driveAliasAndItem: '/' }
+  })
+  // a mocked query would return a mock for every missing query item
+  currentRoute.query = query
+  const defaultMocks = {
+    ...defaultComponentMocks({ currentRoute }),
+    ...(mocks && mocks)
+  }
+
+  return {
+    mocks: defaultMocks,
+    wrapper: mount(DriveResolver, {
+      global: {
+        plugins: [
+          ...defaultPlugins({
+            piniaOptions: { authState: { userContextReady: userContextReady } }
+          })
+        ],
+        mocks: defaultMocks,
+        provide: defaultMocks,
+        stubs: defaultStubs
+      }
+    })
+  }
+}

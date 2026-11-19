@@ -1,0 +1,12 @@
+{
+  "server" : "",
+  "apps" : [
+    "files",
+    "pdf-viewer",
+    "preview",
+    "search",
+    "text-editor",
+    "epub-reader"
+  ],
+  "applications" : []
+}

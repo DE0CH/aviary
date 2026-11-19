@@ -1,0 +1,135 @@
+<template>
+  <span class="inline-block mb-4 wrap-anywhere" v-text="message" />
+  <div class="my-4">
+    <oc-checkbox
+      v-if="conflictCount > 1"
+      v-model="checkboxValue"
+      size="medium"
+      :label="checkboxLabel"
+      :aria-label="checkboxLabel"
+    />
+  </div>
+  <teleport defer :to="`#${modalActionsTarget(modal)}`">
+    <oc-button class="oc-modal-body-actions-cancel ml-2" @click="onSkip">
+      {{ $gettext('Skip') }}
+    </oc-button>
+    <oc-button
+      v-if="!hideSecondaryAction"
+      class="oc-modal-body-actions-secondary ml-2"
+      @click="onConfirmSecondary"
+    >
+      {{ confirmSecondaryText }}
+    </oc-button>
+    <oc-button
+      v-if="!hideKeepBoth"
+      class="oc-modal-body-actions-confirm ml-2"
+      appearance="filled"
+      @click="onConfirm"
+    >
+      {{ $gettext('Keep both') }}
+    </oc-button>
+  </teleport>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { Modal, modalActionsTarget, useModals } from '../../composables'
+import { Resource } from '@opencloud-eu/web-client'
+import { ResolveConflict, ResolveStrategy } from '../../helpers/resource'
+
+const {
+  modal,
+  resource,
+  conflictCount,
+  callbackFn,
+  suggestMerge = true,
+  separateSkipHandling = false,
+  hideSecondaryAction = false,
+  hideKeepBoth = false,
+  confirmSecondaryTextOverwrite = undefined,
+  existingIsFolder = undefined
+} = defineProps<{
+  modal: Modal
+  resource: Resource
+  conflictCount: number
+  callbackFn: (resolveConflict: ResolveConflict) => void
+  suggestMerge?: boolean
+  separateSkipHandling?: boolean
+  hideSecondaryAction?: boolean
+  hideKeepBoth?: boolean
+  confirmSecondaryTextOverwrite?: string
+  existingIsFolder?: boolean
+}>()
+
+const { removeModal } = useModals()
+const { $gettext } = useGettext()
+
+const checkboxValue = ref(false)
+const checkboxLabel = computed(() => {
+  if (conflictCount < 2) {
+    return ''
+  }
+  if (!separateSkipHandling) {
+    return $gettext('Apply to all %{count} conflicts', {
+      count: conflictCount.toString()
+    })
+  } else if (resource.isFolder) {
+    return $gettext('Apply to all %{count} folders', { count: conflictCount.toString() })
+  } else {
+    return $gettext('Apply to all %{count} files', { count: conflictCount.toString() })
+  }
+})
+
+const isExistingFolder = computed(() => {
+  if (existingIsFolder === undefined) {
+    return resource.isFolder
+  }
+  return existingIsFolder
+})
+
+const message = computed(() =>
+  unref(isExistingFolder)
+    ? $gettext('Folder with name »%{name}« already exists.', { name: resource.name })
+    : $gettext('File with name »%{name}« already exists.', { name: resource.name })
+)
+
+const confirmSecondaryText = computed(() => {
+  return confirmSecondaryTextOverwrite || $gettext('Replace')
+})
+
+const onConfirm = () => {
+  removeModal(modal.id)
+  callbackFn({
+    strategy: ResolveStrategy.KEEP_BOTH,
+    doForAllConflicts: unref(checkboxValue)
+  })
+}
+
+const onConfirmSecondary = () => {
+  removeModal(modal.id)
+  const strategy = suggestMerge ? ResolveStrategy.MERGE : ResolveStrategy.REPLACE
+  callbackFn({
+    strategy,
+    doForAllConflicts: unref(checkboxValue)
+  })
+}
+
+const onSkip = () => {
+  removeModal(modal.id)
+  callbackFn({
+    strategy: ResolveStrategy.SKIP,
+    doForAllConflicts: unref(checkboxValue)
+  })
+}
+
+// called by the modal wrapper when the modal is closed via close button or Escape
+const onCancel = () => {
+  callbackFn({
+    strategy: ResolveStrategy.CANCEL,
+    doForAllConflicts: false
+  })
+}
+
+defineExpose({ onCancel })
+</script>

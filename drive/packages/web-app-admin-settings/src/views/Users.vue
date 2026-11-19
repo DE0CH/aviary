@@ -1,0 +1,486 @@
+<template>
+  <app-template
+    :breadcrumbs="breadcrumbs"
+    :side-bar-available-panels="sideBarAvailablePanels"
+    :side-bar-panel-context="sideBarPanelContext"
+    :side-bar-loading="sideBarLoading"
+    :show-batch-actions="!!selectedUsers.length"
+    :batch-actions="batchActions"
+    :batch-actions-loading="batchActionsLoading"
+    :batch-action-items="selectedUsers"
+    :show-view-options="true"
+    @clear-selection="userSettingsStore.setSelectedUsers([])"
+  >
+    <template #sideBarHeader>
+      <div v-if="selectedUsers.length === 1" class="flex items-center min-w-0">
+        <oc-avatar
+          class="mr-2 shrink-0"
+          :width="24"
+          :userid="selectedUsers[0].id"
+          :user-name="selectedUsers[0].displayName"
+        />
+        <h2
+          class="m-0 text-base font-semibold min-w-0 flex-1 truncate"
+          :title="selectedUsers[0].displayName"
+          v-text="selectedUsers[0].displayName"
+        />
+      </div>
+    </template>
+    <template #actions>
+      <div class="flex flex-wrap gap-2 justify-between w-full my-2 items-center">
+        <div class="flex items-center">
+          <item-filter
+            v-if="groups.length || filterGroupIds.length"
+            :allow-multiple="true"
+            :filter-label="$gettext('Groups')"
+            :filterable-attributes="['displayName']"
+            :items="groups"
+            :loading="loadGroupsTask.isRunning || !loadGroupsTask.last"
+            :option-filter-label="$gettext('Filter groups')"
+            :show-option-filter="true"
+            class="mr-2"
+            display-name-attribute="displayName"
+            filter-name="groups"
+            @selection-change="filterGroups"
+          >
+            <template #image="{ item }">
+              <oc-avatar :width="32" :userid="item.id" :user-name="item.displayName" />
+            </template>
+            <template #item="{ item, term }">
+              <div class="ml-2"><oc-filter-highlight :text="item.displayName" :term="term" /></div>
+            </template>
+          </item-filter>
+          <item-filter
+            v-if="roles.length"
+            :allow-multiple="true"
+            :filter-label="$gettext('Roles')"
+            :filterable-attributes="['displayName']"
+            :items="roles"
+            :option-filter-label="$gettext('Filter roles')"
+            :show-option-filter="true"
+            display-name-attribute="displayName"
+            filter-name="roles"
+            @selection-change="filterRoles"
+          >
+            <template #image="{ item }">
+              <oc-avatar :width="32" :userid="item.id" :user-name="$gettext(item.displayName)" />
+            </template>
+            <template #item="{ item, term }">
+              <div class="ml-2">
+                <oc-filter-highlight :text="$gettext(item.displayName)" :term="term" />
+              </div>
+            </template>
+          </item-filter>
+        </div>
+        <oc-search-bar
+          v-model="searchTerm"
+          is-filter
+          class="w-full sm:w-3xs"
+          :label="$gettext('Search')"
+          :placeholder="$gettext('Search for users')"
+          :is-rounded="false"
+          button-hidden
+          @search="
+            (term) => {
+              searchTerm = term
+              searchUsers()
+            }
+          "
+          @advanced-search="searchUsers"
+        />
+      </div>
+    </template>
+    <template #mainContent>
+      <users-list :is-loading="isLoading" :roles="roles">
+        <template #contextMenu>
+          <context-actions :items="selectedUsers" />
+        </template>
+        <template #noResults>
+          <no-content-message
+            v-if="isFilteringMandatory && !isFilteringActive"
+            img-src="images/illustrations/users.svg"
+          >
+            <template #message>
+              <span v-text="$gettext('No users found')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('Please specify a filter to see results')" />
+            </template>
+          </no-content-message>
+          <no-content-message v-else img-src="images/illustrations/users.svg">
+            <template #message>
+              <span v-text="$gettext('No users found')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('Try refining the search term or filters to get results')" />
+            </template>
+          </no-content-message>
+        </template>
+      </users-list>
+    </template>
+  </app-template>
+</template>
+
+<script setup lang="ts">
+import AppTemplate from '../components/AppTemplate.vue'
+import UsersList from '../components/Users/UsersList.vue'
+import ContextActions from '../components/Users/ContextActions.vue'
+import DetailsPanel from '../components/Users/SideBar/DetailsPanel.vue'
+import EditPanel from '../components/Users/SideBar/EditPanel.vue'
+import {
+  useUserActionsDelete,
+  useUserActionsRemoveFromGroups,
+  useUserActionsAddToGroups,
+  useUserActionsEditLogin,
+  useUserActionsEditQuota
+} from '../composables'
+import { User, Group, AppRole, Quota } from '@opencloud-eu/web-client/graph/generated'
+import {
+  ItemFilter,
+  NoContentMessage,
+  eventBus,
+  queryItemAsString,
+  useClientService,
+  useRoute,
+  useRouteQuery,
+  useRouter,
+  SideBarPanel,
+  SideBarPanelContext,
+  useCapabilityStore,
+  useConfigStore,
+  useMessages,
+  QueryValue,
+  UserActionOptions
+} from '@opencloud-eu/web-pkg'
+import { computed, ref, onBeforeUnmount, onMounted, unref, watch } from 'vue'
+import { useTask } from 'vue-concurrency'
+import { useGettext } from 'vue3-gettext'
+import { isEqual, omit } from 'lodash-es'
+import { storeToRefs } from 'pinia'
+import { useUserSettingsStore } from '../composables/stores/userSettings'
+import { call } from '@opencloud-eu/web-client'
+import { OcFilterHighlight } from '@opencloud-eu/design-system/components'
+
+const { $gettext } = useGettext()
+const router = useRouter()
+const route = useRoute()
+const { graphUsersEditLoginAllowedDisabled, graphUsersReadOnlyAttributes } =
+  storeToRefs(useCapabilityStore())
+const clientService = useClientService()
+const configStore = useConfigStore()
+const { showErrorMessage } = useMessages()
+
+const userSettingsStore = useUserSettingsStore()
+const { users, selectedUsers } = storeToRefs(userSettingsStore)
+
+const groups = ref<Group[]>([])
+const roles = ref<AppRole[]>([])
+const applicationId = ref<string>()
+const additionalUserDataLoadedForUserIds = ref<string[]>([])
+const sideBarLoading = ref(false)
+const isFilteringMandatory = configStore.options.userListRequiresFilter
+
+const writableGroups = computed(() =>
+  unref(groups).filter((g) => !g.groupTypes?.includes('ReadOnly'))
+)
+
+const { actions: deleteActions } = useUserActionsDelete()
+const { actions: removeFromGroupsActions } = useUserActionsRemoveFromGroups({
+  groups: writableGroups
+})
+const { actions: addToGroupsActions } = useUserActionsAddToGroups({ groups: writableGroups })
+const { actions: editLoginActions } = useUserActionsEditLogin()
+const { actions: editQuotaActions } = useUserActionsEditQuota()
+
+function parseIdsQuery(value: QueryValue) {
+  return queryItemAsString(value)?.split('+') || []
+}
+
+const searchTermQuery = useRouteQuery('q_displayName')
+const filterGroupIds = ref(parseIdsQuery(unref(useRouteQuery('q_groups'))))
+const filterRoleIds = ref(parseIdsQuery(unref(useRouteQuery('q_roles'))))
+const searchTerm = ref(queryItemAsString(unref(searchTermQuery)) || '')
+const appliedSearchTerm = ref(unref(searchTerm))
+
+const isFilteringActive = computed(
+  () =>
+    !!unref(filterGroupIds).length || !!unref(filterRoleIds).length || !!unref(appliedSearchTerm)
+)
+
+function anyOf(ids: string[], condition: (id: string) => string) {
+  return ids.length ? `(${ids.map(condition).join(' or ')})` : ''
+}
+
+const usersFilter = computed(() =>
+  [
+    anyOf(unref(filterGroupIds), (id) => `memberOf/any(m:m/id eq '${id}')`),
+    anyOf(unref(filterRoleIds), (id) => `appRoleAssignments/any(m:m/appRoleId eq '${id}')`)
+  ]
+    .filter(Boolean)
+    .join(' and ')
+)
+
+// the server searches the display name, the user name and the email. Quoted, the term may contain
+// spaces and special characters, but no double quotes
+const usersSearch = computed(() => {
+  const term = unref(appliedSearchTerm).replaceAll('"', '')
+  return term ? `"${term}"` : undefined
+})
+
+const loadGroupsTask = useTask(function* (signal) {
+  groups.value = yield* call(
+    clientService.graphAuthenticated.groups.listGroups({ orderBy: ['displayName'] }, { signal })
+  )
+}).restartable()
+
+const loadAppRolesTask = useTask(function* (signal) {
+  const applications = yield* call(
+    clientService.graphAuthenticated.applications.listApplications({ signal })
+  )
+  roles.value = applications[0].appRoles
+  applicationId.value = applications[0].id
+})
+
+const loadUsersTask = useTask(function* (signal) {
+  if (isFilteringMandatory && !unref(isFilteringActive)) {
+    return userSettingsStore.setUsers([])
+  }
+
+  try {
+    const usersResponse = yield* call(
+      clientService.graphAuthenticated.users.listUsers(
+        {
+          orderBy: ['displayName'],
+          filter: unref(usersFilter),
+          ...(unref(usersSearch) && { search: unref(usersSearch) }),
+          expand: ['appRoleAssignments']
+        },
+        { signal }
+      )
+    )
+    userSettingsStore.setUsers(usersResponse || [])
+  } catch (e) {
+    // e.g. a filter with a group that does not exist anymore
+    console.error(e)
+    userSettingsStore.setUsers([])
+    showErrorMessage({ title: $gettext('Failed to load users'), errors: [e] })
+  }
+})
+
+const loadResourcesTask = useTask(function* () {
+  yield Promise.all([loadUsersTask.perform(), loadGroupsTask.perform(), loadAppRolesTask.perform()])
+})
+
+const isLoading = computed(
+  () =>
+    loadUsersTask.isRunning ||
+    !loadUsersTask.last ||
+    loadResourcesTask.isRunning ||
+    !loadResourcesTask.last
+)
+
+/**
+ * Reloads the user with all attributes, which are not loaded
+ * while listing the users for performance reasons.
+ */
+const loadAdditionalUserDataTask = useTask(function* (signal, user: User) {
+  if (unref(additionalUserDataLoadedForUserIds).includes(user.id)) {
+    return
+  }
+
+  const data = yield* call(clientService.graphAuthenticated.users.getUser(user.id, {}, { signal }))
+  additionalUserDataLoadedForUserIds.value.push(user.id)
+  Object.assign(user, data)
+})
+
+const selectedUsersDataLoaded = computed(() =>
+  unref(selectedUsers).every(({ id }) => unref(additionalUserDataLoadedForUserIds).includes(id))
+)
+
+function reloadUsers() {
+  loadUsersTask.perform()
+  if (unref(selectedUsers).length) {
+    // only reset the selection if there is one because it messes with the focus otherwise
+    userSettingsStore.setSelectedUsers([])
+  }
+  additionalUserDataLoadedForUserIds.value = []
+}
+
+function reloadFilteredUsers() {
+  reloadUsers()
+  return router.replace({ ...unref(route), query: { ...unref(route).query, page: '1' } })
+}
+
+function filterGroups(groups: Group[]) {
+  filterGroupIds.value = groups.map((g) => g.id)
+  return reloadFilteredUsers()
+}
+
+function filterRoles(roles: AppRole[]) {
+  filterRoleIds.value = roles.map((r) => r.id)
+  return reloadFilteredUsers()
+}
+
+async function searchUsers() {
+  appliedSearchTerm.value = unref(searchTerm)
+  await router.push({
+    ...unref(route),
+    query: {
+      ...omit(unref(route).query, 'q_displayName'),
+      ...(unref(searchTerm) && { q_displayName: unref(searchTerm) })
+    }
+  })
+  return reloadFilteredUsers()
+}
+
+// the group actions need the group memberships, which are missing if loading the details failed
+const groupActions = computed(() =>
+  [...unref(addToGroupsActions), ...unref(removeFromGroupsActions)].map((action) => ({
+    ...action,
+    isVisible: (options: UserActionOptions) => {
+      if (unref(selectedUsersDataLoaded)) {
+        return action.isVisible(options)
+      }
+
+      // the memberships are unknown, so show the action disabled instead of hiding it
+      return (
+        !unref(graphUsersReadOnlyAttributes).includes('user.memberOf') &&
+        options.resources.length > 0
+      )
+    },
+    isDisabled: () => !unref(selectedUsersDataLoaded),
+    disabledTooltip: () => $gettext('The user details could not be loaded')
+  }))
+)
+
+// the query can change without the search bar being involved, e.g. via browser back
+watch(searchTermQuery, (value) => {
+  const term = queryItemAsString(value) || ''
+  if (term === unref(appliedSearchTerm)) {
+    return
+  }
+  searchTerm.value = term
+  appliedSearchTerm.value = term
+  reloadUsers()
+})
+
+const batchActions = computed(() =>
+  [
+    ...unref(editQuotaActions),
+    ...unref(groupActions),
+    ...(unref(graphUsersEditLoginAllowedDisabled) ? [] : unref(editLoginActions)),
+    ...unref(deleteActions)
+  ].filter((item) => item.isVisible({ resources: unref(selectedUsers) }))
+)
+
+// the actions depend on the group memberships of the selected users
+const batchActionsLoading = computed(() => loadAdditionalUserDataTask.isRunning)
+
+const breadcrumbs = computed(() => [
+  {
+    text: $gettext('Users'),
+    onClick: () => {
+      userSettingsStore.setSelectedUsers([])
+      loadResourcesTask.perform()
+    }
+  }
+])
+
+const sideBarPanelContext = computed<SideBarPanelContext<unknown, unknown, User>>(() => ({
+  parent: null,
+  items: unref(selectedUsers)
+}))
+
+const sideBarAvailablePanels = [
+  {
+    name: 'DetailsPanel',
+    icon: 'user',
+    title: () => $gettext('Details'),
+    component: DetailsPanel,
+    componentAttrs: ({ items }) => ({
+      user: items.length === 1 ? items[0] : null,
+      users: items,
+      usersCount: unref(users).length,
+      roles: unref(roles)
+    }),
+    isRoot: () => true,
+    isVisible: () => true
+  },
+  {
+    name: 'EditPanel',
+    icon: { name: 'pencil', fillType: 'line' },
+    title: () => $gettext('Edit user'),
+    component: EditPanel,
+    // the form needs the full user data, e.g. the group memberships
+    isVisible: ({ items }) =>
+      items.length === 1 && unref(additionalUserDataLoadedForUserIds).includes(items[0].id),
+    componentAttrs: ({ items }) => ({
+      user: items.length === 1 ? items[0] : null,
+      roles: unref(roles),
+      groups: unref(groups),
+      applicationId: unref(applicationId)
+    })
+  }
+] satisfies SideBarPanel<unknown, unknown, User>[]
+
+function updateSpaceQuota({ spaceId, quota }: { spaceId: string; quota: Quota }) {
+  const user = unref(users).find((u) => u.drive?.id === spaceId)
+  user.drive.quota = quota
+  userSettingsStore.upsertUser(user)
+}
+
+function onUserCreated(user: User) {
+  // the server decides whether the new user matches the active filters or search,
+  // a mandatory filter without any filter set shows no users at all
+  if (isFilteringMandatory || unref(isFilteringActive)) {
+    reloadUsers()
+    return
+  }
+  userSettingsStore.upsertUser(user)
+}
+
+watch(
+  () => unref(selectedUsers).map(({ id }) => id),
+  async (selectedIds, previousSelectedIds) => {
+    // the quick action buttons select the user and the click also reaches the row,
+    // which sets the same selection again
+    if (isEqual(selectedIds, previousSelectedIds)) {
+      return
+    }
+    sideBarLoading.value = true
+    try {
+      await Promise.all(
+        unref(selectedUsers).map((user) => loadAdditionalUserDataTask.perform(user))
+      )
+    } catch (e) {
+      // leaving the page cancels the loading
+      if (e === 'cancel') {
+        return
+      }
+      console.error(e)
+      showErrorMessage({ title: $gettext('Failed to load user details'), errors: [e] })
+    } finally {
+      sideBarLoading.value = false
+    }
+  }
+)
+
+let editQuotaActionEventToken: string
+let userCreatedEventToken: string
+
+onMounted(() => {
+  loadResourcesTask.perform()
+
+  editQuotaActionEventToken = eventBus.subscribe(
+    'app.admin-settings.users.user.quota.updated',
+    updateSpaceQuota
+  )
+  userCreatedEventToken = eventBus.subscribe('app.admin-settings.users.user.created', onUserCreated)
+})
+
+onBeforeUnmount(() => {
+  userSettingsStore.reset()
+  eventBus.unsubscribe('app.admin-settings.users.user.quota.updated', editQuotaActionEventToken)
+  eventBus.unsubscribe('app.admin-settings.users.user.created', userCreatedEventToken)
+})
+</script>

@@ -1,0 +1,410 @@
+import { defineStore } from 'pinia'
+import { computed, ref, unref } from 'vue'
+import {
+  buildShareSpaceResource,
+  isMountPointSpaceResource,
+  SpaceResource
+} from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
+import { isPersonalSpaceResource, isProjectSpaceResource } from '@opencloud-eu/web-client'
+import type {
+  CollaboratorShare,
+  GraphSharePermission,
+  MountPointSpaceResource
+} from '@opencloud-eu/web-client'
+import { useUserStore } from './user'
+import { useConfigStore } from './config'
+import { useSharesStore } from './shares'
+import { useExtensionRegistry } from './extensionRegistry'
+import { markSpaceVaultStatus } from '../../helpers/vault'
+import { ListPermissionsSpaceRootSelectEnum } from '@opencloud-eu/web-client/graph/generated'
+
+// sort space members with higher permissions (managers) at the top, then by name.
+// the server returns members in a different order on every request, so the order must not depend on it.
+export const sortSpaceMembers = (shares: CollaboratorShare[]) => {
+  return shares.sort((a, b) => {
+    return (
+      b.permissions.length - a.permissions.length ||
+      (a.sharedWith.displayName || '').localeCompare(b.sharedWith.displayName || '', undefined, {
+        sensitivity: 'base',
+        numeric: true
+      }) ||
+      (a.id || '').localeCompare(b.id || '')
+    )
+  })
+}
+
+export const getSpacesByType = async ({
+  graphClient,
+  driveType,
+  signal
+}: {
+  graphClient: Graph
+  driveType: string
+  signal?: AbortSignal
+}) => {
+  return (
+    (await graphClient.drives.listMyDrives(
+      {
+        orderBy: 'name asc',
+        filter: `driveType eq ${driveType}`
+      },
+      { signal }
+    )) || []
+  )
+}
+
+export const useSpacesStore = defineStore('spaces', () => {
+  const userStore = useUserStore()
+  const configStore = useConfigStore()
+  const sharesStore = useSharesStore()
+  const extensionRegistry = useExtensionRegistry()
+
+  const spaces = ref<SpaceResource[]>([])
+  /**
+   * All project spaces of the server, including the ones the current user isn't a member of.
+   * Only loaded by the admin settings, `undefined` otherwise. Kept apart from `spaces`, which holds
+   * the spaces of the current user only and is used as such throughout the app.
+   */
+  const allProjectSpaces = ref<SpaceResource[]>()
+  const currentSpace = ref<SpaceResource>()
+  const spacesInitialized = ref(false)
+  const mountPointsInitialized = ref(false)
+  const spacesLoading = ref(false)
+  const imagesLoading = ref<string[]>([])
+  const readmesLoading = ref<string[]>([])
+
+  const personalSpace = computed(() => {
+    return unref(spaces).find((s) => isPersonalSpaceResource(s) && s.isOwner(userStore.user))
+  })
+
+  const setSpacesInitialized = (value: boolean) => {
+    spacesInitialized.value = value
+  }
+
+  const setMountPointsInitialized = (value: boolean) => {
+    mountPointsInitialized.value = value
+  }
+
+  const setSpacesLoading = (value: boolean) => {
+    spacesLoading.value = value
+  }
+
+  const setCurrentSpace = (space: SpaceResource) => {
+    currentSpace.value = space
+  }
+
+  const getSpaceMembers = (space: SpaceResource) => {
+    // only project spaces have members
+    if (!isProjectSpaceResource(space)) {
+      return []
+    }
+    const members = sharesStore.collaboratorShares.filter((c) => c.resourceId === space.id)
+    return sortSpaceMembers(members)
+  }
+
+  const addSpaces = (s: SpaceResource[]) => {
+    markSpaceVaultStatus(extensionRegistry, s)
+    unref(spaces).push(...s)
+  }
+
+  /**
+   * Removes a space from the spaces of the current user. Only a deleted space is removed from
+   * `allProjectSpaces` too, a space the user just lost access to (`deleted: false`) stays there.
+   */
+  const removeSpace = (space: SpaceResource, { deleted = true }: { deleted?: boolean } = {}) => {
+    spaces.value = unref(spaces).filter(({ id }) => id !== space.id)
+    if (deleted && unref(allProjectSpaces)) {
+      allProjectSpaces.value = unref(allProjectSpaces).filter(({ id }) => id !== space.id)
+    }
+  }
+
+  const setAllProjectSpaces = (s: SpaceResource[] | undefined) => {
+    if (s) {
+      markSpaceVaultStatus(extensionRegistry, s)
+    }
+    allProjectSpaces.value = s
+  }
+
+  /**
+   * Updates a space of `allProjectSpaces` (if loaded). The spaces of both lists are separate
+   * objects, so updating the spaces of the current user doesn't overwrite the admin data.
+   */
+  const upsertAllProjectSpace = (space: SpaceResource) => {
+    if (!unref(allProjectSpaces) || !isProjectSpaceResource(space)) {
+      return
+    }
+    const existingSpace = unref(allProjectSpaces).find(({ id }) => id === space.id)
+    if (!existingSpace) {
+      const newSpace = { ...space }
+      markSpaceVaultStatus(extensionRegistry, [newSpace])
+      unref(allProjectSpaces).push(newSpace)
+      return
+    }
+    Object.assign(existingSpace, space)
+    markSpaceVaultStatus(extensionRegistry, [existingSpace])
+  }
+
+  const getSpace = (id: string) => {
+    return unref(spaces).find((s) => id == s.id)
+  }
+
+  const getMountPointForSpace = async ({
+    graphClient,
+    space,
+    signal
+  }: {
+    graphClient: Graph
+    space: SpaceResource
+    signal?: AbortSignal
+  }): Promise<MountPointSpaceResource> => {
+    await loadMountPoints({ graphClient, signal })
+
+    // even if the resource has been shared via multiple permissions (e.g. directly via user and a group)
+    // we only care about one matching mount point since the remote item contains all permissions
+    return unref(spaces).find(
+      (s) => isMountPointSpaceResource(s) && s.root?.remoteItem?.id === space.id
+    )
+  }
+
+  const createShareSpace = ({
+    driveAliasPrefix,
+    id,
+    shareName,
+    graphPermissions
+  }: {
+    driveAliasPrefix: 'share' | 'ocm-share'
+    id: string
+    shareName: string
+    graphPermissions?: GraphSharePermission[]
+  }) => {
+    const space = buildShareSpaceResource({
+      driveAliasPrefix,
+      id,
+      shareName,
+      serverUrl: configStore.serverUrl,
+      graphPermissions
+    })
+    addSpaces([space])
+    return space
+  }
+
+  const upsertSpace = (space: SpaceResource) => {
+    upsertAllProjectSpace(space)
+    const existingSpace = unref(spaces).find(({ id }) => id === space.id)
+    if (existingSpace) {
+      Object.assign(existingSpace, space)
+      markSpaceVaultStatus(extensionRegistry, [existingSpace])
+      return
+    }
+    addSpaces([space])
+  }
+
+  const updateSpaceField = <T extends SpaceResource>({
+    id,
+    field,
+    value
+  }: {
+    id: T['id']
+    field: keyof T
+    value: T[keyof T]
+  }) => {
+    const matchingSpaces = [...unref(spaces), ...(unref(allProjectSpaces) || [])].filter(
+      (space) => id === space.id
+    ) as T[]
+    for (const space of matchingSpaces) {
+      space[field] = value
+    }
+  }
+
+  const loadSpaces = async ({ graphClient }: { graphClient: Graph }) => {
+    spacesLoading.value = true
+    try {
+      /**
+       * FIXME: this is bad for two reasons:
+       * 1. fetching by specific drive type is bad because if more drive types are being added it needs additional code.
+       *    as soon as the backend allows to filter by `driveType neq virtual` we want to use that here.
+       * 2. fetching the mountpoint drives only on first access is kind of error prone, because mount points are
+       *    trying to be accessed in multiple code locations. all of them need to check now if mountpoints need to be
+       *    fetched first. but at the moment fetching mountpoints is kind of expensive, so we need to accept that for now.
+       */
+      const [personalSpaces, projectSpaces] = await Promise.all([
+        getSpacesByType({ graphClient, driveType: 'personal' }),
+        getSpacesByType({ graphClient, driveType: 'project' })
+      ])
+
+      addSpaces([...personalSpaces, ...projectSpaces])
+    } finally {
+      spacesLoading.value = false
+    }
+  }
+
+  const loadMountPoints = async ({
+    graphClient,
+    signal
+  }: {
+    graphClient: Graph
+    signal?: AbortSignal
+  }) => {
+    // fetching mount points is particularly expensive, so we do that only on first access.
+    if (unref(mountPointsInitialized)) {
+      return
+    }
+    try {
+      const mountPointSpaces = await getSpacesByType({
+        graphClient,
+        driveType: 'mountpoint',
+        signal
+      })
+      addSpaces(mountPointSpaces)
+    } finally {
+      mountPointsInitialized.value = true
+    }
+  }
+
+  const reloadProjectSpaces = async ({
+    graphClient,
+    signal
+  }: {
+    graphClient: Graph
+    signal?: AbortSignal
+  }) => {
+    const projectSpaces = await getSpacesByType({
+      graphClient,
+      driveType: 'project',
+      signal
+    })
+    spaces.value = unref(spaces).filter((s) => !isProjectSpaceResource(s))
+    addSpaces(projectSpaces)
+  }
+
+  const addToImagesLoading = (id: string) => {
+    if (!unref(imagesLoading).includes(id)) {
+      unref(imagesLoading).push(id)
+    }
+  }
+
+  const removeFromImagesLoading = (id: string) => {
+    imagesLoading.value = unref(imagesLoading).filter((i) => i !== id)
+  }
+
+  const purgeImagesLoading = () => {
+    imagesLoading.value = []
+  }
+
+  const addToReadmesLoading = (id: string) => {
+    if (!unref(readmesLoading).includes(id)) {
+      unref(readmesLoading).push(id)
+    }
+  }
+
+  const removeFromReadmesLoading = (id: string) => {
+    readmesLoading.value = unref(readmesLoading).filter((i) => i !== id)
+  }
+
+  const purgeReadmesLoading = () => {
+    readmesLoading.value = []
+  }
+
+  const spacePermissionsLoading = ref<Record<string, Promise<void>>>({})
+
+  /**
+   * Loads permissions for the current user for given space ids and updates
+   * the `graphPermissions` field of the space in the store.
+   * This is very expensive, so be careful when calling this function!
+   */
+  const loadGraphPermissions = async ({
+    ids,
+    graphClient,
+    useCache = true
+  }: {
+    ids: string[]
+    graphClient: Graph
+    useCache?: boolean
+  }) => {
+    // `spaces` and `allProjectSpaces` can hold the same space, its copy is skipped below while
+    // the request is pending
+    const spacesToLoad = [...unref(spaces), ...(unref(allProjectSpaces) || [])].filter(
+      (s) => ids.includes(s.id) && (s.graphPermissions === undefined || !useCache)
+    )
+
+    if (!spacesToLoad.length) {
+      return
+    }
+
+    for (const { id, disabled } of spacesToLoad) {
+      if (disabled) {
+        // can't load permissions for disabled spaces
+        updateSpaceField({ id, field: 'graphPermissions', value: [] })
+        continue
+      }
+
+      if (unref(spacePermissionsLoading)[id]) {
+        // permissions are already being loaded for this space, we just need to await it
+        continue
+      }
+
+      spacePermissionsLoading.value[id] = graphClient.permissions
+        .listPermissions(id, id, sharesStore.graphRoles, {
+          select: [ListPermissionsSpaceRootSelectEnum.LibreGraphPermissionsActionsAllowedValues]
+        })
+        .then(({ allowedActions }) => {
+          updateSpaceField({ id, field: 'graphPermissions', value: allowedActions })
+        })
+        .catch((error) => {
+          // the permissions of spaces the user isn't a member of can't be read (admin settings)
+          if (error?.response?.status === 404) {
+            updateSpaceField({ id, field: 'graphPermissions', value: [] })
+            return
+          }
+          throw error
+        })
+        .finally(() => {
+          delete spacePermissionsLoading.value[id]
+        })
+    }
+
+    await Promise.all(Object.values(unref(spacePermissionsLoading)))
+  }
+
+  return {
+    spaces,
+    allProjectSpaces,
+    spacesInitialized,
+    mountPointsInitialized,
+    spacesLoading,
+    currentSpace,
+    personalSpace,
+    imagesLoading,
+    readmesLoading,
+
+    getSpace,
+    createShareSpace,
+    setSpacesInitialized,
+    setMountPointsInitialized,
+    setSpacesLoading,
+    setCurrentSpace,
+    getSpaceMembers,
+    getMountPointForSpace,
+
+    addSpaces,
+    setAllProjectSpaces,
+    removeSpace,
+    upsertSpace,
+    updateSpaceField,
+    loadSpaces,
+    loadMountPoints,
+    reloadProjectSpaces,
+
+    addToImagesLoading,
+    removeFromImagesLoading,
+    purgeImagesLoading,
+    addToReadmesLoading,
+    removeFromReadmesLoading,
+    purgeReadmesLoading,
+
+    loadGraphPermissions
+  }
+})
+
+export type SpacesStore = ReturnType<typeof useSpacesStore>

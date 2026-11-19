@@ -1,0 +1,290 @@
+Feature: Copy
+  As a user
+  I want to copy/move
+  So that I can work safely on a copy or move resource to different location
+
+  Scenario: Copy and move resources in personal space
+    Given "Admin" creates following user using API
+      | id    |
+      | Alice |
+    And "Alice" creates the following folders in personal space using API
+      | name                  |
+      | PARENTCopy1           |
+      | PARENTCopy2           |
+      | PARENTMove            |
+      | PARENTCopy3           |
+      | PARENTCopy4/Sub1/Sub2 |
+      | PARENT                |
+      | PARENT/Sub1/Sub       |
+      | PARENT/Sub2           |
+      | PARENT/Sub3           |
+      | PARENT/Sub4           |
+      | PARENT/Sub5           |
+      | PARENT/my-docs        |
+    And "Alice" creates the following files into personal space using API
+      | pathToFile               | content                             |
+      | PARENTCopy3/example1.txt | example text                        |
+      | PARENTCopy3/example2.txt | example text                        |
+      | KeyboardExample.txt      | copy with the help of keyboard      |
+      | dragDrop.txt             | copy with the help of drag-drop     |
+      | PARENT/fileToCopy1.txt   | some content                        |
+      | PARENT/fileToCopy2.txt   | some content                        |
+      | PARENT/fileToCopy3.txt   | some content                        |
+      | PARENT/fileToCopy4.txt   | some content                        |
+      | PARENT/fileToCopy5.txt   | some content                        |
+      | PARENT/my-docs/lorem.txt | lorem epsum                         |
+    And "Alice" logs in
+    And "Alice" reduces the tile size
+
+    When "Alice" copies the following resource using dropdown-menu
+      | resource                 | to          |
+      | PARENTCopy3/example1.txt | Personal/PARENTCopy1 |
+    And "Alice" copies the following resource using batch-action
+      | resource                 | to          |
+      | PARENTCopy3/example2.txt | Personal/PARENTCopy1 |
+    And "Alice" copies the following resource using keyboard
+      | resource            | to          |
+      | KeyboardExample.txt | Personal/PARENTCopy3 |
+    And "Alice" copies the following resource to a new folder "Personal/new-folder"
+      | resource                 |
+      | PARENTCopy3/example1.txt |
+
+    And "Alice" moves the following resource using drag-drop
+      | resource     | to          |
+      | dragDrop.txt | PARENTCopy2 |
+    And "Alice" moves the following resource using dropdown-menu
+      | resource                 | to         |
+      | PARENTCopy1/example1.txt | Personal/PARENTMove |
+    And "Alice" moves the following resource using batch-action
+      | resource                 | to         |
+      | PARENTCopy1/example2.txt | Personal/PARENTMove |
+    And "Alice" moves the following resource using keyboard
+      | resource    | to         |
+      | PARENTCopy2 | Personal/PARENTMove |
+    And "Alice" opens folder "PARENTCopy4"
+    And "Alice" opens folder "Sub1"
+    And "Alice" moves the following resource using drag-drop-breadcrumb
+      | resource | to          |
+      | Sub2     | PARENTCopy4 |
+    And "Alice" navigates to the personal space page
+    And "Alice" moves the following resource to a new folder "Personal/another-folder"
+      | resource       |
+      | PARENT/my-docs |
+
+    And "Alice" opens the "files" app
+    And "Alice" opens folder "PARENT"
+    And "Alice" copies the following resources to "Personal/PARENT/Sub1" at once using dropdown-menu
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub4            |
+      | Sub5            |
+    And "Alice" copies the following resources to "Personal/PARENT/Sub2" at once using batch-action
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub4            |
+      | Sub5            |
+    And "Alice" copies the following resources to "PARENT/Sub3" at once using keyboard
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub4            |
+      | Sub5            |
+    And "Alice" opens folder "Sub1"
+    And "Alice" moves the following resources to "Personal/PARENT/Sub1/Sub" at once using dropdown-menu
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub4            |
+      | Sub5            |
+    And "Alice" opens folder "Sub"
+    And "Alice" moves the following resources to "Personal/PARENT/Sub1" at once using batch-action
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub4            |
+      | Sub5            |
+    And "Alice" opens the "files" app
+    And "Alice" opens folder "PARENT"
+    And "Alice" moves the following resources to "Sub4" at once using drag-drop
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub1            |
+      | Sub2            |
+    And "Alice" opens folder "Sub4"
+    And "Alice" moves the following resources to "PARENT" at once using drag-drop-breadcrumb
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub1            |
+      | Sub2            |
+    And "Alice" opens the "files" app
+    And "Alice" opens folder "PARENT"
+    And "Alice" moves the following resources to "PARENT/Sub4" at once using keyboard
+      | resource        |
+      | fileToCopy1.txt |
+      | fileToCopy2.txt |
+      | fileToCopy3.txt |
+      | fileToCopy4.txt |
+      | fileToCopy5.txt |
+      | Sub1            |
+      | Sub2            |
+    And "Alice" logs out
+
+
+  Scenario: Copy and move resources with same name in personal space
+    Given "Admin" creates following user using API
+      | id    |
+      | Alice |
+    And "Alice" creates the following folders in personal space using API
+      | name         |
+      | sub          |
+      | folder1      |
+      | sub/folder1  |
+      | sub1/folder1 |
+    And "Alice" creates the following files into personal space using API
+      | pathToFile                | content                 |
+      | example1.txt              | personal space location |
+      | folder1/example1.txt      | folder1 location        |
+      | sub/folder1/example1.txt  | sub/folder1 location    |
+      | sub1/folder1/example1.txt | sub1/folder1 location   |
+    And "Alice" logs in
+
+    # copy and move file
+    When "Alice" copies the following resources using dropdown-menu
+      | resource     | to                  | option    |
+      | example1.txt | Personal/folder1   | keep both |
+      | example1.txt | Personal/folder1   | replace   |
+    And "Alice" moves the following resources using dropdown-menu
+      | resource             | to                   | option    |
+      | example1.txt         | Personal/sub/folder1 | keep both |
+      | folder1/example1.txt | Personal/sub/folder1 | replace   |
+
+    # copy and move folder
+    And "Alice" copies the following resources using dropdown-menu
+      | resource | to           | option    |
+      | folder1  | Personal/sub | keep both |
+      | folder1  | Personal/sub | replace   |
+    And "Alice" moves the following resources using dropdown-menu
+      | resource     | to           | option    |
+      | folder1      | Personal/sub | keep both |
+      | sub1/folder1 | Personal/sub | replace   |
+    And "Alice" logs out
+
+  
+  Scenario: copy/move resources between spaces
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+    And "Admin" assigns following role to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Alice" creates the project space using API "mySpace"
+    And "Brian" creates the following folder in personal space using API
+      | name  |
+      | share |
+    And "Alice" creates the following folder in personal space using API
+      | name        |
+      | f1/f2/f3/f4 |
+    And "Brian" creates the following file into personal space using API
+      | pathToFile     | content     |
+      | share/file.txt | lorem ipsum |
+      | share/test.txt | lorem ipsum |
+    And "Brian" shares the following resource using API
+      | resource | recipient | type  | role     |
+      | share    | Alice     | user  | Can edit |
+
+    And "Alice" logs in
+    And "Alice" navigates to the shared with me page
+    And "Alice" opens folder "share"
+    And "Alice" copies the following resource using dropdown-menu
+      | resource | to              |
+      | file.txt | Project/mySpace |
+    And "Alice" copies the following resource to a new folder "Project/mySpace/new-folder"
+      | resource |
+      | test.txt |
+    And "Alice" navigates to the project space "mySpace"
+    And "Alice" copies the following resource using dropdown-menu
+      | resource | to                   |
+      | file.txt | Personal/f1/f2/f3/f4 |
+    And "Alice" navigates to the personal space page
+    And "Alice" opens folder "f1/f2"
+    And "Alice" copies the following resource using dropdown-menu
+      | resource | to           |
+      | f3       | Shares/share |
+
+    # try to move. moving doesn't work between space -> expect copy instead
+    And "Alice" moves the following resource using dropdown-menu
+      | resource | to              | option       |
+      | f3       | Project/mySpace | copy instead |
+    And "Alice" navigates to the project space "mySpace"
+    And "Alice" moves the following resource to a new folder "Personal/another-folder" with copy instead
+      | resource            |
+      | new-folder/test.txt |
+    And "Alice" logs out
+
+  
+  Scenario: copy/move resources in received shares
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+    And "Alice" creates the following folder in personal space using API
+      | name     |
+      | f1/f2/f3 |
+      | a1       |
+    And "Alice" creates the following file into personal space using API
+      | pathToFile       | content     |
+      | f1/f2/f3/foo.txt | lorem ipsum |
+    And "Alice" shares the following resource using API
+      | resource | recipient | type  | role     |
+      | f1       | Brian     | user  | Can edit |
+      | a1       | Brian     | user  | Can edit |
+
+    And "Brian" logs in
+    And "Brian" navigates to the shared with me page
+    # move within the received share, up into the share root
+    And "Brian" moves the following resource using dropdown-menu
+      | resource         | to        |
+      | f1/f2/f3/foo.txt | Shares/f1 |
+    # move within the received share, into a sub folder. (regression #3374)
+    And "Brian" navigates to the shared with me page
+    And "Brian" moves the following resource using dropdown-menu
+      | resource   | to           |
+      | f1/foo.txt | Shares/f1/f2 |
+    # move between two different received shares -> not possible, expect copy instead
+    And "Brian" navigates to the shared with me page
+    And "Brian" moves the following resource using dropdown-menu
+      | resource      | to        | option       |
+      | f1/f2/foo.txt | Shares/a1 | copy instead |
+    # move from a received share into own personal space -> not possible, expect copy instead
+    And "Brian" navigates to the shared with me page
+    And "Brian" moves the following resource using dropdown-menu
+      | resource   | to       | option       |
+      | a1/foo.txt | Personal | copy instead |
+    And "Brian" logs out
+    

@@ -1,0 +1,355 @@
+import ItemFilter from '../../../src/components/ItemFilter.vue'
+import {
+  PartialComponentProps,
+  defaultComponentMocks,
+  defaultPlugins,
+  mount
+} from '@opencloud-eu/web-test-helpers'
+import { queryItemAsString } from '../../../src/composables/appDefaults'
+import { OcCheckbox } from '@opencloud-eu/design-system/components'
+import { nextTick, reactive } from 'vue'
+
+vi.mock('../../../src/composables/appDefaults')
+
+const filterItems = [
+  { id: '1', name: 'Albert Einstein' },
+  { id: '2', name: 'Marie Curie' }
+]
+
+const manyFilterItems = Array.from({ length: 25 }, (_, i) => ({
+  id: `${i}`,
+  name: `Item ${i}`
+}))
+
+const selectors = {
+  filterInput: '.item-filter-input input',
+  checkboxStub: 'oc-checkbox-stub',
+  filterListItem: '.item-filter-list-item',
+  activeFilterListItem: '.item-filter-list-item-active',
+  clearBtn: '.oc-filter-chip-clear',
+  truncationHint: '.item-filter-truncation-hint'
+}
+
+describe('ItemFilter', () => {
+  it('renders all items', () => {
+    const { wrapper } = getWrapper()
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+  it('shows the no items message instead of the list if there are no items', () => {
+    const { wrapper } = getWrapper({
+      props: {
+        items: [],
+        noItemsMessage: 'Nothing here yet',
+        showOptionFilter: true,
+        filterableAttributes: ['name']
+      }
+    })
+    expect(wrapper.find('.item-filter-no-items').text()).toBe('Nothing here yet')
+    expect(wrapper.find('.item-filter-input').exists()).toBeFalsy()
+  })
+  it('can use a custom attribute as display name', () => {
+    const filterItems = [
+      { id: '1', displayName: 'Albert Einstein' },
+      { id: '2', displayName: 'Marie Curie' }
+    ]
+    const { wrapper } = getWrapper({
+      props: { displayNameAttribute: 'displayName', items: filterItems }
+    })
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+  it('shows the full display name of each item as title', () => {
+    const { wrapper } = getWrapper()
+    const titles = wrapper
+      .findAll(`${selectors.filterListItem} [title]`)
+      .map((el) => el.attributes('title'))
+    expect(titles).toEqual(['Albert Einstein', 'Marie Curie'])
+  })
+  describe('filter', () => {
+    it('renders the input field when enabled', () => {
+      const { wrapper } = getWrapper({
+        props: { showOptionFilter: true, filterableAttributes: ['name'] }
+      })
+      expect(wrapper.find(selectors.filterInput).exists()).toBeTruthy()
+    })
+    it('keeps the search available without an empty-state message and filters items arriving later', async () => {
+      const { wrapper } = getWrapper({
+        props: { items: [], showOptionFilter: true, filterableAttributes: ['name'] }
+      })
+      expect(wrapper.find(selectors.filterInput).exists()).toBeTruthy()
+
+      await wrapper.find(selectors.filterInput).setValue('Albert')
+      await wrapper.setProps({ items: filterItems })
+
+      expect(wrapper.findAll(selectors.filterListItem)).toHaveLength(1)
+      expect(wrapper.find(selectors.filterListItem).attributes('data-test-value')).toBe(
+        'Albert Einstein'
+      )
+    })
+    it.each([
+      { filterTerm: '', expectedResult: 2 },
+      { filterTerm: 'Albert', expectedResult: 1 },
+      { filterTerm: 'invalid', expectedResult: 0 }
+    ])('filters on input', async (data) => {
+      const { wrapper } = getWrapper({
+        props: { showOptionFilter: true, filterableAttributes: ['name'] }
+      })
+      await wrapper.find(selectors.filterInput).setValue(data.filterTerm)
+      expect(wrapper.findAll(selectors.filterListItem).length).toBe(data.expectedResult)
+    })
+  })
+  describe('truncation', () => {
+    it('truncates long lists and renders a hint', () => {
+      const { wrapper } = getWrapper({
+        props: { showOptionFilter: true, filterableAttributes: ['name'], items: manyFilterItems }
+      })
+      expect(wrapper.findAll(selectors.filterListItem).length).toBe(20)
+      expect(wrapper.find(selectors.truncationHint).text()).toBe(
+        '5 more items are not shown. Use the filter to narrow down the list.'
+      )
+    })
+    it('does not truncate if the option filter is unavailable', () => {
+      const { wrapper } = getWrapper({ props: { items: manyFilterItems } })
+      expect(wrapper.findAll(selectors.filterListItem).length).toBe(manyFilterItems.length)
+      expect(wrapper.find(selectors.truncationHint).exists()).toBeFalsy()
+    })
+    it('does not truncate short lists', () => {
+      const { wrapper } = getWrapper({
+        props: { showOptionFilter: true, filterableAttributes: ['name'] }
+      })
+      expect(wrapper.findAll(selectors.filterListItem).length).toBe(filterItems.length)
+      expect(wrapper.find(selectors.truncationHint).exists()).toBeFalsy()
+    })
+    it('keeps truncated items displayed while they are selected', async () => {
+      const { wrapper } = getWrapper({
+        props: {
+          showOptionFilter: true,
+          filterableAttributes: ['name'],
+          items: manyFilterItems,
+          allowMultiple: true
+        }
+      })
+      await wrapper.find(selectors.filterInput).setValue('Item 24')
+      await wrapper.find('[data-test-value="Item 24"]').trigger('click')
+      await wrapper.find(selectors.filterInput).setValue('')
+
+      expect(wrapper.findAll(selectors.filterListItem).length).toBe(21)
+      expect(wrapper.find('[data-test-value="Item 24"]').exists()).toBeTruthy()
+      expect(wrapper.find(selectors.truncationHint).text()).toBe(
+        '4 more items are not shown. Use the filter to narrow down the list.'
+      )
+    })
+  })
+  describe('selection', () => {
+    it('allows selection of multiple items on click', async () => {
+      const { wrapper } = getWrapper({ props: { allowMultiple: true } })
+      expect(wrapper.emitted('selectionChange')).toBeFalsy()
+      let selectionChangeEmits = 0
+      for (const item of wrapper.findAll(selectors.filterListItem)) {
+        expect(
+          item.findComponent<typeof OcCheckbox>(selectors.checkboxStub).props('modelValue')
+        ).toBeFalsy()
+        await item.trigger('click')
+        selectionChangeEmits += 1
+        expect(wrapper.emitted('selectionChange').length).toBe(selectionChangeEmits)
+        expect(
+          item.findComponent<typeof OcCheckbox>(selectors.checkboxStub).props('modelValue')
+        ).toBeTruthy()
+      }
+      expect((wrapper.vm as any).selectedItems.length).toBe(
+        wrapper.findAll(selectors.filterListItem).length
+      )
+    })
+    it('does not allow selection of multiple items when disabled', async () => {
+      const { wrapper } = getWrapper({ props: { allowMultiple: false } })
+      const first = wrapper.findAll(selectors.filterListItem).at(0)
+      await first.trigger('click')
+      expect(wrapper.emitted('selectionChange').length).toBe(1)
+      expect(wrapper.find(selectors.activeFilterListItem).exists()).toBeTruthy()
+
+      const second = wrapper.findAll(selectors.filterListItem).at(1)
+      await second.trigger('click')
+      expect(wrapper.emitted('selectionChange').length).toBe(2)
+      expect((wrapper.vm as any).selectedItems.length).toBe(1)
+    })
+    it('does de-select the current selected item on click', async () => {
+      const { wrapper } = getWrapper({ props: { allowMultiple: true } })
+      const item = wrapper.findAll(selectors.filterListItem).at(0)
+      await item.trigger('click')
+      await item.trigger('click')
+      expect(wrapper.emitted('selectionChange').length).toBe(2)
+      expect(
+        item.findComponent<typeof OcCheckbox>(selectors.checkboxStub).props('modelValue')
+      ).toBeFalsy()
+      expect((wrapper.vm as any).selectedItems.length).toBe(0)
+    })
+    it('clears the selection when the clear-button is being clicked', async () => {
+      const { wrapper } = getWrapper({ props: { allowMultiple: true } })
+      const item = wrapper.findAll(selectors.filterListItem).at(0)
+      await item.trigger('click')
+      await wrapper.find(selectors.clearBtn).trigger('click')
+      expect(wrapper.emitted('selectionChange').length).toBe(2)
+      expect(
+        item.findComponent<typeof OcCheckbox>(selectors.checkboxStub).props('modelValue')
+      ).toBeFalsy()
+      expect((wrapper.vm as any).selectedItems.length).toBe(0)
+    })
+  })
+  describe('route query', () => {
+    it('sets the selected item as route query param', async () => {
+      const { wrapper, mocks } = getWrapper()
+      const item = wrapper.findAll(selectors.filterListItem).at(0)
+      expect(mocks.$router.push).not.toHaveBeenCalled()
+      await item.trigger('click')
+      expect(mocks.$router.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.objectContaining({ [(wrapper.vm as any).queryParam]: '1' })
+        })
+      )
+    })
+    it('resets the page when the selection changes', async () => {
+      const { wrapper, mocks } = getWrapper()
+      mocks.$route.query = { page: '2', term: 'foo' }
+      await wrapper.findAll(selectors.filterListItem).at(0).trigger('click')
+      const { query } = mocks.$router.push.mock.calls[0][0] as { query: Record<string, string> }
+      expect(query).not.toHaveProperty('page')
+      expect(query).toHaveProperty('term', 'foo')
+    })
+    it('sets the selected items initially when given via query param', () => {
+      const { wrapper } = getWrapper({ initialQuery: '1' })
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+    })
+    it('sets the selected items from the query param when the items arrive after mount', async () => {
+      const { wrapper } = getWrapper({ initialQuery: '1', props: { items: [], loading: true } })
+      expect((wrapper.vm as any).selectedItems).toEqual([])
+      await wrapper.setProps({ items: filterItems, loading: false })
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+    })
+    it('shows values from the query param that are not part of the items as selected', () => {
+      const { wrapper } = getWrapper({ initialQuery: '1+unknown', props: { allowMultiple: true } })
+      expect((wrapper.vm as any).selectedItems).toEqual([
+        filterItems[0],
+        { id: 'unknown', name: 'unknown' }
+      ])
+      expect(wrapper.find('.oc-filter-chip').text()).toContain('Albert Einstein')
+      const unknownItem = wrapper.find('[data-test-value="unknown"]')
+      expect(
+        unknownItem.findComponent<typeof OcCheckbox>(selectors.checkboxStub).props('modelValue')
+      ).toBeTruthy()
+    })
+    it('shows unknown values from the query param as selected if there are no items', () => {
+      const { wrapper } = getWrapper({ initialQuery: 'unknown', props: { items: [] } })
+      expect((wrapper.vm as any).selectedItems).toEqual([{ id: 'unknown', name: 'unknown' }])
+      expect(wrapper.find('.oc-filter-chip').text()).toContain('unknown')
+    })
+    it('does not show unknown values from the query param while the items are loading', async () => {
+      const { wrapper } = getWrapper({
+        initialQuery: '1+unknown',
+        props: { items: [], loading: true }
+      })
+      expect((wrapper.vm as any).selectedItems).toEqual([])
+      expect(wrapper.find('[data-test-value="unknown"]').exists()).toBeFalsy()
+      await wrapper.setProps({ items: filterItems })
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+      await wrapper.setProps({ loading: false })
+      expect((wrapper.vm as any).selectedItems).toEqual([
+        filterItems[0],
+        { id: 'unknown', name: 'unknown' }
+      ])
+      expect(wrapper.emitted('selectionChange')).toBeFalsy()
+    })
+    it('removes an unknown value from the query param on click', async () => {
+      const currentRoute = reactive({ query: { q_users: '1+unknown' } as Record<string, string> })
+      const { wrapper, mocks } = getWrapper({ currentRoute, props: { allowMultiple: true } })
+      await wrapper.find('[data-test-value="unknown"]').trigger('click')
+      expect(mocks.$router.push).toHaveBeenCalledWith(
+        expect.objectContaining({ query: { q_users: '1' } })
+      )
+      expect(wrapper.emitted('selectionChange')).toEqual([[[filterItems[0]]]])
+      expect(wrapper.find('[data-test-value="unknown"]').exists()).toBeFalsy()
+    })
+    it('emits the selection when an unknown value is removed from the route', async () => {
+      const currentRoute = reactive({ query: { q_users: '1+unknown' } as Record<string, string> })
+      const { wrapper } = getWrapper({ currentRoute })
+      currentRoute.query.q_users = '1'
+      await nextTick()
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+      expect(wrapper.emitted('selectionChange')).toEqual([[[filterItems[0]]]])
+    })
+    it('clears the selected items when the query param is removed from the route', async () => {
+      const currentRoute = reactive({ query: { q_users: '1' } as Record<string, string> })
+      const { wrapper } = getWrapper({ currentRoute })
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+      delete currentRoute.query.q_users
+      await nextTick()
+      expect((wrapper.vm as any).selectedItems).toEqual([])
+      expect(wrapper.emitted('selectionChange')).toEqual([[[]]])
+    })
+    it('still exposes the deprecated setSelectedItemsBasedOnQuery', () => {
+      const { wrapper } = getWrapper({ initialQuery: '1' })
+      const { setSelectedItemsBasedOnQuery } = (wrapper.vm.$ as any).exposed
+      ;(wrapper.vm as any).selectedItems = []
+      setSelectedItemsBasedOnQuery()
+      expect((wrapper.vm as any).selectedItems).toEqual([filterItems[0]])
+    })
+  })
+
+  describe('label prop', () => {
+    it('sets the correct label using getLabel computed property', () => {
+      const label = 'Filter groups'
+      const { wrapper } = getWrapper({
+        props: {
+          showOptionFilter: true,
+          filterableAttributes: ['name'],
+          optionFilterLabel: label
+        }
+      })
+      expect(wrapper.find('.item-filter-input label').text()).toBe(label)
+    })
+
+    it('sets the default label using getLabel computed property when no prop is set', () => {
+      const label: string = undefined
+      const { wrapper } = getWrapper({
+        props: {
+          showOptionFilter: true,
+          filterableAttributes: ['name'],
+          optionFilterLabel: label
+        }
+      })
+      expect(wrapper.find('.item-filter-input label').text()).toBe('Filter list')
+    })
+  })
+})
+
+function getWrapper({
+  props = {},
+  initialQuery = '',
+  currentRoute = undefined
+}: {
+  props?: PartialComponentProps<typeof ItemFilter>
+  initialQuery?: string
+  currentRoute?: { query: Record<string, string> }
+} = {}) {
+  vi.mocked(queryItemAsString).mockImplementation((value) =>
+    currentRoute ? (value as string) : initialQuery
+  )
+  const mocks = defaultComponentMocks({ currentRoute: currentRoute as any })
+  return {
+    mocks,
+    wrapper: mount(ItemFilter, {
+      props: {
+        filterLabel: 'Users',
+        filterName: 'users',
+        items: filterItems,
+        ...props
+      },
+
+      global: {
+        plugins: [...defaultPlugins()],
+        mocks,
+        provide: mocks,
+        stubs: { OcCheckbox: true, OcDrop: true, OcButton: true },
+        renderStubDefaultSlot: true
+      }
+    })
+  }
+}

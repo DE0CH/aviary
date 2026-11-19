@@ -1,0 +1,187 @@
+import { defaultPlugins, mount, PartialComponentProps } from '@opencloud-eu/web-test-helpers'
+import ResourceListItem from '../../../../src/components/FilesList/ResourceListItem.vue'
+import { Resource } from '@opencloud-eu/web-client'
+import { nextTick, reactive } from 'vue'
+
+const fileResource = {
+  name: 'forest.jpg',
+  path: 'nature/forest.jpg',
+  thumbnail: 'https://cdn.pixabay.com/photo/2015/09/09/16/05/forest-931706_960_720.jpg',
+  type: 'file',
+  isFolder: false,
+  extension: 'jpg'
+} as Resource
+const folderResource = {
+  name: 'Documents',
+  path: '',
+  type: 'folder',
+  isFolder: true
+} as Resource
+const fileResourceWithoutParentFoldername = {
+  name: 'example.pdf',
+  path: 'example.pdf',
+  type: 'file',
+  isFolder: false,
+  extension: 'pdf'
+} as Resource
+const motionPhotoResource = {
+  ...fileResource,
+  name: 'motion.jpg',
+  motionPhoto: { version: 1, presentationTimestampUs: 500000, videoSize: 1234567 }
+} as Resource
+
+describe('OcResource', () => {
+  it("doesn't emit a click if the resource is not clickable", () => {
+    const wrapper = getWrapper({ resource: fileResource, isResourceClickable: false })
+
+    wrapper.find('.oc-resource-name').trigger('click')
+    expect(wrapper.emitted('click')).toBeFalsy()
+  })
+
+  it('emits a click for a file', async () => {
+    const wrapper = getWrapper({ resource: fileResource })
+
+    await wrapper.find('.oc-resource-name').trigger('click')
+    expect(wrapper.emitted('click')).toHaveLength(1)
+  })
+
+  it('shows a motion photo badge when the resource has a motionPhoto facet', () => {
+    const wrapper = mount(ResourceListItem, {
+      props: { resource: motionPhotoResource },
+      global: {
+        stubs: { RouterLink: true },
+        renderStubDefaultSlot: true,
+        plugins: [...defaultPlugins()]
+      }
+    })
+    expect(wrapper.find('.motion-photo-badge').exists()).toBeTruthy()
+  })
+
+  it('does not show a motion photo badge for regular resources', () => {
+    const wrapper = mount(ResourceListItem, {
+      props: { resource: fileResource },
+      global: {
+        stubs: { RouterLink: true },
+        renderStubDefaultSlot: true,
+        plugins: [...defaultPlugins()]
+      }
+    })
+    expect(wrapper.find('.motion-photo-badge').exists()).toBeFalsy()
+  })
+
+  it('emits a click for a folder', () => {
+    const wrapper = getWrapper({ resource: folderResource })
+
+    wrapper.find('.oc-resource-name').trigger('click')
+    expect(wrapper.emitted('click')).toBeTruthy()
+  })
+
+  it('parent folder component type is link if parent folder given', () => {
+    const wrapper = getWrapper({
+      resource: fileResource,
+      isPathDisplayed: true,
+      parentFolderLink: {}
+    })
+
+    expect(wrapper.find('.parent-folder').exists()).toBeTruthy()
+    expect(wrapper.find('.parent-folder').attributes('class')).toContain('cursor-pointer')
+  })
+
+  it('parent folder component type is span if parent folder not given', () => {
+    const wrapper = getWrapper({ resource: fileResource, isPathDisplayed: true })
+
+    expect(wrapper.find('.parent-folder').find('a').exists()).toBeFalsy()
+    expect(wrapper.find('.parent-folder').attributes('class')).toContain('cursor-default')
+  })
+
+  it('renders the name of a non-clickable resource without a link', () => {
+    const wrapper = getWrapper({
+      resource: folderResource,
+      link: { name: 'files-spaces-generic' },
+      isResourceClickable: false
+    })
+
+    expect(wrapper.find('.oc-resource-link').exists()).toBeFalsy()
+    expect(wrapper.find('router-link-stub').exists()).toBeFalsy()
+  })
+
+  it('displays parent folder name default if calculated name is empty', () => {
+    const wrapper = getWrapper({
+      resource: fileResourceWithoutParentFoldername,
+      isPathDisplayed: true,
+      parentFolderName: 'Example parent folder name'
+    })
+
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('shows the full parent folder name as title on the truncated parent folder', () => {
+    const parentFolderName = 'A very long parent folder name that gets truncated'
+    const wrapper = getWrapper({ resource: fileResource, isPathDisplayed: true, parentFolderName })
+
+    expect(wrapper.find('.parent-folder .text').attributes('title')).toBe(parentFolderName)
+  })
+
+  it('displays the thumbnail as soon as it gets added to the resource', async () => {
+    const resource = reactive({ ...fileResourceWithoutParentFoldername }) as Resource
+    const wrapper = getWrapper({ resource })
+
+    expect(wrapper.find('[data-test-thumbnail-resource-name]').exists()).toBeFalsy()
+
+    resource.thumbnail = 'blob:thumbnail'
+    await nextTick()
+
+    expect(wrapper.find('[data-test-thumbnail-resource-name]').attributes('src')).toBe(
+      'blob:thumbnail'
+    )
+  })
+
+  it('can be used without icon/thumbnail', () => {
+    const wrapper = getWrapper({
+      resource: fileResourceWithoutParentFoldername,
+      isIconDisplayed: false,
+      parentFolderName: 'Example parent folder name'
+    })
+
+    expect(wrapper.find('oc-resource-thumbnail').exists()).toBeFalsy()
+    expect(wrapper.find('oc-resource-icon').exists()).toBeFalsy()
+  })
+
+  it('renders the nameAppend slot in the name line, not after the parent folder line', () => {
+    const wrapper = getWrapper(
+      { resource: fileResource, isPathDisplayed: true, parentFolderName: 'nature' },
+      { nameAppend: '<button class="name-append" />' }
+    )
+
+    const container = wrapper.find('.name-append').element.parentElement
+    expect(container.querySelector('.oc-resource-name')).not.toBeNull()
+    expect(container.querySelector('.parent-folder')).toBeNull()
+    expect(wrapper.find('.oc-resource-details').classes()).not.toContain('truncate')
+  })
+
+  it('clips the name next to the nameAppend slot so a long name cannot overflow it', () => {
+    const wrapper = getWrapper(
+      { resource: fileResource, isPathDisplayed: true, parentFolderName: 'nature' },
+      { nameAppend: '<button class="name-append" />' }
+    )
+
+    expect(wrapper.find('.oc-resource-name-line .oc-resource-link').classes()).toContain(
+      'overflow-hidden'
+    )
+  })
+
+  function getWrapper(
+    props: PartialComponentProps<typeof ResourceListItem> & { resource: Resource },
+    slots: Record<string, string> = {}
+  ) {
+    return mount(ResourceListItem, {
+      props,
+      slots,
+      global: {
+        stubs: { RouterLink: true },
+        renderStubDefaultSlot: true,
+        plugins: [...defaultPlugins()]
+      }
+    })
+  }
+})

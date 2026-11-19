@@ -1,0 +1,200 @@
+import { fetchEventSource, FetchEventSourceInit } from '@microsoft/fetch-event-source'
+import { z } from 'zod'
+
+/** Payload of every file and space related SSE event. */
+export const sseEventSchema = z.object({
+  itemid: z.string().optional(),
+  parentitemid: z.string().optional(),
+  spaceid: z.string().optional(),
+  initiatorid: z.string().optional(),
+  etag: z.string().optional(),
+  affecteduserids: z.array(z.string()).optional().nullable(),
+  sessionid: z.string().optional()
+})
+
+export type SseEventData = z.infer<typeof sseEventSchema>
+
+export enum MESSAGE_TYPE {
+  NOTIFICATION = 'userlog-notification',
+  POSTPROCESSING_FINISHED = 'postprocessing-finished',
+  FILE_LOCKED = 'file-locked',
+  FILE_UNLOCKED = 'file-unlocked',
+  FILE_TOUCHED = 'file-touched',
+  ITEM_RENAMED = 'item-renamed',
+  ITEM_TRASHED = 'item-trashed',
+  ITEM_RESTORED = 'item-restored',
+  ITEM_MOVED = 'item-moved',
+  ITEM_FAVORITE_ADDED = 'item-favorite-added',
+  ITEM_FAVORITE_REMOVED = 'item-favorite-removed',
+  FOLDER_CREATED = 'folder-created',
+  SPACE_CREATED = 'space-created',
+  SPACE_DISABLED = 'space-disabled',
+  SPACE_ENABLED = 'space-enabled',
+  SPACE_DELETED = 'space-deleted',
+  SPACE_MEMBER_ADDED = 'space-member-added',
+  SPACE_MEMBER_REMOVED = 'space-member-removed',
+  SPACE_SHARE_UPDATED = 'space-share-updated',
+  SHARE_CREATED = 'share-created',
+  SHARE_REMOVED = 'share-removed',
+  SHARE_UPDATED = 'share-updated',
+  LINK_CREATED = 'link-created',
+  LINK_REMOVED = 'link-removed',
+  LINK_UPDATED = 'link-updated',
+  BACKCHANNEL_LOGOUT = 'backchannel-logout'
+}
+
+export class RetriableError extends Error {
+  name = 'RetriableError'
+}
+
+const RECONNECT_RANDOM_OFFSET = 15000
+
+export class SSEAdapter implements EventSource {
+  url: string
+  fetchOptions: FetchEventSourceInit
+  private abortController: AbortController
+  private eventListenerMap: Record<string, ((event: MessageEvent) => any)[]>
+  private started = false
+
+  readyState: number
+  readonly withCredentials: boolean
+
+  readonly CONNECTING: 0
+  readonly OPEN: 1
+  readonly CLOSED: 2
+
+  onerror: ((this: EventSource, ev: Event) => any) | null
+  onmessage: ((this: EventSource, ev: MessageEvent) => any) | null
+  onopen: ((this: EventSource, ev: Event) => any) | null
+
+  constructor(url: string, fetchOptions: FetchEventSourceInit) {
+    this.url = url
+    this.fetchOptions = fetchOptions
+    this.abortController = new AbortController()
+    this.eventListenerMap = {}
+    if (!this.hasCredentials()) {
+      this.readyState = this.CLOSED
+      return
+    }
+    this.connect()
+  }
+
+  // a request without credentials only yields 401s and endless retries
+  private hasCredentials() {
+    return (
+      !!this.fetchOptions.headers?.['Authorization'] || this.fetchOptions.credentials === 'include'
+    )
+  }
+
+  private connect() {
+    this.started = true
+    this.readyState = this.CONNECTING
+    return fetchEventSource(this.url, {
+      openWhenHidden: true,
+      signal: this.abortController.signal,
+      fetch: this.fetchProvider.bind(this),
+      // eslint-disable-next-line require-await
+      onopen: async () => {
+        const event = new Event('open')
+        this.onopen?.bind(this)(event)
+        this.readyState = this.OPEN
+      },
+      onmessage: (msg) => {
+        const event = new MessageEvent('message', { data: msg.data })
+        this.onmessage?.bind(this)(event)
+
+        const type = msg.event
+        const eventListeners = this.eventListenerMap[type]
+        eventListeners?.forEach((l) => l(event))
+      },
+      onclose: () => {
+        this.readyState = this.CLOSED
+        throw new RetriableError()
+      },
+      onerror: (err) => {
+        console.warn('SSE connection error, reconnecting...', err)
+        const event = new CustomEvent('error', { detail: err })
+        this.onerror?.bind(this)(event)
+
+        /*
+         * Try to reconnect after 30 seconds plus random time in seconds.
+         * This prevents all clients try to reconnect concurrent on server error, to reduce load.
+         */
+        return 30000 + Math.floor(Math.random() * RECONNECT_RANDOM_OFFSET)
+      }
+    })
+  }
+
+  fetchProvider(...args: [RequestInfo | URL, RequestInit]) {
+    const [resource, config] = args
+    const fetchConfig = { ...config, ...this.fetchOptions }
+    return window.fetch(resource, fetchConfig)
+  }
+
+  close() {
+    this.abortController.abort('closed')
+  }
+
+  addEventListener<K extends keyof EventSourceEventMap>(
+    type: string,
+    listener: (this: EventSource, event: EventSourceEventMap[K]) => any
+  ): void {
+    this.eventListenerMap[type] = this.eventListenerMap[type] || []
+    this.eventListenerMap[type].push(listener)
+  }
+
+  removeEventListener<K extends keyof EventSourceEventMap>(
+    type: string,
+    listener: (this: EventSource, event: EventSourceEventMap[K]) => any
+  ): void {
+    this.eventListenerMap[type] = this.eventListenerMap[type]?.filter((func) => func !== listener)
+  }
+
+  dispatchEvent(): boolean {
+    throw new Error('Method not implemented.')
+  }
+
+  updateAccessToken(token: string) {
+    this.fetchOptions.headers['Authorization'] = `Bearer ${token}`
+    if (!this.started) {
+      this.connect()
+    }
+  }
+
+  updateLanguage(language: string) {
+    this.fetchOptions.headers['Accept-Language'] = language
+
+    if (!this.started) {
+      return
+    }
+
+    // Force reconnect, to make the language change effect instantly
+    this.close()
+    this.connect()
+  }
+}
+
+let eventSource: SSEAdapter = null
+
+export const sse = (baseURI: string, fetchOptions: FetchEventSourceInit): SSEAdapter => {
+  if (!eventSource) {
+    eventSource = new SSEAdapter(
+      new URL('ocs/v2.php/apps/notifications/api/v1/notifications/sse', baseURI).href,
+      fetchOptions
+    )
+  }
+
+  return eventSource
+}
+
+/**
+ * Closes the current SSE connection and clears the singleton, so the next `sse()`
+ * call creates a fresh connection. Used on logout to stop the stream from
+ * reconnecting with a stale (removed) access token.
+ */
+export const resetSSE = (): void => {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+}

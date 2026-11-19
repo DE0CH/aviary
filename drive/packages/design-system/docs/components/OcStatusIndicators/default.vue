@@ -1,0 +1,49 @@
+<template>
+  <oc-status-indicators
+    :resource="{ id: '1' }"
+    :indicators="[
+      {
+        id: '1',
+        icon: 'cloud',
+        label: 'This resource is synced in your cloud.',
+        accessibleDescription: 'This resource is synced in your cloud.',
+        handler: cloudHandler,
+        kind: 'icon'
+      },
+      {
+        id: '2',
+        icon: 'user',
+        label: 'This resource has been shared.',
+        accessibleDescription: 'This resource has been shared.',
+        handler: shareHandler,
+        kind: 'icon'
+      },
+      {
+        id: '3',
+        label: 'Active',
+        accessibleDescription: 'This resource is active.',
+        kind: 'tag',
+        class: '!bg-green-200 !text-green-800'
+      }
+    ]"
+  />
+  <div class="mt-4">Cloud indicator clicked: {{ cloudIndicatorClicked }}</div>
+  <div>Share indicator clicked: {{ shareIndicatorClicked }}</div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+
+const cloudIndicatorClicked = ref(false)
+const shareIndicatorClicked = ref(false)
+
+const cloudHandler = () => {
+  cloudIndicatorClicked.value = true
+  // handle indicator click...
+}
+
+const shareHandler = () => {
+  shareIndicatorClicked.value = true
+  // handle indicator click...
+}
+</script>

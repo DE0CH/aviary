@@ -1,0 +1,333 @@
+<template>
+  <div :class="$attrs.class">
+    <div class="flex items-center">
+      <input
+        :id="id"
+        v-bind="additionalAttributes"
+        ref="inputRef"
+        :aria-invalid="ariaInvalid"
+        class="invisible oc-file-input p-0 size-0"
+        type="file"
+        :multiple="multiple"
+        :accept="fileTypes"
+        @change="onChange"
+        @focus="onFocus"
+      />
+      <div
+        class="size-16 shrink-0 rounded-full bg-role-surface-container-highest flex items-center justify-center overflow-hidden mr-4"
+      >
+        <oc-image
+          v-if="hasImagePreview"
+          :src="imagePreviewUrl"
+          :alt="$gettext('Selected image preview')"
+          class="w-full h-full object-cover"
+        />
+        <oc-icon
+          v-else
+          :icon="previewIcon"
+          :fill-type="previewIconFillType"
+          size-class="size-8"
+          color="var(--oc-role-on-surface-variant)"
+        />
+      </div>
+      <div class="flex-1 min-w-0">
+        <slot name="label">
+          <label class="inline-block mb-0.5 font-semibold" :for="id">
+            {{ label }}
+            <span v-if="requiredMark" class="text-role-error" aria-hidden="true">*</span>
+          </label>
+        </slot>
+        <div
+          v-if="showMessageLine"
+          class="oc-file-input-message flex items-center text-sm min-h-4.5"
+          :class="{
+            'oc-file-input-description text-role-on-surface-variant': !!descriptionMessage,
+            'oc-file-input-danger text-role-error focus:text-role-error': !!errorMessage
+          }"
+        >
+          <oc-icon
+            v-if="!!errorMessage"
+            name="error-warning"
+            size-class="size-4"
+            class="mr-1 shrink-0"
+            fill-type="line"
+            aria-hidden="true"
+          />
+
+          <span
+            :id="messageId"
+            class="min-w-0 wrap-anywhere"
+            :class="{
+              'oc-file-input-description text-role-on-surface-variant': !!descriptionMessage,
+              'oc-file-input-danger text-role-error focus:text-role-error': !!errorMessage
+            }"
+            v-text="messageText"
+          />
+        </div>
+        <div
+          v-if="fileNames"
+          class="oc-file-input-files text-sm text-role-on-surface-variant truncate mt-1 mb-2"
+          :title="fileNames"
+        >
+          {{ fileNames }}
+        </div>
+        <div :class="['flex items-center gap-2', { 'mt-2': !fileNames }]">
+          <oc-button
+            ref="inputBtnRef"
+            :class="{
+              'oc-file-input-danger text-role-error focus:text-role-error': !!errorMessage
+            }"
+            :disabled="disabled"
+            color-role="secondary"
+            appearance="outline"
+            class="oc-file-input-button oc-text-input-btn"
+            @click="addFiles"
+          >
+            <oc-icon name="upload-cloud" fill-type="line" size-class="size-4" class="mr-1" />
+            {{ $ngettext('Upload file', 'Upload files', multiple ? 2 : 1) }}
+          </oc-button>
+          <oc-button
+            v-if="clearButtonEnabled && fileNames"
+            appearance="outline"
+            class="oc-file-input-clear p-2"
+            :aria-label="$gettext('Clear input')"
+            @click="onClear"
+          >
+            <oc-icon name="delete-bin" fill-type="line" size-class="size-4" />
+          </oc-button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  useAttrs,
+  useTemplateRef,
+  unref,
+  watch,
+  HTMLAttributes
+} from 'vue'
+import { Icon, uniqueId } from '../../helpers'
+import OcButton from '../OcButton/OcButton.vue'
+import OcIcon from '../OcIcon/OcIcon.vue'
+import OcImage from '../OcImage/OcImage.vue'
+
+defineOptions({
+  inheritAttrs: false
+})
+
+export interface Props {
+  /**
+   * @docs The label of the input element.
+   */
+  label: string
+  /**
+   * @docs The element ID of the input.
+   */
+  id?: string
+  /**
+   * @docs The file types that the input should accept. E.g. 'image/*, .pdf'.
+   * @default ''
+   */
+  fileTypes?: string
+  /**
+   * @docs Determines if the input should accept multiple files.
+   * @default false
+   */
+  multiple?: boolean
+  /**
+   * @docs Value of the input element.
+   */
+  modelValue?: FileList
+  /**
+   * @docs Determines if the input should have a clear button. Only gets displayed if the input has a value.
+   * @default true
+   */
+  clearButtonEnabled?: boolean
+  /**
+   * @docs Determines if the input is disabled.
+   * @default false
+   */
+  disabled?: boolean
+  /**
+   * @docs The error message to be displayed below the input.
+   */
+  errorMessage?: string
+  /**
+   * @docs Determines if the message line should be fixed.
+   * @default false
+   */
+  fixMessageLine?: boolean
+  /**
+   * @docs The description message to be displayed below the input.
+   */
+  descriptionMessage?: string
+  /**
+   * @docs Determines if a required mark (*) should be displayed next to the label.
+   * @default false
+   */
+  requiredMark?: boolean
+  /**
+   * @docs The icon that should be shown as preview placeholder.
+   * @default file
+   */
+  previewIcon?: Icon
+  /**
+   * @docs The fill type of the preview icon.
+   * @default line
+   * @deprecated use a named icon for the `previewIcon` instead
+   */
+  previewIconFillType?: 'line' | 'fill'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the value of the input has updated.
+   */
+  (e: 'update:modelValue', value: FileList): void
+  /**
+   * @docs Emitted when the input has been focused.
+   */
+  (e: 'focus', value: HTMLElement): void
+}
+
+export interface Slots {
+  /**
+   * @docs Can be used to overwrite the default rendering of the label.
+   */
+  label?: () => unknown
+}
+
+const {
+  label,
+  id = uniqueId('oc-fileinput-'),
+  fileTypes = '',
+  multiple = false,
+  modelValue = null,
+  clearButtonEnabled = true,
+  disabled = false,
+  errorMessage = '',
+  fixMessageLine = false,
+  descriptionMessage = '',
+  requiredMark = false,
+  previewIcon = 'file',
+  previewIconFillType = 'line'
+} = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
+
+const showMessageLine = computed(() => {
+  return fixMessageLine || !!errorMessage || !!descriptionMessage
+})
+
+const messageId = computed(() => `${id}-message`)
+
+const tmpAttrs = useAttrs()
+const additionalAttributes = computed(() => {
+  const additionalAttrs: Record<string, unknown> = {}
+  if (!!errorMessage || !!descriptionMessage) {
+    additionalAttrs['aria-describedby'] = unref(messageId)
+  }
+  if (requiredMark) {
+    additionalAttrs['aria-required'] = 'true'
+  }
+
+  // note: we spread out the attrs we don't want to be present in the resulting object
+  const { change, input, focus, class: classes, ...attrs } = tmpAttrs
+  return { ...attrs, ...additionalAttrs }
+})
+
+const ariaInvalid = computed(() => {
+  return (!!errorMessage).toString() as HTMLAttributes['aria-invalid']
+})
+
+const messageText = computed(() => {
+  if (errorMessage) {
+    return errorMessage
+  }
+  return descriptionMessage
+})
+
+const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
+const inputBtnRef = useTemplateRef<HTMLElement>('inputBtnRef')
+const imagePreviewUrl = ref('')
+
+const fileNames = computed(() => {
+  if (modelValue) {
+    const files = Array.from(modelValue)
+    return files.map((file) => file.name).join(', ')
+  }
+  return ''
+})
+
+const hasImagePreview = computed(() => unref(imagePreviewUrl).length > 0)
+
+const getFirstFile = (files: FileList | null | undefined) => {
+  if (!files) {
+    return null
+  }
+  return files[0] ?? files.item(0)
+}
+
+const isImageFile = (file: File | null) => {
+  if (!file) {
+    return false
+  }
+  return file.type.startsWith('image/')
+}
+
+const clearImagePreview = () => {
+  if (unref(imagePreviewUrl).length > 0) {
+    URL.revokeObjectURL(unref(imagePreviewUrl))
+    imagePreviewUrl.value = ''
+  }
+}
+
+watch(
+  () => modelValue,
+  (newModelValue) => {
+    const firstFile = getFirstFile(newModelValue)
+    if (!isImageFile(firstFile)) {
+      clearImagePreview()
+      return
+    }
+
+    clearImagePreview()
+    imagePreviewUrl.value = URL.createObjectURL(firstFile)
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  clearImagePreview()
+})
+
+const addFiles = () => {
+  if (unref(inputRef)) {
+    unref(inputRef).click()
+  }
+}
+
+const onClear = () => {
+  emit('update:modelValue', null)
+  unref(inputRef).value = null
+  clearImagePreview()
+}
+
+const onChange = () => {
+  emit('update:modelValue', unref(inputRef).files)
+}
+
+const onFocus = async () => {
+  await nextTick()
+  unref(inputBtnRef).focus()
+  emit('focus', unref(inputBtnRef))
+}
+</script>

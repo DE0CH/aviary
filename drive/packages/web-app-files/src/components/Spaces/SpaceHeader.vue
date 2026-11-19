@@ -1,0 +1,338 @@
+<template>
+  <div
+    class="space-header py-4"
+    :class="{ flex: !imageExpanded && !isMobile, 'space-header-squashed': isSideBarOpen }"
+  >
+    <div
+      class="space-header-image mr-6 aspect-[16/9]"
+      :class="{
+        'space-header-image-expanded w-full max-w-full max-h-full mb-4': imageExpanded || isMobile,
+        'w-[180px] max-h-[100px] shrink-0': !imageExpanded,
+        'hidden lg:block': isSideBarOpen
+      }"
+    >
+      <div v-if="imagesLoading.includes(space.id)" class="h-full flex items-center justify-center">
+        <oc-spinner :aria-label="$gettext('Space image is loading')" />
+      </div>
+      <component
+        :is="isMobile ? 'div' : 'oc-button'"
+        v-else-if="imageContent"
+        class="size-full rounded-lg"
+        v-bind="imageToggleAttributes"
+      >
+        <img
+          class="rounded-lg size-full max-h-full object-cover"
+          alt=""
+          :src="imageContent"
+          decoding="async"
+        />
+      </component>
+      <resource-icon v-else :resource="space" size-class="size-full" class="rounded-lg" />
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center justify-between gap-x-4 max-w-full">
+        <div class="flex items-center min-w-0 max-w-full">
+          <h2 class="break-words min-w-0 my-1">{{ space.name }}</h2>
+          <oc-button
+            :id="`space-context-btn`"
+            v-oc-tooltip="$gettext('Show context menu')"
+            :aria-label="$gettext('Show context menu')"
+            appearance="raw"
+            class="ml-2 p-1"
+          >
+            <oc-icon name="more-2" />
+          </oc-button>
+          <oc-drop
+            :title="space.name"
+            :drop-id="`space-context-drop`"
+            :toggle="`#space-context-btn`"
+            mode="click"
+            close-on-click
+            :options="{ delayHide: 0 }"
+            padding-size="small"
+            position="right-start"
+            @show-drop="isDropOpen = true"
+            @hide-drop="isDropOpen = false"
+          >
+            <context-actions v-if="isDropOpen" :action-options="{ space, resources: [space] }" />
+          </oc-drop>
+        </div>
+        <oc-button
+          v-if="memberCount"
+          :aria-label="showMembersLabel"
+          appearance="raw"
+          no-hover
+          @click="openSideBarSharePanel"
+        >
+          <oc-icon name="group" fill-type="line" size-class="size-4" />
+          <span
+            v-if="memberCount"
+            class="space-header-people-count whitespace-nowrap"
+            v-text="memberCountString"
+          />
+          <oc-spinner v-else size="small" :aria-label="$gettext('Loading members')" />
+        </oc-button>
+      </div>
+      <p
+        v-if="space.description"
+        class="mt-0 font-semibold wrap-anywhere"
+        v-text="space.description"
+      />
+      <div
+        v-if="readmesLoading.includes(space.id)"
+        class="space-header-readme-loading flex items-center justify-center"
+      >
+        <oc-spinner :aria-label="$gettext('Space description is loading')" />
+      </div>
+      <div
+        v-else-if="markdownResource && markdownContent"
+        ref="markdownContainerRef"
+        class="markdown-container flex min-h-0 [&.collapsed]:max-h-15 [&.collapsed]:overflow-hidden"
+        :class="{
+          collapsed: markdownCollapsed,
+          'mask-linear-[180deg,black,80%,transparent]': showMarkdownCollapse && markdownCollapsed
+        }"
+      >
+        <TextEditorViewer
+          class="markdown-container-content w-full"
+          :content="markdownContent"
+          :aria-label="$gettext('Space description')"
+        />
+      </div>
+      <div
+        v-if="showMarkdownCollapse && markdownContent"
+        class="markdown-collapse text-center mt-2"
+      >
+        <oc-button appearance="raw" no-hover @click="toggleMarkdownCollapsed">
+          <span>{{ toggleMarkdownCollapsedText }}</span>
+        </oc-button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  unref,
+  useTemplateRef,
+  watch
+} from 'vue'
+import { buildSpaceImageResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import {
+  ContextActions,
+  ImageDimension,
+  ProcessorType,
+  ResourceIcon,
+  useClientService,
+  useLoadPreview,
+  useResourcesStore,
+  useSharesStore,
+  useSideBar,
+  useSpacesStore,
+  preloadTextEditor,
+  TextEditorViewer
+} from '@opencloud-eu/web-pkg'
+import { useIsMobile } from '@opencloud-eu/design-system/composables'
+import { useGettext } from 'vue3-gettext'
+import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
+import { storeToRefs } from 'pinia'
+
+const markdownContainerCollapsedClass = 'collapsed'
+
+const { space } = defineProps<{
+  space: SpaceResource
+}>()
+
+const language = useGettext()
+const { $gettext, $ngettext } = language
+const clientService = useClientService()
+const { getFileContents, getFileInfo } = clientService.webdav
+const resourcesStore = useResourcesStore()
+const { loadPreview } = useLoadPreview()
+const spacesStore = useSpacesStore()
+const sharesStore = useSharesStore()
+const { imagesLoading, readmesLoading } = storeToRefs(spacesStore)
+
+const sidebarStore = useSideBar()
+const { isSideBarOpen } = storeToRefs(sidebarStore)
+
+const { isMobile } = useIsMobile()
+
+const isDropOpen = ref(false)
+
+const markdownContent = ref('')
+
+const markdownContainerRef = useTemplateRef('markdownContainerRef')
+const markdownResource = ref<Resource>(null)
+const markdownCollapsed = ref(true)
+const showMarkdownCollapse = ref(false)
+const toggleMarkdownCollapsedText = computed(() => {
+  return unref(markdownCollapsed) ? $gettext('Show more') : $gettext('Show less')
+})
+const toggleMarkdownCollapsed = () => {
+  markdownCollapsed.value = !unref(markdownCollapsed)
+}
+
+const onMarkdownResize = () => {
+  if (!unref(markdownContainerRef)) {
+    return
+  }
+
+  unref(markdownContainerRef).classList.remove(markdownContainerCollapsedClass)
+  const markdownContainerHeight = unref(markdownContainerRef).offsetHeight
+  if (markdownContainerHeight < 60) {
+    showMarkdownCollapse.value = false
+    return
+  }
+  showMarkdownCollapse.value = true
+
+  if (unref(markdownCollapsed)) {
+    unref(markdownContainerRef).classList.add(markdownContainerCollapsedClass)
+  }
+}
+const markdownResizeObserver = new ResizeObserver(onMarkdownResize)
+const observeMarkdownContainerResize = () => {
+  if (!markdownResizeObserver || !unref(markdownContainerRef)) {
+    return
+  }
+  markdownResizeObserver.unobserve(unref(markdownContainerRef))
+  markdownResizeObserver.observe(unref(markdownContainerRef))
+}
+const unobserveMarkdownContainerResize = () => {
+  if (!markdownResizeObserver || !unref(markdownContainerRef)) {
+    return
+  }
+  markdownResizeObserver.unobserve(unref(markdownContainerRef))
+}
+
+const memberCount = ref<number>()
+watch(
+  () => sharesStore.collaboratorShares.length,
+  async () => {
+    // set space member count
+    try {
+      const { count } = await clientService.graphAuthenticated.permissions.listPermissions(
+        space.id,
+        space.id,
+        sharesStore.graphRoles,
+        { count: true, filter: "grantedToV2 ne ''" }
+      )
+      memberCount.value = count || 1
+    } catch (e) {
+      console.error(e)
+    }
+  },
+  { immediate: true }
+)
+
+onMounted(observeMarkdownContainerResize)
+onBeforeUnmount(() => {
+  unobserveMarkdownContainerResize()
+  spacesStore.purgeReadmesLoading()
+})
+
+const loadReadmeContent = async () => {
+  spacesStore.addToReadmesLoading(space.id)
+
+  const editorPromise = preloadTextEditor()
+
+  try {
+    const fileContentsResponse = await getFileContents(space, {
+      path: `.space/${space.spaceReadmeData.name}`
+    })
+
+    const fileInfoResponse = await getFileInfo(space, {
+      path: `.space/${space.spaceReadmeData.name}`
+    })
+
+    await editorPromise
+
+    unobserveMarkdownContainerResize()
+    markdownContent.value = fileContentsResponse.body
+    markdownResource.value = fileInfoResponse
+    spacesStore.removeFromReadmesLoading(space.id)
+
+    await nextTick()
+    if (unref(markdownContent)) {
+      observeMarkdownContainerResize()
+    }
+  } catch (e) {
+    if ([425, 429].includes(e.statusCode)) {
+      const retryAfter = e.response?.headers?.['retry-after'] || 5
+      await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000))
+      return loadReadmeContent()
+    }
+
+    spacesStore.removeFromReadmesLoading(space.id)
+    console.error(e)
+  }
+}
+
+watch(
+  computed(() => space.spaceReadmeData),
+  async (data: DriveItem) => {
+    if (!data) {
+      return
+    }
+
+    await loadReadmeContent()
+  },
+  { deep: true, immediate: true }
+)
+
+const imageContent = ref<string>(null)
+const imageExpanded = ref(false)
+
+const toggleImageExpanded = () => {
+  imageExpanded.value = !unref(imageExpanded)
+}
+// on mobile the image is always expanded, so it needs no toggle there
+const imageToggleAttributes = computed(() => {
+  if (unref(isMobile)) {
+    return {}
+  }
+  const label = unref(imageExpanded)
+    ? $gettext('Shrink space image')
+    : $gettext('Enlarge space image')
+  return { appearance: 'raw', ariaLabel: label, onClick: toggleImageExpanded }
+})
+
+watch(
+  computed(() => space.spaceImageData),
+  async () => {
+    // the preview cache revokes the url of a replaced image, so it must not be rendered again
+    imageContent.value = null
+    imageContent.value = await loadPreview({
+      space,
+      resource: space.spaceImageData ? buildSpaceImageResource(space) : space,
+      dimensions: ImageDimension.Preview, // request full preview because image can be expanded
+      processor: ProcessorType.enum.fit,
+      cancelRunning: true,
+      updateStore: false
+    })
+  },
+  { immediate: true }
+)
+
+const memberCountString = computed(() => {
+  return $ngettext('%{count} member', '%{count} members', unref(memberCount), {
+    count: unref(memberCount).toString()
+  })
+})
+
+const showMembersLabel = computed(() => {
+  return $ngettext('Show %{count} member', 'Show %{count} members', unref(memberCount), {
+    count: unref(memberCount).toString()
+  })
+})
+
+const openSideBarSharePanel = () => {
+  resourcesStore.setSelection([])
+  sidebarStore.openSideBarPanel('space-share')
+}
+</script>

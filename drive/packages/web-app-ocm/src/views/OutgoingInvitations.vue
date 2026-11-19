@@ -1,0 +1,369 @@
+<template>
+  <div class="sciencemesh-app">
+    <div>
+      <div class="flex items-center px-4 pt-2">
+        <oc-icon name="user-shared" />
+        <h2 class="px-2" v-text="$gettext('Invite users')"></h2>
+        <oc-contextual-helper class="pl-1" v-bind="helperContent" />
+      </div>
+      <div class="flex items-center justify-center p-4">
+        <oc-button
+          :aria-label="
+            $gettext('Generate invitation link that can be shared with one or more invitees')
+          "
+          @click="openInviteModal"
+        >
+          <oc-icon name="add" />
+          <span v-text="$gettext('Generate invitation')" />
+        </oc-button>
+      </div>
+      <oc-modal
+        v-if="showInviteModal"
+        :title="$gettext('Generate new invitation')"
+        :button-cancel-text="$gettext('Cancel')"
+        :button-confirm-text="$gettext('Generate')"
+        :button-confirm-disabled="!!descriptionErrorMessage || isGenerating"
+        :is-loading="isGenerating"
+        focus-trap-initial="#invite_token_description"
+        @cancel="resetGenerateInviteToken"
+        @confirm="generateToken"
+      >
+        <template #content>
+          <form autocomplete="off" @submit.prevent="generateToken">
+            <oc-text-input
+              id="invite_token_description"
+              v-model="formInput.description"
+              class="mb-2"
+              :error-message="descriptionErrorMessage"
+              :label="$gettext('Add a description (optional)')"
+              :clear-button-enabled="true"
+              :description-message="
+                !descriptionErrorMessage && `${formInput.description?.length || 0}/${50}`
+              "
+            />
+            <input type="submit" class="hidden" />
+          </form>
+        </template>
+      </oc-modal>
+      <app-loading-spinner v-if="loading" />
+      <template v-else>
+        <no-content-message
+          v-if="!sortedTokens.length"
+          id="invite-tokens-empty"
+          class="h-full"
+          icon="user-shared"
+        >
+          <template #message>
+            <span v-text="$gettext('You have no invitation links')" />
+          </template>
+        </no-content-message>
+        <oc-table
+          v-else
+          :fields="fields"
+          :data="sortedTokens"
+          :highlighted="lastCreatedToken ? [lastCreatedToken] : []"
+        >
+          <template #token="rowData">
+            <div class="w-3xs flex">
+              <div class="truncate max-w-full" :title="rowData.item.token">
+                <span class="truncate">{{ rowData.item.token }}</span>
+              </div>
+              <oc-button
+                id="oc-sciencemesh-copy-plain"
+                v-oc-tooltip="$gettext('Copy plain token')"
+                :aria-label="$gettext('Copy plain token')"
+                appearance="raw"
+                class="ml-1"
+                @click="copyPlainToken(rowData)"
+              >
+                <oc-icon name="file-copy" size-class="size-4" />
+              </oc-button>
+              <oc-button
+                id="oc-sciencemesh-copy-base64"
+                v-oc-tooltip="$gettext('Copy base64 token')"
+                :aria-label="$gettext('Copy base64 token')"
+                appearance="raw"
+                class="ml-1"
+                @click="copyToken(rowData)"
+              >
+                <oc-icon name="code" size-class="size-4" />
+              </oc-button>
+              <oc-button
+                id="oc-sciencemesh-copy-wayf"
+                v-oc-tooltip="$gettext('Copy Invite link')"
+                :aria-label="$gettext('Copy Invite link')"
+                appearance="raw"
+                class="ml-1"
+                @click="copyWayfLink(rowData)"
+              >
+                <oc-icon name="link" size-class="size-4" />
+              </oc-button>
+            </div>
+          </template>
+          <template #link="rowData">
+            <a :href="rowData.item.link" v-text="$gettext('Link')" />
+            <oc-button
+              id="oc-sciencemesh-copy-link"
+              v-oc-tooltip="$gettext('Copy invitation link')"
+              :aria-label="$gettext('Copy invitation link')"
+              appearance="raw"
+              @click="copyLink(rowData)"
+            >
+              <oc-icon name="file-copy" />
+            </oc-button>
+          </template>
+          <template #expiration="rowData">
+            <span
+              v-oc-tooltip="formatDate(rowData.item.expiration)"
+              tabindex="0"
+              v-text="formatDateRelative(rowData.item.expiration)"
+            />
+          </template>
+        </oc-table>
+      </template>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref, unref } from 'vue'
+import {
+  NoContentMessage,
+  AppLoadingSpinner,
+  useClientService,
+  useMessages,
+  formatDateFromJSDate,
+  formatRelativeDateFromJSDate,
+  useConfigStore
+} from '@opencloud-eu/web-pkg'
+import { useGettext } from 'vue3-gettext'
+import { inviteListSchema, inviteSchema } from '../schemas'
+import { FieldType } from '@opencloud-eu/design-system/helpers'
+
+type Token = {
+  id: string
+  token: string
+  link?: string
+  expiration?: Date
+  expirationSeconds?: number
+  description?: string
+}
+
+const { showMessage, showErrorMessage } = useMessages()
+const clientService = useClientService()
+const configStore = useConfigStore()
+const { $gettext, current: currentLanguage } = useGettext()
+
+const lastCreatedToken = ref('')
+const showInviteModal = ref(false)
+const formInput = ref({
+  description: ''
+})
+const tokens = ref<Token[]>([])
+const loading = ref(true)
+const isGenerating = ref(false)
+const descriptionErrorMessage = ref<string>()
+const fields = computed<FieldType[]>(() => {
+  const haveLinks = unref(sortedTokens)[0]?.link
+
+  return [
+    haveLinks && {
+      name: 'link',
+      title: $gettext('Invitation link'),
+      alignH: 'left',
+      type: 'slot'
+    },
+    {
+      name: 'token',
+      title: $gettext('Invite token'),
+      alignH: haveLinks ? 'right' : 'left',
+      type: 'slot'
+    },
+    {
+      name: 'description',
+      title: $gettext('Description'),
+      alignH: 'right'
+    },
+    {
+      name: 'expiration',
+      title: $gettext('Expires'),
+      alignH: 'right',
+      type: 'slot'
+    }
+  ].filter(Boolean) as FieldType[]
+})
+const sortedTokens = computed(() => {
+  return [...unref(tokens)].sort((a, b) => (a.expirationSeconds < b.expirationSeconds ? 1 : -1))
+})
+const helperContent = computed(() => {
+  return {
+    text: $gettext('Create an invitation link and send it to the person you want to share with.'),
+    title: $gettext('Invitation link')
+  }
+})
+
+const getTokenAtProvider = (token: string) => {
+  const url = new URL(configStore.serverUrl)
+  return `${token}@${url.host}`
+}
+
+const encodeInviteToken = (token: string) => {
+  return btoa(getTokenAtProvider(token))
+}
+
+const generateWayfLink = (token: string) => {
+  const url = new URL(configStore.serverUrl)
+  return `${url.origin}/open-cloud-mesh/wayf?token=${token}`
+}
+
+const generateToken = async () => {
+  const { description } = unref(formInput)
+
+  if (unref(descriptionErrorMessage) || unref(isGenerating)) {
+    return
+  }
+  // The ref is set before awaiting so the guard also covers a second click or
+  // submit that lands before the re-render disables the confirm button.
+  isGenerating.value = true
+  try {
+    const { data: tokenInfo } = await clientService.httpAuthenticated.post(
+      '/sciencemesh/generate-invite',
+      {
+        ...(description && { description })
+      },
+      {
+        schema: inviteSchema
+      }
+    )
+
+    if (tokenInfo.token) {
+      tokens.value.push({
+        id: tokenInfo.token,
+        link: tokenInfo.invite_link,
+        token: tokenInfo.token,
+        ...(tokenInfo.expiration && {
+          expiration: toDateTime(tokenInfo.expiration)
+        }),
+        ...(tokenInfo.expiration && {
+          expirationSeconds: tokenInfo.expiration
+        }),
+        ...(tokenInfo.description && { description: tokenInfo.description })
+      })
+      showMessage({
+        title: $gettext('Success'),
+        status: 'success',
+        desc: $gettext(
+          'New token has been created and copied to your clipboard. Send it to the invitee(s).'
+        )
+      })
+
+      const quickToken = encodeInviteToken(tokenInfo.token)
+      lastCreatedToken.value = quickToken
+      await navigator.clipboard.writeText(quickToken)
+    }
+  } catch (error) {
+    lastCreatedToken.value = ''
+    errorPopup(error)
+  } finally {
+    isGenerating.value = false
+    resetGenerateInviteToken()
+  }
+}
+
+const listTokens = async () => {
+  const url = '/sciencemesh/list-invite'
+  try {
+    const { data } = await clientService.httpAuthenticated.get(url, {
+      schema: inviteListSchema
+    })
+    data.forEach((t) => {
+      tokens.value.push({
+        id: t.token,
+        token: t.token,
+        ...(t.expiration && {
+          expiration: toDateTime(t.expiration)
+        }),
+        ...(t.expiration && {
+          expirationSeconds: t.expiration
+        }),
+        ...(t.description && { description: t.description })
+      })
+    })
+  } catch (error) {
+    console.log(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const copyLink = (rowData: { item: { link: string; token: string } }) => {
+  navigator.clipboard.writeText(rowData.item.link)
+  showMessage({
+    title: $gettext('Invitation link copied'),
+    desc: $gettext('Invitation link has been copied to your clipboard.')
+  })
+}
+
+const copyPlainToken = (rowData: { item: { token: string } }) => {
+  const tokenAtProvider = getTokenAtProvider(rowData.item.token)
+  navigator.clipboard.writeText(tokenAtProvider)
+  showMessage({
+    title: $gettext('Plain token copied'),
+    desc: $gettext('Plain token has been copied to your clipboard.')
+  })
+}
+
+const copyToken = (rowData: { item: { link: string; token: string } }) => {
+  navigator.clipboard.writeText(encodeInviteToken(rowData.item.token))
+  showMessage({
+    title: $gettext('Base64 token copied'),
+    desc: $gettext('Base64 token has been copied to your clipboard.')
+  })
+}
+
+const copyWayfLink = (rowData: { item: { token: string } }) => {
+  const wayfLink = generateWayfLink(rowData.item.token)
+  navigator.clipboard.writeText(wayfLink)
+  showMessage({
+    title: $gettext('Invite link copied'),
+    desc: $gettext('Invite link has been copied to your clipboard.')
+  })
+}
+
+const errorPopup = (error: Error) => {
+  console.error(error)
+  showErrorMessage({
+    title: $gettext('Error'),
+    desc: $gettext('An error occurred when generating the token'),
+    errors: [error]
+  })
+}
+
+const openInviteModal = () => {
+  showInviteModal.value = true
+}
+
+const resetGenerateInviteToken = () => {
+  showInviteModal.value = false
+  formInput.value = {
+    description: ''
+  }
+}
+
+const toDateTime = (secs: number) => {
+  const d = new Date(Date.UTC(1970, 0, 1))
+  d.setUTCSeconds(secs)
+  return d
+}
+
+onMounted(() => {
+  listTokens()
+})
+
+const formatDate = (date: Date) => {
+  return formatDateFromJSDate(date, currentLanguage)
+}
+const formatDateRelative = (date: Date) => {
+  return formatRelativeDateFromJSDate(date, currentLanguage)
+}
+</script>

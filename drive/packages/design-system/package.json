@@ -1,0 +1,126 @@
+{
+  "name": "@opencloud-eu/design-system",
+  "version": "8.2.2",
+  "description": "OpenCloud Design System is used to design OpenCloud UI components",
+  "keywords": [
+    "vue design system",
+    "design system",
+    "vue.js",
+    "vue",
+    "design",
+    "system"
+  ],
+  "homepage": "https://docs.opencloud.eu/design-system/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencloud-eu/web",
+    "directory": "packages/design-system"
+  },
+  "type": "module",
+  "license": "AGPL-3.0",
+  "author": "OpenCloud",
+  "main": "src/index.ts",
+  "private": false,
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "vite": "vite",
+    "build": "vite build && vue-tsc --project tsconfig.build.json",
+    "check:types": "vue-tsc --declaration --noEmit --project tsconfig.build.json"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "Firefox ESR",
+    "not Explorer > 0",
+    "not ExplorerMobile > 0",
+    "not BlackBerry > 0",
+    "not OperaMini all",
+    "not OperaMobile > 0"
+  ],
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "linkDirectory": false,
+    "exports": {
+      ".": {
+        "default": "./dist/design-system.js",
+        "types": "./dist/src/index.d.ts"
+      },
+      "./components": {
+        "default": "./dist/design-system/components.js",
+        "types": "./dist/src/components/index.d.ts"
+      },
+      "./composables": {
+        "default": "./dist/design-system/composables.js",
+        "types": "./dist/src/composables/index.d.ts"
+      },
+      "./helpers": {
+        "default": "./dist/design-system/helpers.js",
+        "types": "./dist/src/helpers/index.d.ts"
+      },
+      "./dist/design-system.css": {
+        "default": "./dist/design-system.css"
+      },
+      "./dist/translations.json": {
+        "default": "./dist/translations.json"
+      },
+      "./tailwind": {
+        "default": "./dist/tailwind.css"
+      },
+      "./types": {
+        "types": "./dist/types.d.ts"
+      }
+    }
+  },
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./components": {
+      "default": "./src/components/index.ts"
+    },
+    "./composables": {
+      "default": "./src/composables/index.ts"
+    },
+    "./helpers": {
+      "default": "./src/helpers/index.ts"
+    },
+    "./l10n": {
+      "default": "./l10n/translations.json"
+    },
+    "./tailwind": {
+      "default": "./src/styles/tailwind.css"
+    }
+  },
+  "dependencies": {
+    "@emoji-mart/data": "^1.2.1",
+    "@floating-ui/dom": "^1.7.6",
+    "@vueuse/core": "^15.0.0",
+    "emoji-mart": "^5.6.0",
+    "focus-trap": "^8.0.0",
+    "focus-trap-vue": "^4.1.0",
+    "fuse.js": "^7.1.0",
+    "lodash-es": "^4.17.23",
+    "luxon": "^3.7.2",
+    "vue-inline-svg": "^5.0.0",
+    "vue-router": "^5.0.4",
+    "vue-select": "4.0.0-beta.6",
+    "vue3-gettext": "4.0.1"
+  },
+  "peerDependencies": {
+    "pinia": "^3.0.3 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@opencloud-eu/web-test-helpers": "workspace:*",
+    "@tailwindcss/vite": "^4.2.2",
+    "@vitejs/plugin-vue": "6.0.11",
+    "markdown-it-container": "^4.0.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "vite": "^8.0.3",
+    "vitepress": "^2.0.0-alpha.19"
+  }
+}

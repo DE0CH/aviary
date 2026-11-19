@@ -1,0 +1,27 @@
+Feature: Token renewal using iframe
+
+  As a user
+  I want the web application to automatically renew access token just before access token expires using an iframe in the background,
+  So that I can be confident the application will not encounter issues related to expired access tokens.
+
+
+  Scenario: access token renewal via iframe
+    Given "Admin" creates following user using API
+      | id    |
+      | Alice |
+    And "Admin" assigns following role to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" navigates to the projects space page
+    And "Alice" creates the project space "team"
+    When "Alice" waits for token renewal via iframe
+    And "Alice" navigates to the project space "team"
+    And "Alice" creates the following resource
+      | resource     | type   |
+      | space-folder | folder |
+    Then following resource should be displayed in the files list for user "Alice"
+      | resource     |
+      | space-folder |
+    And "Alice" logs out

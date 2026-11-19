@@ -1,0 +1,327 @@
+<template>
+  <no-content-message
+    v-if="!items.length"
+    id="admin-settings-groups-empty"
+    img-src="images/illustrations/groups.svg"
+  >
+    <template #message>
+      <span v-text="$gettext('No groups found')" />
+    </template>
+    <template #callToAction>
+      <span v-text="$gettext('Try refining the search term or filters to get results')" />
+    </template>
+  </no-content-message>
+  <oc-table
+    v-else
+    class="[&_tbody_tr]:select-none"
+    :sort-by="sortBy"
+    :sort-dir="sortDir"
+    :fields="fields"
+    :data="paginatedItems"
+    :highlighted="highlighted"
+    :sticky="isSticky"
+    :header-position="fileListHeaderY"
+    :hover="true"
+    padding-x="medium"
+    @sort="handleSort"
+    @contextmenu-clicked="(el, event, item) => showContextMenuOnRightClick(event, item)"
+    @highlight="rowClicked"
+  >
+    <template #selectHeader>
+      <oc-checkbox
+        size="large"
+        :label="$gettext('Select all groups')"
+        :model-value="allGroupsSelected"
+        :label-hidden="true"
+        @update:model-value="allGroupsSelected ? unselectAllGroups() : selectGroups(paginatedItems)"
+      />
+    </template>
+    <template #select="rowData">
+      <oc-checkbox
+        size="large"
+        :model-value="isGroupSelected(rowData.item)"
+        :option="rowData.item"
+        :label="getSelectGroupLabel(rowData.item)"
+        :label-hidden="true"
+        @click.stop="rowClicked([rowData.item, $event])"
+      />
+    </template>
+    <template #displayName="rowData">
+      <div class="flex items-center">
+        <OcAvatar
+          class="shrink-0 mr-2"
+          :width="32"
+          :userid="rowData.item.id"
+          :user-name="rowData.item.displayName"
+          background-color="var(--oc-role-secondary)"
+        />
+        <oc-filter-highlight
+          class="truncate"
+          :title="rowData.item.displayName"
+          :text="rowData.item.displayName"
+          :term="filterTerm"
+        />
+        <oc-icon
+          v-if="rowData.item.groupTypes?.includes('ReadOnly')"
+          v-oc-tooltip="readOnlyLabel"
+          name="lock"
+          size-class="size-4"
+          fill-type="line"
+          class="ml-2"
+          :accessible-label="readOnlyLabel"
+        />
+      </div>
+    </template>
+    <template #actions="{ item }">
+      <oc-button
+        v-oc-tooltip="$gettext('Show details')"
+        :aria-label="$gettext('Show details')"
+        appearance="raw"
+        class="ml-1 quick-action-button p-1 groups-table-btn-details"
+        @click="showDetails(item)"
+      >
+        <oc-icon name="information" fill-type="line" />
+      </oc-button>
+      <oc-button
+        v-if="!item.groupTypes?.includes('ReadOnly')"
+        v-oc-tooltip="$gettext('Edit')"
+        :aria-label="$gettext('Edit')"
+        appearance="raw"
+        class="ml-1 quick-action-button p-1 groups-table-btn-edit"
+        @click="showEditPanel(item)"
+      >
+        <oc-icon name="pencil" fill-type="line" />
+      </oc-button>
+      <context-menu-quick-action
+        :ref="(el: any) => (contextMenuDrops[item.id] = el?.drop)"
+        :item="item"
+        :title="item.displayName"
+        class="groups-table-btn-action-dropdown"
+        @quick-action-clicked="showContextMenuOnBtnClick($event, item)"
+      >
+        <template #contextMenu>
+          <slot name="contextMenu" :group="item" />
+        </template>
+      </context-menu-quick-action>
+    </template>
+    <template #footer>
+      <pagination :pages="totalPages" :current-page="currentPage" />
+      <div class="text-center w-full my-2">
+        <p class="text-role-on-surface-variant">{{ footerTextTotal }}</p>
+        <p v-if="filterTerm" class="text-role-on-surface-variant">{{ footerTextFilter }}</p>
+      </div>
+    </template>
+  </oc-table>
+</template>
+
+<script setup lang="ts">
+import { ComponentPublicInstance, computed, ref, unref, watch } from 'vue'
+import Fuse from 'fuse.js'
+import {
+  ContextMenuQuickAction,
+  createVirtualCursorElement,
+  defaultFuseOptions,
+  escapeFuseQuery,
+  eventBus,
+  NoContentMessage,
+  Pagination,
+  useFileListHeaderPosition,
+  useIsTopBarSticky,
+  useKeyboardActions,
+  usePagination,
+  useRoute,
+  useRouter,
+  useSideBar,
+  useSort,
+  SortField
+} from '@opencloud-eu/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
+import { useGettext } from 'vue3-gettext'
+import { perPageDefault, perPageStoragePrefix } from '../../defaults'
+import {
+  useKeyboardTableMouseActions,
+  useKeyboardTableNavigation
+} from '../../composables/keyboardActions'
+import { useGroupSettingsStore } from '../../composables/stores/groupSettings'
+import { storeToRefs } from 'pinia'
+import { FieldType, SortDir } from '@opencloud-eu/design-system/helpers'
+import { OcDrop, OcFilterHighlight } from '@opencloud-eu/design-system/components'
+
+const { filterTerm = '' } = defineProps<{ filterTerm?: string }>()
+
+defineSlots<{
+  contextMenu?: (props: { group: Group }) => unknown
+}>()
+
+const { $gettext } = useGettext()
+const { y: fileListHeaderY } = useFileListHeaderPosition('#admin-settings-app-bar')
+const contextMenuDrops = ref<Record<string, ComponentPublicInstance<typeof OcDrop>>>({})
+const router = useRouter()
+const route = useRoute()
+const { isSticky } = useIsTopBarSticky()
+const { openSideBar, openSideBarPanel } = useSideBar()
+
+const lastSelectedGroupId = ref<string>()
+
+const groupSettingsStore = useGroupSettingsStore()
+const { groups, selectedGroups } = storeToRefs(groupSettingsStore)
+
+const filteredGroups = computed(() => {
+  if (!filterTerm.trim()) {
+    return unref(groups)
+  }
+  const searchEngine = new Fuse(unref(groups), { ...defaultFuseOptions, keys: ['displayName'] })
+  return searchEngine.search(escapeFuseQuery(filterTerm)).map((r) => r.item)
+})
+
+const sortFields: SortField[] = [{ name: 'displayName', sortable: true, sortDir: SortDir.Asc }]
+const { sortBy, sortDir, items, handleSort } = useSort<Group>({
+  items: filteredGroups,
+  fields: sortFields
+})
+
+const {
+  items: paginatedItems,
+  page: currentPage,
+  total: totalPages
+} = usePagination({ items, perPageDefault, perPageStoragePrefix })
+
+const keyActions = useKeyboardActions()
+useKeyboardTableNavigation(keyActions, paginatedItems, selectedGroups, lastSelectedGroupId)
+const { setSelectionStart } = useKeyboardTableMouseActions(
+  keyActions,
+  paginatedItems,
+  selectedGroups,
+  lastSelectedGroupId
+)
+
+const readOnlyLabel = computed(() => $gettext("This group is read-only and can't be edited"))
+// the selection is kept across pages, so only the groups of the current page count
+const allGroupsSelected = computed(
+  () => unref(paginatedItems).length > 0 && unref(paginatedItems).every(isGroupSelected)
+)
+const highlighted = computed(() => unref(selectedGroups).map((group) => group.id))
+const footerTextTotal = computed(() =>
+  $gettext('%{groupCount} groups in total', { groupCount: unref(groups).length.toString() })
+)
+const footerTextFilter = computed(() =>
+  $gettext('%{groupCount} matching groups', { groupCount: unref(items).length.toString() })
+)
+
+const fields = computed<FieldType[]>(() => [
+  {
+    name: 'select',
+    title: '',
+    type: 'slot',
+    width: 'shrink',
+    headerType: 'slot'
+  },
+  {
+    name: 'displayName',
+    title: $gettext('Group name'),
+    type: 'slot',
+    sortable: true,
+    width: 'expand',
+    wrap: 'truncate'
+  },
+  {
+    name: 'actions',
+    title: $gettext('Actions'),
+    sortable: false,
+    type: 'slot',
+    alignH: 'right',
+    width: 'shrink',
+    wrap: 'nowrap'
+  }
+])
+
+function isGroupSelected(group: Group) {
+  return unref(selectedGroups).some((s) => s.id === group.id)
+}
+
+function selectGroup(group: Group) {
+  setSelectionStart(group)
+
+  if (!isGroupSelected(group)) {
+    return groupSettingsStore.addSelectedGroup(group)
+  }
+
+  groupSettingsStore.setSelectedGroups(unref(selectedGroups).filter((g) => g.id !== group.id))
+}
+
+function selectGroups(groups: Group[]) {
+  groupSettingsStore.setSelectedGroups(groups)
+}
+
+function unselectAllGroups() {
+  groupSettingsStore.setSelectedGroups([])
+}
+
+function getSelectGroupLabel(group: Group) {
+  return $gettext('Select %{ group }', { group: group.displayName })
+}
+
+function showDetails(group: Group) {
+  if (!isGroupSelected(group)) {
+    selectGroup(group)
+  }
+  openSideBar()
+}
+
+function showEditPanel(group: Group) {
+  if (!isGroupSelected(group)) {
+    selectGroup(group)
+  }
+  openSideBarPanel('EditPanel')
+}
+
+function rowClicked([group, event]: [Group, MouseEvent | KeyboardEvent]) {
+  const target = event?.target as HTMLInputElement
+  const isCheckboxClicked = target?.getAttribute('type') === 'checkbox'
+  const contextActionClicked = target?.closest('div')?.id === 'oc-files-context-menu'
+  if (contextActionClicked) {
+    return
+  }
+
+  if (isCheckboxClicked && (event?.metaKey || event?.shiftKey)) {
+    // revert the native toggle, the modifier click handles the selection
+    target.checked = isGroupSelected(group)
+  }
+
+  if (event?.metaKey) {
+    return eventBus.publish('app.admin-settings.list.clicked.meta', group)
+  }
+  if (event?.shiftKey) {
+    return eventBus.publish('app.admin-settings.list.clicked.shift', {
+      resource: group
+    })
+  }
+  if (isCheckboxClicked) {
+    return selectGroup(group)
+  }
+
+  unselectAllGroups()
+  selectGroup(group)
+}
+
+function showContextMenuOnBtnClick(event: MouseEvent | KeyboardEvent, group: Group) {
+  unref(contextMenuDrops)[group.id]?.show({ event })
+}
+
+function showContextMenuOnRightClick(event: MouseEvent, group: Group) {
+  event.preventDefault()
+  if (!isGroupSelected(group)) {
+    groupSettingsStore.setSelectedGroups([group])
+    setSelectionStart(group)
+  }
+  const anchorElement = createVirtualCursorElement(event)
+  unref(contextMenuDrops)[group.id]?.show({ anchorElement })
+}
+
+watch(
+  () => filterTerm,
+  async () => {
+    await router.push({ ...unref(route), query: { ...unref(route).query, page: '1' } })
+  }
+)
+</script>

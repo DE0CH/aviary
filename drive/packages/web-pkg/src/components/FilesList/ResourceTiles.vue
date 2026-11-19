@@ -1,0 +1,388 @@
+<template>
+  <div id="tiles-view" class="px-4 pt-2">
+    <div class="flex items-center mb-2 pb-2 oc-tiles-controls">
+      <oc-checkbox
+        v-if="isSelectable && !isFilePicker"
+        id="tiles-view-select-all"
+        v-oc-tooltip="selectAllCheckboxLabel"
+        class="ml-2"
+        size="large"
+        :label="selectAllCheckboxLabel"
+        :label-hidden="true"
+        :disabled="resources.length === disabledResources.length"
+        :model-value="areAllResourcesSelected"
+        @click.stop="toggleSelectionAll"
+      />
+      <div v-if="sortFields.length" class="oc-tiles-sort">
+        <oc-filter-chip
+          class="[&_.oc-filter-chip-label]:text-sm"
+          :filter-label="$gettext('Sort by')"
+          :selected-item-names="[currentSortField.label]"
+          :has-active-state="false"
+          close-on-click
+          raw
+        >
+          <template #default>
+            <oc-list>
+              <li v-for="(option, index) in sortFields" :key="index">
+                <oc-button
+                  :appearance="currentSortField === option ? 'filled' : 'raw-inverse'"
+                  :color-role="currentSortField === option ? 'secondaryContainer' : 'surface'"
+                  :no-hover="currentSortField === option"
+                  justify-content="space-between"
+                  class="oc-tiles-sort-filter-chip-item"
+                  @click="selectSorting(option)"
+                >
+                  <span>{{ option.label }}</span>
+                  <div v-if="option === currentSortField" class="flex">
+                    <oc-icon name="check" />
+                  </div>
+                </oc-button>
+              </li>
+            </oc-list>
+          </template>
+        </oc-filter-chip>
+      </div>
+    </div>
+    <oc-list class="oc-tiles grid justify-start gap-3">
+      <li
+        v-for="resource in resources"
+        :key="resource.id"
+        class="oc-tiles-item has-item-context-menu"
+      >
+        <resource-tile
+          :resource="resource"
+          :space="space"
+          :is-resource-clickable="isResourceClickable(resource, areResourcesClickable)"
+          :is-resource-disabled="isResourceDisabled(resource)"
+          :is-extension-displayed="areFileExtensionsShown"
+          :is-path-displayed="arePathsDisplayed"
+          :resource-icon-size="resourceIconSize"
+          :draggable="dragDrop"
+          :lazy="areTilesLazy"
+          :is-loading="isResourceInDeleteQueue(resource.id)"
+          :term="term"
+          :class="{ 'opacity-60': isResourceCut(resource) }"
+          @contextmenu="
+            showContextMenuOnRightClick($event, resource, contextMenuDrops[resource.id])
+          "
+          @file-name-clicked.stop="(event) => fileNameClicked({ resource, event })"
+          @dragstart="dragStart(resource, $event)"
+          @dragenter.prevent="setDropStyling(resource, false, $event)"
+          @dragleave.prevent="setDropStyling(resource, true, $event)"
+          @drop="fileDropped(resource, $event)"
+          @dragover="$event.preventDefault()"
+          @item-visible="$emit('itemVisible', resource)"
+          @item-hidden="$emit('itemHidden', resource)"
+          @tile-clicked="fileContainerClicked({ resource, event: $event[1] })"
+        >
+          <template #selection="{ selected }">
+            <oc-checkbox
+              v-if="isSelectable && !isLocationPicker && !isFilePicker"
+              :label="getResourceCheckboxLabel(resource)"
+              :label-hidden="true"
+              size="large"
+              class="size-11 justify-center rounded-tl-sm rounded-br-lg hover:bg-role-on-surface/10 cursor-pointer has-disabled:cursor-default"
+              :disabled="isResourceDisabled(resource)"
+              :model-value="selected"
+              :data-test-selection-resource-name="resource.name"
+              :data-test-selection-resource-path="resource.path"
+              @click.stop="selectionZoneClicked(resource, $event)"
+            />
+          </template>
+          <template #imageField>
+            <slot name="image" :resource="resource" />
+          </template>
+          <template #indicators>
+            <slot name="indicators" :resource="resource">
+              <resource-status-indicators
+                :space="space"
+                class="ml-2"
+                :resource="resource"
+                :filter="(indicator) => ['system', 'sharing'].includes(indicator.category)"
+                :disable-handler="isResourceDisabled(resource)"
+              />
+            </slot>
+          </template>
+          <template #actions>
+            <slot name="actions" :resource="resource" />
+          </template>
+          <template #contextMenu>
+            <context-menu-quick-action
+              v-if="shouldShowContextDrop(resource)"
+              :ref="
+                (el) =>
+                  (contextMenuDrops[resource.id] = (
+                    el as ComponentPublicInstance<typeof ContextMenuQuickAction>
+                  )?.drop)
+              "
+              :item="resource"
+              :title="resource.name"
+              class="resource-tiles-btn-action-dropdown"
+              @quick-action-clicked="
+                showContextMenuOnBtnClick($event, resource, contextMenuDrops[resource.id])
+              "
+            >
+              <template #contextMenu>
+                <slot name="contextMenu" :resource="resource" />
+              </template>
+            </context-menu-quick-action>
+          </template>
+          <template #additionalResourceContent>
+            <slot name="additionalResourceContent" :resource="resource" />
+          </template>
+        </resource-tile>
+      </li>
+      <li
+        v-for="index in ghostTilesCount"
+        :key="`ghost-tile-${index}`"
+        class="list-item"
+        :aria-hidden="true"
+      />
+    </oc-list>
+    <Teleport v-if="dragItem" to="body">
+      <resource-ghost-element ref="ghostElement" :preview-items="[dragItem, ...dragSelection]" />
+    </Teleport>
+    <div class="p-1 text-sm">
+      <slot name="footer" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  ComponentPublicInstance,
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  unref,
+  watch
+} from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { ContextMenuQuickAction } from '../ContextActions'
+import ResourceTile from './ResourceTile.vue'
+import ResourceGhostElement from './ResourceGhostElement.vue'
+import {
+  FolderViewModeConstants,
+  SortField,
+  useTileSize,
+  useResourcesStore,
+  useViewSizeMax,
+  useEmbedMode,
+  useSideBar,
+  FileActionOptions,
+  useResourceEtagChange,
+  useResourceViewHelpers
+} from '../../composables'
+import { SortDir } from '@opencloud-eu/design-system/helpers'
+import ResourceStatusIndicators from './ResourceStatusIndicators.vue'
+import { storeToRefs } from 'pinia'
+import { OcDrop } from '@opencloud-eu/design-system/components'
+
+const {
+  resources = [],
+  isSelectable = true,
+  space,
+  sortFields = [],
+  sortBy,
+  sortDir,
+  viewSize = FolderViewModeConstants.tilesSizeDefault,
+  dragDrop = false,
+  lazy = true,
+  areResourcesClickable = true,
+  arePathsDisplayed = false,
+  term = ''
+} = defineProps<{
+  resources?: Resource[]
+  isSelectable?: boolean
+  space?: SpaceResource
+  sortFields?: SortField[]
+  sortBy?: string
+  sortDir?: SortDir
+  viewSize?: number
+  dragDrop?: boolean
+  lazy?: boolean
+  areResourcesClickable?: boolean
+  arePathsDisplayed?: boolean
+  /**
+   * The filter term whose occurrences get highlighted in the resource names.
+   */
+  term?: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'fileClick', options: FileActionOptions): void
+  (e: 'fileDropped', id: string): void
+  (e: 'sort', value: { sortBy: string; sortDir: SortDir }): void
+  (e: 'itemVisible', resource: Resource): void
+  (e: 'itemHidden', resource: Resource): void
+  (e: 'update:selectedIds', ids: string[]): void
+}>()
+
+defineSlots<{
+  image?: (props: { resource: Resource }) => unknown
+  actions?: (props: { resource: Resource }) => unknown
+  contextMenu?: (props: { resource: Resource }) => unknown
+  indicators?: (props: { resource: Resource }) => unknown
+  footer?: () => unknown
+  additionalResourceContent?: (props: { resource: Resource }) => unknown
+}>()
+
+const { $gettext } = useGettext()
+
+// load the preview of a changed resource again
+useResourceEtagChange(
+  () => resources,
+  (resource) => emit('itemVisible', resource)
+)
+const resourcesStore = useResourcesStore()
+const { areFileExtensionsShown } = storeToRefs(resourcesStore)
+const { isLocationPicker, isFilePicker } = useEmbedMode()
+const viewSizeMax = useViewSizeMax()
+const viewSizeCurrent = computed(() => {
+  return Math.min(unref(viewSizeMax), viewSize)
+})
+const sidebarStore = useSideBar()
+const { isSideBarOpen } = storeToRefs(sidebarStore)
+const {
+  disabledResources,
+  fileContainerClicked,
+  fileNameClicked,
+  fileCheckboxClicked,
+  isResourceDisabled,
+  isResourceInDeleteQueue,
+  isResourceClickable,
+  isResourceCut,
+  dragItem,
+  dragSelection,
+  dragStart,
+  fileDropped,
+  setDropStyling,
+  shouldShowContextDrop,
+  showContextMenuOnRightClick,
+  showContextMenuOnBtnClick,
+  selectAllCheckboxLabel,
+  getResourceCheckboxLabel,
+  toggleSelectionAll,
+  areAllResourcesSelected
+} = useResourceViewHelpers({
+  space: computed(() => space),
+  resources: computed(() => resources),
+  emit
+})
+
+const contextMenuDrops = ref<Record<string, ComponentPublicInstance<typeof OcDrop>>>({})
+
+// clicks on the zone around the checkbox must not follow the tile link. The input's own
+// click stays untouched, otherwise the browser reverts its checked state afterwards
+function selectionZoneClicked(resource: Resource, event: MouseEvent | KeyboardEvent) {
+  if (!(event.target instanceof HTMLInputElement)) {
+    event.preventDefault()
+  }
+  fileCheckboxClicked({ resource, event })
+}
+
+// Disable lazy loading during E2E tests to avoid having to scroll in tests
+const areTilesLazy = (window as any).__E2E__ === true ? false : lazy
+
+const currentSortField = computed(() => {
+  return sortFields.find((o) => o.name === sortBy && o.sortDir === sortDir) || sortFields[0]
+})
+const selectSorting = (field: SortField) => {
+  emit('sort', { sortBy: field.name, sortDir: unref(field.sortDir) })
+}
+
+const resourceIconSize = computed(() => {
+  const sizeMap: Record<number, string> = {
+    1: 'size-12',
+    2: 'size-12',
+    3: 'size-22',
+    4: 'size-22',
+    5: 'size-42',
+    6: 'size-42'
+  }
+  const size = unref(viewSizeCurrent)
+  return sizeMap[size] ?? 'size-22'
+})
+
+const viewWidth = ref(0)
+const updateViewWidth = () => {
+  const element = document.getElementById('tiles-view')
+  const style = getComputedStyle(element)
+  const paddingLeft = parseInt(style.getPropertyValue('padding-left'), 10) | 0
+  const paddingRight = parseInt(style.getPropertyValue('padding-right'), 10) | 0
+  viewWidth.value = element.clientWidth - paddingLeft - paddingRight
+}
+const gapSizePixels = computed(() => {
+  return parseFloat(getComputedStyle(document.documentElement).fontSize)
+})
+const { calculateTileSizePixels, setRenderedTileSize } = useTileSize()
+const maxTilesAll = computed<number[]>(() => {
+  const viewSizes = [...Array(FolderViewModeConstants.tilesSizeMax).keys()].map((i) => i + 1)
+  return [
+    ...new Set<number>(
+      viewSizes.map((viewSize) => {
+        const pixels = calculateTileSizePixels(viewSize)
+        // at least one tile per row, even if the view is narrower than half a tile
+        return pixels
+          ? Math.max(1, Math.round(unref(viewWidth) / (pixels + unref(gapSizePixels))))
+          : 0
+      })
+    )
+  ]
+})
+const maxTilesCurrent = computed(() => {
+  const maxTiles = unref(maxTilesAll)
+  return maxTiles.length < unref(viewSizeCurrent)
+    ? maxTiles[maxTiles.length - 1]
+    : maxTiles[unref(viewSizeCurrent) - 1]
+})
+const ghostTilesCount = computed(() => {
+  const remainder = unref(maxTilesCurrent) ? resources.length % unref(maxTilesCurrent) : 0
+  if (!remainder) {
+    return 0
+  }
+  return unref(maxTilesCurrent) - remainder
+})
+
+const tileSizePixels = computed(() => {
+  return unref(viewWidth) / unref(maxTilesCurrent) - unref(gapSizePixels)
+})
+
+watch(
+  tileSizePixels,
+  (px: number | undefined) => {
+    if (px > 0 && Number.isFinite(px)) {
+      setRenderedTileSize(px)
+      document.documentElement.style.setProperty(`--oc-size-tiles-actual`, `${px}px`)
+    }
+  },
+  { immediate: true }
+)
+watch(maxTilesAll, (all) => {
+  viewSizeMax.value = Math.max(all.length, 1)
+})
+watch(isSideBarOpen, () => {
+  updateViewWidth()
+})
+
+onMounted(() => {
+  window.addEventListener('resize', updateViewWidth)
+  updateViewWidth()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateViewWidth)
+})
+</script>
+<style scoped>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .oc-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(var(--oc-size-tiles-actual), 1fr));
+  }
+}
+</style>

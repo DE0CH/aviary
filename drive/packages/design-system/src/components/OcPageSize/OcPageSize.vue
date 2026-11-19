@@ -1,0 +1,63 @@
+<template>
+  <div class="oc-page-size flex items-center gap-1">
+    <label
+      class="oc-page-size-label"
+      :for="selectId"
+      data-testid="oc-page-size-label"
+      :aria-hidden="true"
+      v-text="label"
+    />
+    <oc-select
+      :input-id="selectId"
+      class="oc-page-size-select min-w-25 [&_.vs\_\_dropdown-menu]:!min-w-25"
+      data-testid="oc-page-size-select"
+      :model-value="selected"
+      :label="label"
+      :label-hidden="true"
+      :options="options"
+      :clearable="false"
+      :searchable="false"
+      :position-fixed="true"
+      @update:model-value="emitChange"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { PageSizeOption, uniqueId } from '../../helpers'
+import OcSelect from '../OcSelect/OcSelect.vue'
+
+export interface Props {
+  /**
+   * @docs The label of the select.
+   */
+  label: string
+  /**
+   * @docs The available options of the select.
+   */
+  options: unknown[]
+  /**
+   * @docs The selected value.
+   */
+  selected: string | number
+  /**
+   * @docs The element ID of the select.
+   */
+  selectId?: string
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the value of the select has changed.
+   */
+  (event: 'change', value: PageSizeOption): void
+}
+
+const { label, options, selected, selectId = uniqueId('oc-page-size-') } = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+
+const emitChange = (value: PageSizeOption) => {
+  emit('change', value)
+}
+</script>

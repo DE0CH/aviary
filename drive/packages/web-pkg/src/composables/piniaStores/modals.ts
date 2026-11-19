@@ -1,0 +1,119 @@
+import { ContextualHelperData } from '@opencloud-eu/design-system/helpers'
+import { defineStore } from 'pinia'
+import { v4 as uuidV4 } from 'uuid'
+import { Component, ComponentPublicInstance, computed, ref, unref } from 'vue'
+
+export type CustomModalComponent = Component<{ modal: Modal } & Record<string, any>>
+
+export type CustomModalComponentEmits = {
+  confirm?: () => Promise<void>
+  cancel?: () => void
+  'update:confirmDisabled': (value: boolean) => void
+} & Record<string, any>
+
+export type CustomModalComponentInstance = ComponentPublicInstance<
+  { modal: Modal } & unknown,
+  { onConfirm?: () => Promise<unknown>; onCancel?: () => unknown },
+  any,
+  any,
+  any,
+  CustomModalComponentEmits
+>
+
+/**
+ * Where a custom component teleports its footer buttons, so they render in the
+ * modal's own actions row instead of scrolling away with the body.
+ */
+export const modalActionsTarget = (modal: Modal) => `oc-modal-actions-${modal.id}`
+
+export type Modal = {
+  id: string
+  elementId?: string
+  elementClass?: string
+  title: string
+  message?: string
+  confirmDisabled?: boolean
+  isLoading?: boolean
+  confirmText?: string
+  hideActions?: boolean
+  hideConfirmButton?: boolean
+  hideCancelButton?: boolean
+  /** show a "Cancel" button next to the confirm button, for confirmations of destructive actions */
+  showCancelAction?: boolean
+  hasInput?: boolean
+  inputValue?: string
+  inputType?: 'text' | 'number' | 'email' | 'password' | 'date'
+  inputSelectionRange?: [number, number]
+  inputLabel?: string
+  inputError?: string
+  inputDescription?: string
+  inputRequiredMark?: boolean
+  focusTrapInitial?: string | false
+  contextualHelperLabel?: string
+  contextualHelperData?: ContextualHelperData
+  customComponent?: CustomModalComponent
+  customComponentAttrs?: () => Record<string, unknown>
+  onCancel?: () => void
+  onConfirm?: (value: any) => void | Promise<void>
+  onInput?: (value: string, setError: (error: string) => void) => void
+}
+
+export const useModals = defineStore('modals', () => {
+  const modals = ref<Modal[]>([])
+  const activeModal = computed(() => unref(modals).at(-1))
+
+  const getModal = (id: Modal['id']) => {
+    return unref(modals).find((modal) => modal.id === id)
+  }
+
+  const dispatchModal = (data: Omit<Modal, 'id'>) => {
+    const modal = { ...data, id: uuidV4() as string }
+    modals.value.push(modal)
+    return modal
+  }
+
+  const updateModal = <T extends Modal, K extends keyof Modal>(
+    id: T['id'],
+    key: K,
+    value: T[K]
+  ) => {
+    const modal = getModal(id)
+    if (!modal) {
+      // the modal has been removed in the meantime, e.g. because it got cancelled
+      // while an async handler was still in flight
+      return
+    }
+    modal[key] = value
+  }
+
+  const removeModal = (id: Modal['id']) => {
+    modals.value = unref(modals).filter((modal) => modal.id !== id)
+  }
+
+  const removeAllModals = () => {
+    modals.value = []
+  }
+
+  const setModalActive = (id: Modal['id']) => {
+    const foundIdx = unref(modals).findIndex((modal) => modal.id === id)
+    if (foundIdx < 0) {
+      return
+    }
+
+    const modal = getModal(id)
+    unref(modals).splice(foundIdx, 1)
+    modals.value.push(modal)
+  }
+
+  return {
+    modals,
+    activeModal,
+    dispatchModal,
+    updateModal,
+    removeModal,
+    removeAllModals,
+    setModalActive
+  }
+})
+
+export type ModalStore = ReturnType<typeof useModals>

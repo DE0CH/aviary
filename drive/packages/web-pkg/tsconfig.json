@@ -1,0 +1,14 @@
+{
+  "extends": "@opencloud-eu/tsconfig",
+
+  // necessary for building web-pkg standalone, otherwise we get errors with inferred types
+  "compilerOptions": {
+    "paths": {
+      "@vue/shared": ["./node_modules/@vue/shared/"],
+      "vue/jsx-runtime": ["./node_modules/vue/jsx-runtime"]
+    }
+  },
+
+  // include component types of the design-system
+  "include": ["../design-system/types.d.ts", "./web.declarations.d.ts", "./**/*"]
+}

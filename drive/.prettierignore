@@ -1,0 +1,14 @@
+dev/docker/opencloud/csp.yaml
+dev/docker/stalwart/idmldap.json
+packages/design-system/src/styles/
+packages/web-client/src/graph/generated/
+tests/woodpecker/csp.yaml
+pnpm-lock.yaml
+.github/settings.yml
+.features-gen
+
+**/translations.json
+/CHANGELOG.md
+
+# markdown round trip fixtures, formatting is part of the test
+packages/web-pkg/tests/unit/editor/strategies/fixtures/

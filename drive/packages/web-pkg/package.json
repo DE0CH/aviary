@@ -1,0 +1,123 @@
+{
+  "name": "@opencloud-eu/web-pkg",
+  "version": "8.2.2",
+  "description": "OpenCloud web pkg",
+  "license": "AGPL-3.0",
+  "main": "src/index.ts",
+  "types": "types.d.ts",
+  "private": false,
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "type": "module",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/web-pkg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencloud-eu/web",
+    "directory": "packages/web-pkg"
+  },
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "linkDirectory": false,
+    "exports": {
+      ".": {
+        "default": "./dist/web-pkg.js",
+        "types": "./dist/src/index.d.ts"
+      },
+      "./editor": {
+        "default": "./dist/web-pkg/editor.js",
+        "types": "./dist/src/editor/index.d.ts"
+      }
+    }
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    },
+    "./editor": {
+      "import": "./src/editor/index.ts"
+    },
+    "./l10n": {
+      "import": "./l10n/translations.json"
+    }
+  },
+  "scripts": {
+    "vite": "vite",
+    "check:types": "vue-tsc --declaration --noEmit --project tsconfig.build.json",
+    "build": "vite build && vue-tsc --project tsconfig.build.json"
+  },
+  "dependencies": {
+    "@casl/ability": "^7.0.0",
+    "@casl/vue": "^3.0.0",
+    "@hocuspocus/provider": "^4.0.0",
+    "@microsoft/fetch-event-source": "^2.0.1",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:^",
+    "@tiptap/core": "catalog:tiptap",
+    "@tiptap/extension-bubble-menu": "catalog:tiptap",
+    "@tiptap/extension-code": "catalog:tiptap",
+    "@tiptap/extension-code-block-lowlight": "catalog:tiptap",
+    "@tiptap/extension-collaboration": "catalog:tiptap",
+    "@tiptap/extension-document": "catalog:tiptap",
+    "@tiptap/extension-drag-handle": "catalog:tiptap",
+    "@tiptap/extension-drag-handle-vue-3": "catalog:tiptap",
+    "@tiptap/extension-file-handler": "catalog:tiptap",
+    "@tiptap/extension-find-and-replace": "catalog:tiptap",
+    "@tiptap/extension-image": "catalog:tiptap",
+    "@tiptap/extension-link": "catalog:tiptap",
+    "@tiptap/extension-list": "catalog:tiptap",
+    "@tiptap/extension-node-range": "catalog:tiptap",
+    "@tiptap/extension-paragraph": "catalog:tiptap",
+    "@tiptap/extension-placeholder": "catalog:tiptap",
+    "@tiptap/extension-subscript": "catalog:tiptap",
+    "@tiptap/extension-superscript": "catalog:tiptap",
+    "@tiptap/extension-table": "catalog:tiptap",
+    "@tiptap/extension-table-of-contents": "catalog:tiptap",
+    "@tiptap/extension-task-item": "catalog:tiptap",
+    "@tiptap/extension-task-list": "catalog:tiptap",
+    "@tiptap/extension-text-align": "catalog:tiptap",
+    "@tiptap/extension-text-style": "catalog:tiptap",
+    "@tiptap/markdown": "catalog:tiptap",
+    "@tiptap/pm": "catalog:tiptap",
+    "@tiptap/starter-kit": "catalog:tiptap",
+    "@tiptap/suggestion": "catalog:tiptap",
+    "@tiptap/vue-3": "catalog:tiptap",
+    "@tiptap/y-tiptap": "catalog:tiptap",
+    "@uppy/core": "^6.0.0",
+    "@uppy/tus": "^6.0.0",
+    "@uppy/utils": "^7.2.0",
+    "@uppy/xhr-upload": "^6.0.0",
+    "@vue/shared": "^3.5.31",
+    "@vueuse/core": "^15.0.0",
+    "axios": "^1.13.6",
+    "cropperjs": "^2.0.0",
+    "deepmerge": "^4.3.1",
+    "dompurify": "^3.3.3",
+    "filesize": "^11.0.14",
+    "fuse.js": "^7.1.0",
+    "highlight.js": "^11.12.0",
+    "lodash-es": "^4.17.23",
+    "lowlight": "^3.3.0",
+    "luxon": "^3.7.2",
+    "marked": "catalog:tiptap",
+    "oidc-client-ts": "^3.5.0",
+    "p-queue": "^9.1.0",
+    "password-sheriff": "^2.0.0",
+    "pinia": "^4.0.0",
+    "qs": "^6.15.0",
+    "uuid": "^14.0.0",
+    "vue-concurrency": "^5.0.3",
+    "vue-inline-svg": "^5.0.0",
+    "vue-router": "^5.0.4",
+    "vue3-gettext": "4.0.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@opencloud-eu/web-test-helpers": "workspace:^",
+    "@types/lodash-es": "4.17.12",
+    "@types/node": "^25.5.0",
+    "vite-plugin-node-polyfills": "0.28.0"
+  }
+}

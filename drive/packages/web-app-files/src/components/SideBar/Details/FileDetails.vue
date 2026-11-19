@@ -1,0 +1,387 @@
+<template>
+  <div id="oc-file-details-sidebar" class="p-2">
+    <div v-if="resource && hasContent">
+      <div
+        class="relative flex items-center justify-center bg-role-surface-container rounded-xl p-4 mb-4"
+      >
+        <div v-if="preview" data-testid="preview">
+          <motion-photo-overlay
+            :resource="resource"
+            :space="space"
+            badge-size-class="size-5"
+            badge-class="top-1 right-1"
+          >
+            <img
+              key="file-thumbnail"
+              :src="preview"
+              class="details-preview h-[160px]"
+              alt=""
+              decoding="async"
+            />
+          </motion-photo-overlay>
+        </div>
+        <resource-icon
+          v-else
+          class="details-icon h-[160px]"
+          :resource="resource"
+          size-class="size-22"
+        />
+        <div
+          v-if="isPreviewLoading"
+          data-testid="preview-loading"
+          class="absolute inset-0 z-10 flex items-center justify-center bg-role-surface/70"
+        >
+          <oc-spinner :aria-label="$gettext('Loading preview')" />
+        </div>
+      </div>
+      <div
+        v-if="!publicLinkContextReady && shareIndicators.length"
+        key="file-shares"
+        data-testid="sharingInfo"
+        class="flex items-center my-4"
+      >
+        <oc-status-indicators :resource="resource" :indicators="shareIndicators" />
+        <p class="my-0 mx-2" v-text="detailSharingInformation" />
+      </div>
+      <div class="relative">
+        <div
+          v-if="versionsLoading || versionsError"
+          class="absolute top-0 right-0 z-20 flex items-center"
+        >
+          <oc-spinner
+            v-if="versionsLoading"
+            v-oc-tooltip="$gettext('Loading version information')"
+            size="small"
+            :aria-label="$gettext('Loading version information')"
+          />
+          <oc-icon
+            v-else
+            v-oc-tooltip="$gettext('Version information could not be loaded')"
+            name="error-warning"
+            fill-type="line"
+            size="small"
+            class="text-role-error"
+          />
+        </div>
+        <dl
+          class="details-list"
+          :aria-label="$gettext('Overview of the information about the selected file')"
+        >
+          <template v-if="hasDeletionDate">
+            <dt>{{ $gettext('Deleted at') }}</dt>
+            <dd data-testid="delete-timestamp">{{ capitalizedTimestamp }}</dd>
+          </template>
+          <template v-if="hasTimestamp">
+            <dt>{{ $gettext('Last modified') }}</dt>
+            <dd data-testid="timestamp">
+              <oc-button
+                v-if="showVersions"
+                v-oc-tooltip="seeVersionsLabel"
+                appearance="raw"
+                :aria-describedby="seeVersionsHintId"
+                no-hover
+                @click="openSideBarPanel('versions')"
+              >
+                {{ capitalizedTimestamp }}
+              </oc-button>
+              <span v-else v-text="capitalizedTimestamp" />
+            </dd>
+          </template>
+          <template v-if="resource.locked">
+            <dt>{{ $gettext('Locked via') }}</dt>
+            <dd data-testid="locked-by">
+              <span>{{ resource.lockOwner }}</span>
+              <span v-if="resource.lockTime">({{ formatDateRelative(resource.lockTime) }})</span>
+            </dd>
+          </template>
+          <template v-if="showSharedVia">
+            <dt>{{ $gettext('Shared via') }}</dt>
+            <dd data-testid="shared-via">
+              <router-link :to="sharedAncestorRoute">
+                <span v-oc-tooltip="sharedViaTooltip" v-text="sharedAncestor.path" />
+              </router-link>
+            </dd>
+          </template>
+          <template v-if="showSharedBy">
+            <dt>{{ $gettext('Shared by') }}</dt>
+            <dd data-testid="shared-by">{{ sharedByDisplayNames }}</dd>
+          </template>
+          <template v-if="ownerDisplayName && ownerDisplayName !== sharedByDisplayNames">
+            <dt>{{ $gettext('Owner') }}</dt>
+            <dd data-testid="ownerDisplayName">
+              <p class="m-0">
+                {{ ownerDisplayName }}
+                <span v-if="ownedByCurrentUser" v-text="$gettext('(me)')" />
+              </p>
+            </dd>
+          </template>
+          <template v-if="showSize">
+            <dt>{{ $gettext('Size') }}</dt>
+            <dd data-testid="sizeInfo">{{ resourceSize }}</dd>
+          </template>
+          <web-dav-details v-if="showWebDavDetails" :space="space" />
+          <template v-if="versionsRowVisible">
+            <dt>{{ $gettext('Version') }}</dt>
+            <dd data-testid="versionsInfo">
+              <span v-if="versionsPlaceholder" aria-hidden="true">&nbsp;</span>
+              <oc-button
+                v-else
+                v-oc-tooltip="seeVersionsLabel"
+                appearance="raw"
+                :aria-describedby="seeVersionsHintId"
+                no-hover
+                @click="openSideBarPanel('versions')"
+              >
+                {{ versions.length }}
+              </oc-button>
+            </dd>
+          </template>
+          <custom-component-target :extension-point="fileSideBarFileDetailsTableExtensionPoint" />
+        </dl>
+        <span :id="seeVersionsHintId" hidden v-text="seeVersionsLabel" />
+      </div>
+      <div v-if="hasTags" class="mt-2">
+        <div class="inline-flex items-center text-sm mb-0.5">
+          {{ $gettext('Tags') }}
+          <oc-contextual-helper
+            v-if="contextualHelper?.isEnabled"
+            v-bind="contextualHelper?.data"
+            class="pl-1"
+          />
+        </div>
+        <div data-testid="tags">
+          <tags-select data-testid="tags" :resource="resource" class="w-full" />
+        </div>
+      </div>
+    </div>
+    <p v-else data-testid="noContentText" v-text="$gettext('No information to display')" />
+  </div>
+</template>
+<script setup lang="ts">
+import { storeToRefs } from 'pinia'
+import { computed, inject, Ref, ref, unref, useId, watch } from 'vue'
+import {
+  ImageDimension,
+  ProcessorType,
+  useAuthStore,
+  useUserStore,
+  useCapabilityStore,
+  useConfigStore,
+  useResourcesStore,
+  formatDateFromJSDate,
+  useResourceContents,
+  useLoadPreview,
+  useSideBar,
+  useResourceIndicators
+} from '@opencloud-eu/web-pkg'
+import upperFirst from 'lodash-es/upperFirst'
+import {
+  isShareResource,
+  isShareSpaceResource,
+  isTrashResource,
+  ShareTypes
+} from '@opencloud-eu/web-client'
+import { MotionPhotoOverlay, useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { formatFileSize, formatRelativeDateFromJSDate } from '@opencloud-eu/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { useGettext } from 'vue3-gettext'
+import { getSharedAncestorRoute } from '@opencloud-eu/web-pkg'
+import { ResourceIcon } from '@opencloud-eu/web-pkg'
+import { useContextualHelpers } from '../../../composables/contextualHelpers'
+import { ContextualHelper } from '@opencloud-eu/design-system/helpers'
+import TagsSelect from './TagsSelect.vue'
+import { WebDavDetails, CustomComponentTarget } from '@opencloud-eu/web-pkg'
+import { fileSideBarFileDetailsTableExtensionPoint } from '../../../extensionPoints'
+
+const { previewEnabled = true, tagsEnabled = true } = defineProps<{
+  previewEnabled?: boolean
+  tagsEnabled?: boolean
+}>()
+
+const configStore = useConfigStore()
+const userStore = useUserStore()
+const capabilityStore = useCapabilityStore()
+const { getMatchingSpace } = useGetMatchingSpace()
+const { resourceContentsText } = useResourceContents({ showSizeInformation: false })
+const { loadPreview, previewsLoading } = useLoadPreview()
+const { openSideBarPanel } = useSideBar()
+const { getIndicators } = useResourceIndicators()
+const { tagsHelper } = useContextualHelpers()
+
+const language = useGettext()
+const { $gettext, current: currentLanguage } = language
+
+const resourcesStore = useResourcesStore()
+const { ancestorMetaData, currentFolder } = storeToRefs(resourcesStore)
+const { user } = storeToRefs(userStore)
+
+const resource = inject<Ref<Resource>>('resource')
+const versions = inject<Ref<Resource[]>>('versions')
+const versionsLoading = inject<Ref<boolean>>('versionsLoading', ref(false))
+const versionsError = inject<Ref<boolean>>('versionsError', ref(false))
+const space = inject<Ref<SpaceResource>>('space')
+
+const preview = ref<string>(undefined)
+
+const authStore = useAuthStore()
+const { publicLinkContextReady } = storeToRefs(authStore)
+
+const isPreviewLoading = computed(() => previewEnabled && unref(previewsLoading))
+
+const sharedAncestor = computed(() => {
+  return Object.values(unref(ancestorMetaData)).find(
+    (a) =>
+      a.path !== unref(resource).path &&
+      ShareTypes.containsAnyValue(ShareTypes.authenticated, a.shareTypes)
+  )
+})
+const sharedAncestorRoute = computed(() => {
+  return getSharedAncestorRoute({
+    sharedAncestor: unref(sharedAncestor),
+    matchingSpace: unref(space) || getMatchingSpace(unref(resource))
+  })
+})
+const showWebDavDetails = computed(() => {
+  /**
+   * webDavPath might not be set when user is navigating on public link,
+   * even if the user is authenticated and the file owner.
+   */
+  return resourcesStore.areWebDavDetailsShown && unref(resource).webDavPath
+})
+const formatDateRelative = (date: string) => {
+  return formatRelativeDateFromJSDate(new Date(date), language.current)
+}
+
+const contextualHelper = {
+  isEnabled: configStore.options.contextHelpers,
+  data: tagsHelper({ configStore })
+} as ContextualHelper
+
+const hasTags = computed(() => {
+  // the tags endpoints are not available to guests
+  return tagsEnabled && capabilityStore.filesTags && !authStore.isGuestContext
+})
+
+const hasDeletionDate = computed(() => {
+  return isTrashResource(unref(resource))
+})
+
+const shareIndicators = computed(() => {
+  return getIndicators({
+    space: unref(space),
+    resource: unref(resource)
+  }).filter(({ category }) => category === 'sharing')
+})
+
+const hasAnyShares = computed(() => {
+  return unref(resource).shareTypes?.length > 0 || unref(sharedAncestor)
+})
+const sharedViaTooltip = computed(() => {
+  return $gettext("Navigate to '%{folder}'", { folder: unref(sharedAncestor).path || '' })
+})
+const showSharedBy = computed(() => {
+  return unref(showShares) && !unref(ownedByCurrentUser) && unref(sharedByDisplayNames)
+})
+const showSharedVia = computed(() => {
+  return unref(showShares) && unref(sharedAncestor) && !isShareSpaceResource(unref(space))
+})
+const showShares = computed(() => {
+  if (unref(publicLinkContextReady)) {
+    return false
+  }
+  return unref(hasAnyShares)
+})
+const ownedByCurrentUser = computed(() => {
+  return unref(resource).owner?.id === unref(user)?.id
+})
+const sharedByDisplayNames = computed(() => {
+  const res = unref(resource)
+  if (!isShareResource(res)) {
+    return ''
+  }
+  return res.sharedBy?.map(({ displayName }) => displayName).join(', ')
+})
+const hasContent = computed(() => {
+  return (
+    unref(hasTimestamp) ||
+    unref(ownerDisplayName) ||
+    unref(showSize) ||
+    unref(showShares) ||
+    unref(showVersions) ||
+    unref(hasDeletionDate)
+  )
+})
+const detailSharingInformation = computed(() => {
+  if (unref(resource).type === 'folder') {
+    return $gettext('This folder has been shared.')
+  }
+  return $gettext('This file has been shared.')
+})
+const hasTimestamp = computed(() => {
+  return unref(resource).mdate?.length > 0
+})
+const ownerDisplayName = computed(() => {
+  return unref(resource).owner?.displayName
+})
+const resourceSize = computed(() => {
+  if (unref(resource).id === unref(currentFolder)?.id) {
+    return `${formatFileSize(unref(resource).size, currentLanguage)}, ${unref(
+      resourceContentsText
+    )}`
+  }
+
+  return formatFileSize(unref(resource).size, currentLanguage)
+})
+const showSize = computed(() => {
+  return formatFileSize(unref(resource).size, currentLanguage) !== '?'
+})
+const showVersions = computed(() => {
+  if (unref(resource).type === 'folder' || unref(publicLinkContextReady) || !unref(versions)) {
+    return
+  }
+  return unref(versions).length > 0
+})
+// Reserve the version row as an empty placeholder during load only if the
+// previous resource had one, so the layout does not shift.
+const stickyShowVersions = ref(false)
+watch(
+  versionsLoading,
+  (loading) => {
+    if (unref(resource) && !loading) {
+      stickyShowVersions.value = !!unref(showVersions)
+    }
+  },
+  { immediate: true }
+)
+const versionsPlaceholder = computed(() => unref(versionsLoading) && unref(stickyShowVersions))
+const versionsRowVisible = computed(() =>
+  unref(versionsLoading) ? unref(stickyShowVersions) : !!unref(showVersions)
+)
+const seeVersionsHintId = useId()
+const seeVersionsLabel = computed(() => {
+  return $gettext('See all versions')
+})
+const capitalizedTimestamp = computed(() => {
+  const item = unref(resource)
+  const date = isTrashResource(item) ? item.ddate : item.mdate
+  const displayDate = formatDateFromJSDate(new Date(date), currentLanguage)
+  return upperFirst(displayDate)
+})
+
+watch(
+  () => unref(resource)?.etag,
+  async () => {
+    if (unref(resource)) {
+      preview.value = await loadPreview({
+        space: unref(space),
+        resource: unref(resource),
+        dimensions: ImageDimension.Medium,
+        processor: ProcessorType.enum.fit,
+        cancelRunning: true,
+        updateStore: false
+      })
+    }
+  },
+  { immediate: true }
+)
+</script>

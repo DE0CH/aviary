@@ -1,0 +1,86 @@
+import { useGettext } from 'vue3-gettext'
+import {
+  getVaultClaim,
+  ResourceIndicator,
+  ResourceIndicatorExtension,
+  useExtensionRegistry,
+  useVaultStore,
+  useGetMatchingSpace
+} from '@opencloud-eu/web-pkg'
+import { isSpaceResource, Resource } from '@opencloud-eu/web-client'
+
+// Scheme-agnostic vault status indicator: the padlock and its locked/unlocked
+// state come entirely from the vault store + the claim a vault extension
+// reports, so this works for any scheme, not just rclone-crypt.
+export const useVaultIndicator = (): ResourceIndicatorExtension => {
+  const { $gettext } = useGettext()
+  const vaultStore = useVaultStore()
+  const extensionRegistry = useExtensionRegistry()
+  const { getMatchingSpace } = useGetMatchingSpace()
+
+  return {
+    id: 'com.github.opencloud-eu.web.files.vault-indicator',
+    type: 'resourceIndicator',
+    extensionPointIds: ['global.files.resource-indicator'],
+    getResourceIndicators(resource: Resource): ResourceIndicator[] | void {
+      // Cheap early-out on the hot path: markVaultStatus flags every vault
+      // resource, so non-vault resources skip the claim/space lookup entirely.
+      if (!resource.isInVault || !resource.storageId) {
+        return
+      }
+      const space = isSpaceResource(resource) ? resource : getMatchingSpace(resource)
+      if (!space) {
+        return
+      }
+      const claim = getVaultClaim(extensionRegistry, space, resource.path)
+      if (!claim) {
+        return
+      }
+
+      const vaultRoot = claim.vaultRoot
+      // share spaces have a space id that differs from the resource's storageId
+      const unlocked = vaultStore.isUnlocked(space.id, vaultRoot)
+
+      // The vault-root resource itself is what users see when browsing the
+      // parent folder - show open vs. closed lock so the unlock state is
+      // obvious without entering the vault first.
+      const isVaultRoot = resource.path === vaultRoot
+
+      if (isVaultRoot) {
+        return [
+          {
+            id: `vault-state-${resource.getDomSelector?.() ?? resource.id}`,
+            kind: 'icon',
+            accessibleDescription: unlocked
+              ? $gettext('This vault is unlocked in your session')
+              : $gettext('This vault is locked'),
+            label: unlocked ? $gettext('Vault unlocked') : $gettext('Vault locked'),
+            icon: unlocked ? 'lock-unlock' : 'lock-2',
+            fillType: 'line',
+            category: 'system',
+            type: unlocked ? 'vault-unlocked' : 'vault-locked'
+          }
+        ]
+      }
+
+      // Resources inside a vault: only annotate when the vault is actually
+      // unlocked (otherwise the user wouldn't be here in the first place - the
+      // unlock guard intercepts before any listing renders).
+      if (!unlocked) {
+        return
+      }
+      return [
+        {
+          id: `vault-unlocked-${resource.getDomSelector?.() ?? resource.id}`,
+          kind: 'icon',
+          accessibleDescription: $gettext('This item is inside an unlocked vault'),
+          label: $gettext('Vault unlocked'),
+          icon: 'lock-unlock',
+          fillType: 'line',
+          category: 'system',
+          type: 'vault-unlocked'
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,132 @@
+import type { ShallowRef, Ref, MaybeRefOrGetter } from 'vue'
+import type { Range } from '@tiptap/core'
+import type { Resource } from '@opencloud-eu/web-client'
+import type { Editor } from '@tiptap/vue-3'
+import type * as Y from 'yjs'
+import type { Awareness } from 'y-protocols/awareness'
+import type { TableOfContentData } from '@tiptap/extension-table-of-contents'
+import type { YjsCollaborator, YjsStatus } from '../composables/yjs'
+import type { EditorActionGroup } from './composables'
+
+export type ContentType = 'plain-text' | 'markdown' | 'html' | 'tiptap-json'
+
+/**
+ * Default Y.XmlFragment field name. Shared by `useTextEditor` and the
+ * Yjs adapter, which must bind to the same field.
+ */
+export const DEFAULT_YDOC_FRAGMENT = 'default'
+
+export interface MentionItem {
+  id: string
+  label: string
+}
+
+export interface TextEditorMentionsOptions {
+  getItems: (query: string) => MentionItem[] | Promise<MentionItem[]>
+  onSelect: (item: MentionItem) => void
+  highlightLabels?: string[]
+}
+
+export interface TextEditorOptions {
+  contentType: ContentType
+  modelValue?: Ref<string>
+  currentResource?: Ref<Resource>
+  /**
+   * Accepts a ref or getter, not just a snapshot: a Yjs session can
+   * flip the editor read-only mid-edit, and the ProseMirror view has to
+   * follow.
+   */
+  readonly?: MaybeRefOrGetter<boolean>
+  /**
+   * Whether the editor takes focus once it is mounted. An editor that is one
+   * field among several shouldn't pull focus away from the rest of the form.
+   * @default true
+   */
+  autofocus?: boolean
+  slashCommands?: boolean
+  /**
+   * Render raw HTML in markdown through the editor schema instead of keeping its
+   * source. Only for viewers that never save: whatever the schema does not know
+   * is lost.
+   */
+  renderHtml?: boolean
+  placeholder?: string
+  /** Accessible name for the editor's role="textbox" element (aria-label). */
+  ariaLabel?: string
+  /**
+   * Action ids to exclude from the toolbar and slash commands (e.g. 'image-upload'),
+   * including nested dropdown children.
+   */
+  excludeActions?: string[]
+  mentions?: TextEditorMentionsOptions
+  tableOfContents?: boolean
+  onUpdate?: (content: string) => void
+  /**
+   * When set, the editor binds its ProseMirror state to this Y.Doc via the
+   * `@tiptap/extension-collaboration` extension. Initial content is taken
+   * from the Y.Doc state (populated by the host's hydration path) instead
+   * of from `modelValue`.
+   */
+  ydoc?: Y.Doc
+  /**
+   * Y.XmlFragment field name inside the Y.Doc. Must match the field the
+   * Yjs adapter binds to. Defaults to {@link DEFAULT_YDOC_FRAGMENT}.
+   */
+  ydocFragment?: string
+  /**
+   * Awareness instance from the same room as `ydoc`. When set, the editor
+   * renders remote peer cursors via `yCursorPlugin`. Ignored when `ydoc`
+   * is not also set.
+   */
+  awareness?: Awareness
+  /** Current transport status of the hosting Yjs session, if any. */
+  yjsStatus?: MaybeRefOrGetter<YjsStatus | null>
+}
+
+export interface TextEditorLinkPanelRequest {
+  range: Range
+  href: string
+  text: string
+}
+
+export interface TextEditorState {
+  sourceMode: Ref<boolean>
+  /**
+   * Whether the source view may only be read. True for a read-only editor and
+   * while a Yjs session is active: the source textarea replaces the
+   * ProseMirror view, so its edits would never reach the shared document.
+   * Absent means editable.
+   */
+  sourceModeReadonly?: Ref<boolean>
+  linkPanel: Ref<TextEditorLinkPanelRequest | null>
+  editorZoom: Ref<number>
+  currentResource?: Ref<Resource | null>
+  tableOfContents?: Ref<TableOfContentData>
+}
+
+export interface TextEditorInstance {
+  state: TextEditorState
+  editor: ShallowRef<Editor | null>
+  contentType: Ref<ContentType>
+  /** Derived from the caller's `readonly` option; follows it while mounted. */
+  readonly: Ref<boolean>
+  /**
+   * Whether a Yjs session backs this editor, i.e. it was handed a Y.Doc and a
+   * Yjs server is configured. The document can then change without local
+   * edits, so views that mirror it have to follow along.
+   */
+  yjsActive: Ref<boolean>
+  /** Current transport status of the hosting Yjs session, if any. */
+  yjsStatus: Ref<YjsStatus | null>
+  /** Users in the Yjs room, own user first. Empty without an awareness. */
+  collaborators: Ref<YjsCollaborator[]>
+  showTableOfContents: boolean
+  actionGroups(): EditorActionGroup[]
+  getContent(): string
+  setContent(value: string): void
+  isEmpty: Ref<boolean>
+  isFocused: Ref<boolean>
+  focus(): void
+  blur(): void
+  destroy(): void
+}

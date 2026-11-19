@@ -1,0 +1,24 @@
+{
+  "server": "https://host.docker.internal:9200",
+  "theme": "https://host.docker.internal:9200/themes/opencloud/theme.json",
+  "options": {
+    "contextHelpersReadMore": true
+  },
+  "apps": [
+    "files",
+    "text-editor",
+    "pdf-viewer",
+    "search",
+    "external",
+    "admin-settings",
+    "ocm",
+    "webfinger",
+    "epub-reader",
+    "app-store",
+    "preview",
+    "mail",
+    "contacts",
+    "rclone-crypt",
+    "office-settings"
+  ]
+}

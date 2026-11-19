@@ -1,0 +1,303 @@
+<template>
+  <div class="flex">
+    <files-view-wrapper>
+      <app-bar :view-modes="viewModes" :breadcrumbs="breadcrumbs" has-bulk-actions>
+        <template #navigation>
+          <SharesNavigation />
+        </template>
+        <template #actions>
+          <div
+            class="flex flex-wrap gap-2 w-full mt-2 mb-4 items-center"
+            :class="{
+              'justify-between': showShareTypeFilter,
+              'justify-end': !showShareTypeFilter
+            }"
+          >
+            <div v-if="showShareTypeFilter" class="flex">
+              <item-filter
+                :allow-multiple="true"
+                :filter-label="$gettext('Share Type')"
+                :filterable-attributes="['label']"
+                :items="shareTypes"
+                :loading="areResourcesLoading"
+                :option-filter-label="$gettext('Filter share types')"
+                :show-option-filter="true"
+                id-attribute="key"
+                class="share-type-filter"
+                display-name-attribute="label"
+                filter-name="shareType"
+              >
+                <template #item="{ item, term }">
+                  <span class="ml-2"><oc-filter-highlight :text="item.label" :term="term" /></span>
+                </template>
+              </item-filter>
+            </div>
+            <oc-search-bar
+              v-model="filterTerm"
+              is-filter
+              class="search-filter w-full sm:w-3xs"
+              :label="$gettext('Search')"
+              :placeholder="$gettext('Search for shares')"
+              button-hidden
+              :is-rounded="false"
+            />
+          </div>
+        </template>
+      </app-bar>
+      <app-loading-spinner v-if="areResourcesLoading" />
+      <template v-else>
+        <template v-if="isEmpty">
+          <no-content-message
+            v-if="!storeItems.length"
+            id="files-shared-with-others-empty"
+            img-src="images/illustrations/shared-with-others.svg"
+          >
+            <template #message>
+              <span v-text="$gettext('Nothing shared, yet')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('Anything you shared will show up here')" />
+            </template>
+          </no-content-message>
+          <no-content-message
+            v-else
+            id="files-shared-with-others-no-results"
+            img-src="images/illustrations/shared-with-others.svg"
+          >
+            <template #message>
+              <span v-text="$gettext('No shares found')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('Try refining the search term or filters to get results')" />
+            </template>
+          </no-content-message>
+        </template>
+        <component
+          :is="folderView.component"
+          v-else
+          :fields-displayed="['name', 'sharedWith', 'sdate']"
+          :are-paths-displayed="true"
+          :resources="paginatedResources"
+          :header-position="fileListHeaderY"
+          :sort-by="sortBy"
+          :sort-dir="sortDir"
+          :sort-fields="sortFields.filter((field) => field.name === 'name')"
+          :view-mode="viewMode"
+          :view-size="viewSize"
+          :term="filterTerm"
+          @file-click="triggerDefaultAction"
+          @item-visible="loadPreview({ space: getMatchingSpace($event), resource: $event })"
+          @item-hidden="dropPreview($event)"
+          @sort="handleSort"
+          @update:selected-ids="selectedResourcesIds = $event"
+        >
+          <template #contextMenu="{ resource }">
+            <context-actions
+              v-if="isResourceInSelection(resource)"
+              :action-options="{ space: getMatchingSpace(resource), resources: selectedResources }"
+            />
+          </template>
+          <template #footer>
+            <pagination :pages="paginationPages" :current-page="paginationPage" />
+            <list-info
+              v-if="paginatedResources.length > 0"
+              class="w-full my-2"
+              :matching-count="matchingCount"
+            />
+          </template>
+        </component>
+      </template>
+    </files-view-wrapper>
+    <file-side-bar :space="selectedResourceSpace" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  defaultFuseOptions,
+  escapeFuseQuery,
+  queryItemAsString,
+  useAppsStore,
+  useFileActions,
+  useLoadPreview,
+  useResourcesStore,
+  useRoute,
+  useRouteQuery,
+  useRouter,
+  FileSideBar,
+  AppLoadingSpinner,
+  NoContentMessage,
+  AppBar,
+  Pagination,
+  useGetMatchingSpace,
+  ContextActions,
+  ItemFilter,
+  useKeyboardActions,
+  eventBus
+} from '@opencloud-eu/web-pkg'
+import { uniq } from 'lodash-es'
+import ListInfo from '../../components/FilesList/ListInfo.vue'
+import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
+import { useResourcesViewDefaults } from '../../composables'
+import {
+  useKeyboardFileNavigation,
+  useKeyboardFileMouseActions
+} from '../../composables/keyboardActions'
+import { computed, unref, ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import SharesNavigation from '../../components/AppBar/SharesNavigation.vue'
+import { OutgoingShareResource, ShareTypes } from '@opencloud-eu/web-client'
+import { useGettext } from 'vue3-gettext'
+import { folderViewsSharedWithOthersExtensionPoint } from '../../extensionPoints'
+import { v4 as uuidV4 } from 'uuid'
+import Fuse from 'fuse.js'
+import { OcFilterHighlight } from '@opencloud-eu/design-system/components'
+
+const { getMatchingSpace } = useGetMatchingSpace()
+const appsStore = useAppsStore()
+const { $gettext } = useGettext()
+
+const resourcesStore = useResourcesStore()
+const router = useRouter()
+const route = useRoute()
+
+const selectedShareTypesQuery = useRouteQuery('q_shareType')
+const filterTerm = ref('')
+
+function filterShares(shares: OutgoingShareResource[]) {
+  let result = shares
+  if (unref(filterTerm)) {
+    const searchEngine = new Fuse(result, { ...defaultFuseOptions, keys: ['name'] })
+    result = searchEngine.search(escapeFuseQuery(unref(filterTerm))).map((r) => r.item)
+  }
+
+  const selectedShareTypes = queryItemAsString(unref(selectedShareTypesQuery))?.split('+')
+  if (!selectedShareTypes || selectedShareTypes.length === 0) {
+    return result
+  }
+  return result.filter((item) => {
+    return ShareTypes.getByKeys(selectedShareTypes)
+      .map(({ value }) => value)
+      .some((t) => item.shareTypes.includes(t))
+  })
+}
+
+const {
+  storeItems,
+  sortedResources,
+  paginatedResources,
+  selectedResources,
+  selectedResourcesIds,
+  viewMode,
+  viewModes,
+  areResourcesLoading,
+  sortBy,
+  sortDir,
+  sortFields,
+  viewSize,
+  folderView,
+  fileListHeaderY,
+  paginationPages,
+  paginationPage,
+  loadResourcesTask,
+  loadResources,
+  selectedResourceSpace,
+  handleSort,
+  isResourceInSelection,
+  scrollToResourceFromRoute
+} = useResourcesViewDefaults<OutgoingShareResource, any, any[]>({
+  folderViewExtensionPoint: folderViewsSharedWithOthersExtensionPoint,
+  filterResources: filterShares
+})
+
+const matchingCount = computed(() => {
+  const isFiltered = !!unref(filterTerm) || !!queryItemAsString(unref(selectedShareTypesQuery))
+  return isFiltered ? unref(sortedResources).length : undefined
+})
+
+const { triggerDefaultAction } = useFileActions()
+
+const { loadPreview, dropPreview } = useLoadPreview(viewMode)
+
+const breadcrumbs = computed(() => {
+  return [
+    {
+      id: uuidV4(),
+      text: $gettext('Shares'),
+      onClick: () => loadResources(),
+      isStaticNav: true
+    }
+  ]
+})
+
+const shareTypes = computed(() => {
+  const uniqueShareTypes = uniq(unref(storeItems).flatMap((i) => i.shareTypes))
+
+  const ocmAvailable = appsStore.appIds.includes('open-cloud-mesh')
+  if (ocmAvailable && !uniqueShareTypes.includes(ShareTypes.remote.value)) {
+    uniqueShareTypes.push(ShareTypes.remote.value)
+  }
+
+  return ShareTypes.getByValues(uniqueShareTypes).map((shareType) => {
+    return {
+      key: shareType.key,
+      value: shareType.value,
+      label: $gettext(shareType.label)
+    }
+  })
+})
+// a share type from the query that no longer exists in the list still needs to be removable
+const showShareTypeFilter = computed(
+  () => unref(shareTypes).length > 1 || !!unref(selectedShareTypesQuery)
+)
+
+watch(filterTerm, async () => {
+  await router.push({ ...unref(route), query: { ...unref(route).query, page: '1' } })
+})
+
+const keyActions = useKeyboardActions()
+useKeyboardFileNavigation(keyActions, paginatedResources, viewMode)
+useKeyboardFileMouseActions(keyActions, viewMode)
+
+resourcesStore.$onAction(async (action) => {
+  if (action.name !== 'updateResourceField') {
+    return
+  }
+
+  // only share type changes (e.g. adding or removing a link) affect this list. reacting to
+  // other fields like thumbnails, which get set after the reload, would cause a reload loop.
+  if (action.args[0]?.field !== 'shareTypes') return
+  if (loadResourcesTask.isRunning) return
+
+  if (unref(selectedResourcesIds).length !== 1) return
+  const id = unref(selectedResourcesIds)[0]
+
+  const match = unref(paginatedResources).find((r) => {
+    return r.id === id
+  })
+  if (!match) return
+
+  await loadResources()
+
+  const matchedNewResource = unref(paginatedResources).find((r) => r.fileId === match.fileId)
+  if (!matchedNewResource) return
+
+  selectedResourcesIds.value = [matchedNewResource.id]
+})
+
+const isEmpty = computed(() => {
+  return unref(paginatedResources).length < 1
+})
+
+let loadResourcesEventToken: string
+onMounted(async () => {
+  loadResourcesEventToken = eventBus.subscribe('app.files.list.load', () =>
+    loadResourcesTask.perform()
+  )
+  await loadResources()
+  scrollToResourceFromRoute(unref(sortedResources), 'files-app-bar')
+})
+
+onBeforeUnmount(() => {
+  eventBus.unsubscribe('app.files.list.load', loadResourcesEventToken)
+})
+</script>

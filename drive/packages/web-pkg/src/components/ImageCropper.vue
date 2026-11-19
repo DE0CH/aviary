@@ -1,0 +1,205 @@
+<template>
+  <div>
+    <cropper-canvas ref="cropperCanvasRef" background :style="{ height: height }" wheelable>
+      <cropper-image
+        ref="cropperImageRef"
+        :src="imageUrl"
+        :alt="$gettext('Selected image')"
+        rotatable
+        scalable
+        skewable
+        translatable
+        wheelable
+        @transform="onCropperImageTransform"
+      />
+      <cropper-shade hidden />
+      <cropper-handle action="select" plain />
+      <cropper-selection
+        id="image-cropper-selection"
+        ref="cropperSelectionRef"
+        tabindex="0"
+        role="group"
+        :aria-label="$gettext('Crop area')"
+        :aria-describedby="hintId"
+        data-custom-key-bindings-disabled="true"
+        initial-coverage="0.8"
+        :aspect-ratio="aspectRatio"
+        movable
+        resizable
+        outlined
+        :class="[
+          'focus:!ring-0 focus:!outline outline-role-outline focus:!outline-role-outline',
+          'focus-visible:!outline-2 focus-visible:!outline-role-on-secondary focus-visible:!ring-4 focus-visible:!ring-role-secondary',
+          { 'rounded-full': roundedSelection }
+        ]"
+        @change="onCropperSelectionChange"
+      >
+        <cropper-grid aria-hidden="true" bordered covered />
+        <cropper-crosshair centered />
+        <cropper-handle action="move" theme-color="rgba(255, 255, 255, 0.35)" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="n-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="e-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="s-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="w-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="ne-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="nw-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="se-resize" />
+        <cropper-handle theme-color="var(--color-role-outline)" action="sw-resize" />
+      </cropper-selection>
+    </cropper-canvas>
+    <div :id="hintId" class="text-sm text-role-on-surface-variant flex items-center mt-1">
+      <oc-icon class="mr-1" name="information" size-class="size-4" fill-type="line" />
+      <span v-if="isMobile" v-text="$gettext('Pinch to zoom, drag to move')" />
+      <span
+        v-else
+        v-text="
+          $gettext('Zoom via %{ zoomKeys }, pan via %{ panKeys }', {
+            zoomKeys: $gettext('+-'),
+            panKeys: $gettext('↑↓←→')
+          })
+        "
+      />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, unref, useId, watch } from 'vue'
+import { useCropperKeyboardActions } from '../composables'
+import 'cropperjs'
+import type {
+  CropperSelection,
+  CropperImage as CropperImageType,
+  CropperCanvas as CropperCanvasType
+} from 'cropperjs'
+import { useGettext } from 'vue3-gettext'
+import { useIsMobile } from '@opencloud-eu/design-system/composables'
+
+interface Selection {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const {
+  imageUrl,
+  aspectRatio = 16 / 9,
+  height = '400px',
+  roundedSelection = false
+} = defineProps<{
+  imageUrl: string
+  aspectRatio?: number
+  height?: string
+  roundedSelection?: boolean
+}>()
+
+const { $gettext } = useGettext()
+const { isMobile } = useIsMobile()
+const hintId = useId()
+const { setCropperInstance } = useCropperKeyboardActions()
+
+const cropperCanvasRef = ref<CropperCanvasType | null>(null)
+const cropperImageRef = ref<CropperImageType | null>(null)
+const cropperSelectionRef = ref<CropperSelection | null>(null)
+
+const inSelection = (selection: Selection, maxSelection: Selection) => {
+  return (
+    selection.x >= maxSelection.x &&
+    selection.y >= maxSelection.y &&
+    selection.x + selection.width <= maxSelection.x + maxSelection.width &&
+    selection.y + selection.height <= maxSelection.y + maxSelection.height
+  )
+}
+
+const onCropperImageTransform = (event: CustomEvent) => {
+  const cropperCanvas = unref(cropperCanvasRef)
+  if (!cropperCanvas) {
+    return
+  }
+
+  const cropperSelection = unref(cropperSelectionRef)
+  if (!cropperSelection) {
+    return
+  }
+
+  const cropperCanvasRect = cropperCanvas.getBoundingClientRect()
+  const selection = cropperSelection as Selection
+  const maxSelection: Selection = {
+    x: 0,
+    y: 0,
+    width: cropperCanvasRect.width,
+    height: cropperCanvasRect.height
+  }
+
+  if (!inSelection(selection, maxSelection)) {
+    event.preventDefault()
+  }
+}
+
+const onCropperSelectionChange = (event: CustomEvent) => {
+  const cropperCanvas = unref(cropperCanvasRef)
+  if (!cropperCanvas) {
+    return
+  }
+
+  const cropperCanvasRect = cropperCanvas.getBoundingClientRect()
+  const selection = event.detail as Selection
+  const maxSelection: Selection = {
+    x: 0,
+    y: 0,
+    width: cropperCanvasRect.width,
+    height: cropperCanvasRect.height
+  }
+
+  if (!inSelection(selection, maxSelection)) {
+    event.preventDefault()
+  }
+}
+
+const getCroppedCanvas = async (width?: number, height?: number) => {
+  const selectionRef = unref(cropperSelectionRef)
+  if (!selectionRef) {
+    return null
+  }
+
+  if (width && height) {
+    return await selectionRef.$toCanvas({ width, height })
+  }
+
+  // when no explicit output size is given, derive dimensions from the original
+  const imageRef = unref(cropperImageRef)
+  if (imageRef) {
+    const [a, b] = imageRef.$getTransform()
+    const scale = Math.sqrt(a * a + b * b)
+    if (scale > 0) {
+      const naturalWidth = Math.round(selectionRef.width / scale)
+      const naturalHeight = Math.round(selectionRef.height / scale)
+      return await selectionRef.$toCanvas({ width: naturalWidth, height: naturalHeight })
+    }
+  }
+
+  return await selectionRef.$toCanvas(undefined)
+}
+
+const getCroppedArrayBuffer = async (width?: number, height?: number) => {
+  const canvas = await getCroppedCanvas(width, height)
+  if (!canvas) {
+    return null
+  }
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  return blob ? await blob.arrayBuffer() : null
+}
+
+watch(cropperSelectionRef, (cropper) => {
+  if (cropper) {
+    setCropperInstance(cropperSelectionRef, cropperImageRef)
+  }
+})
+
+defineExpose({
+  getCroppedCanvas,
+  getCroppedArrayBuffer
+})
+</script>

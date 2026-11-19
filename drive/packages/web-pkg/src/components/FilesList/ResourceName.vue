@@ -1,0 +1,150 @@
+<template>
+  <span
+    v-oc-tooltip="pathTooltip"
+    class="oc-resource-name flex items-center min-w-0"
+    :data-test-resource-path="fullPath"
+    :data-test-resource-name="fullName"
+    :data-test-resource-type="type"
+    :title="htmlTitle"
+  >
+    <template v-if="truncateName">
+      <span class="truncate leading-snug"
+        ><span class="oc-resource-basename whitespace-pre text-role-on-surface"
+          ><oc-filter-highlight :text="displayName" :term="term" /></span></span
+      ><span
+        v-if="showExtension"
+        class="oc-resource-extension shrink-0 whitespace-pre text-role-on-surface leading-snug"
+        ><oc-filter-highlight :text="displayExtension" :term="term"
+      /></span>
+    </template>
+    <span v-else class="min-w-0 leading-snug"
+      ><span class="oc-resource-basename wrap-anywhere text-role-on-surface"
+        ><template v-if="showExtension"
+          ><oc-filter-highlight :text="displayNameHead" :term="term" /><span
+            class="whitespace-nowrap"
+            ><oc-filter-highlight :text="displayNameTail" :term="term" /><span
+              class="oc-resource-extension text-role-on-surface"
+              ><oc-filter-highlight :text="displayExtension" :term="term" /></span></span></template
+        ><oc-filter-highlight v-else :text="displayName" :term="term" /></span
+    ></span>
+    <oc-icon
+      v-if="isFavoriteDisplayed && isFavorite"
+      name="star"
+      class="oc-resource-favorite ml-1"
+      :accessible-label="$gettext('Favorite')"
+    />
+  </span>
+</template>
+
+<script setup lang="ts">
+import { computed, unref } from 'vue'
+import path from 'path'
+import { OcFilterHighlight } from '@opencloud-eu/design-system/components'
+
+const {
+  name,
+  type,
+  fullPath,
+  pathPrefix = '',
+  extension = '',
+  isPathDisplayed = false,
+  isExtensionDisplayed = true,
+  isFavoriteDisplayed = true,
+  truncateName = true,
+  isFavorite = false,
+  term = ''
+} = defineProps<{
+  name: string
+  type: string
+  fullPath: string
+  pathPrefix?: string
+  extension?: string
+  isPathDisplayed?: boolean
+  isExtensionDisplayed?: boolean
+  isFavoriteDisplayed?: boolean
+  truncateName?: boolean
+  isFavorite?: boolean
+  /**
+   * The filter term whose occurrences get highlighted in the name.
+   */
+  term?: string
+}>()
+
+const isFile = computed(() => {
+  return type === 'file'
+})
+
+const displayName = computed(() => {
+  if (unref(isFile) && extension && !name.startsWith('.')) {
+    return name.slice(0, -extension.length - 1)
+  }
+  return name
+})
+
+// last char of the basename is kept together with the extension so it never wraps alone
+const displayNameChars = computed(() => Array.from(unref(displayName)))
+const displayNameHead = computed(() => unref(displayNameChars).slice(0, -1).join(''))
+const displayNameTail = computed(() => unref(displayNameChars).slice(-1).join(''))
+
+const showExtension = computed(() => {
+  return unref(isFile) && extension && isExtensionDisplayed && !name.startsWith('.')
+})
+
+const displayExtension = computed(() => {
+  return unref(isFile) && extension ? '.' + extension : ''
+})
+
+const displayPath = computed(() => {
+  if (!isPathDisplayed) {
+    return null
+  }
+  const pathSplit = fullPath.replace(/^\//, '').split('/')
+  if (pathSplit.length < 2) {
+    return null
+  }
+  if (pathSplit.length === 2) {
+    return pathSplit[0] + '/'
+  }
+  return `…/${pathSplit[pathSplit.length - 2]}/`
+})
+
+const pathTooltip = computed(() => {
+  if (!isPathDisplayed) {
+    return null
+  }
+  if (unref(displayPath) === fullPath) {
+    return null
+  }
+  if (pathPrefix) {
+    return path.join(pathPrefix, fullPath)
+  }
+  return fullPath
+})
+
+const htmlTitle = computed(() => {
+  if (unref(pathTooltip)) {
+    return undefined
+  }
+
+  if (unref(showExtension)) {
+    return `${unref(displayName)}${unref(displayExtension)}`
+  }
+
+  return unref(displayName)
+})
+
+const fullName = computed(() => {
+  return (unref(displayPath) || '') + name
+})
+</script>
+
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .oc-resource-favorite,
+  .oc-resource-favorite svg {
+    @apply !w-[14px] !h-[14px];
+  }
+}
+</style>

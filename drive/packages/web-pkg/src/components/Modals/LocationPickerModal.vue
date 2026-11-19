@@ -1,0 +1,139 @@
+<template>
+  <div class="h-full" tabindex="0">
+    <app-loading-spinner v-if="isLoading" />
+    <iframe
+      v-show="!isLoading"
+      ref="iframeRef"
+      class="size-full"
+      :title="iframeTitle"
+      :src="iframeSrc"
+      tabindex="0"
+      @load="onLoad"
+    ></iframe>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, unref } from 'vue'
+import {
+  embedModeLocationPickMessageData,
+  Modal,
+  useModals,
+  useRouter,
+  useThemeStore
+} from '../../composables'
+import { RouteLocationRaw } from 'vue-router'
+import AppLoadingSpinner from '../AppLoadingSpinner.vue'
+import { buildUrl, isMessageFromIframe } from '../../helpers'
+
+const {
+  modal,
+  parentFolderLink,
+  submitButtonTitle,
+  chooseFileName,
+  chooseFileNameSuggestion,
+  callbackFn
+} = defineProps<{
+  modal: Modal
+  parentFolderLink: RouteLocationRaw
+  submitButtonTitle?: string
+  chooseFileName?: boolean
+  chooseFileNameSuggestion?: string
+  callbackFn: (
+    resources: embedModeLocationPickMessageData['resources'],
+    options?: { fileName?: string }
+  ) => void
+}>()
+
+const iframeRef = ref<HTMLIFrameElement>()
+const isLoading = ref(true)
+const router = useRouter()
+const { removeModal } = useModals()
+const themeStore = useThemeStore()
+
+const iframeTitle = themeStore.currentTheme.name
+const iframeUrl = new URL(buildUrl(router, parentFolderLink))
+iframeUrl.searchParams.append('hide-logo', 'true')
+iframeUrl.searchParams.append('embed', 'true')
+iframeUrl.searchParams.append('embed-target', 'location')
+iframeUrl.searchParams.append('embed-delegate-authentication', 'false')
+if (submitButtonTitle) {
+  iframeUrl.searchParams.append('embed-submit-button-title', submitButtonTitle)
+}
+if (chooseFileName) {
+  iframeUrl.searchParams.append('embed-choose-file-name', 'true')
+}
+if (chooseFileNameSuggestion) {
+  iframeUrl.searchParams.append('embed-choose-file-name-suggestion', chooseFileNameSuggestion)
+}
+
+const onLoad = () => {
+  isLoading.value = false
+  unref(iframeRef).contentWindow.focus()
+}
+
+const onLocationPick = (event: MessageEvent) => {
+  const { data } = event
+  if (
+    !isMessageFromIframe(event, unref(iframeRef), iframeUrl.origin) ||
+    data?.name !== 'opencloud-embed:select'
+  ) {
+    return
+  }
+
+  let resources = (data.data as embedModeLocationPickMessageData)?.resources
+  let fileName = (data.data as embedModeLocationPickMessageData)?.fileName
+  if (Array.isArray(data.data)) {
+    resources = data.data as embedModeLocationPickMessageData['resources']
+    fileName = undefined
+  }
+
+  if (!resources?.length) {
+    return
+  }
+
+  callbackFn(resources, { fileName })
+  removeModal(modal.id)
+}
+
+const onCancel = (event: MessageEvent) => {
+  const { data } = event
+  if (
+    !isMessageFromIframe(event, unref(iframeRef), iframeUrl.origin) ||
+    data?.name !== 'opencloud-embed:cancel'
+  ) {
+    return
+  }
+
+  removeModal(modal.id)
+}
+
+onMounted(() => {
+  window.addEventListener('message', onLocationPick)
+  window.addEventListener('message', onCancel)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onLocationPick)
+  window.removeEventListener('message', onCancel)
+})
+
+const iframeSrc = iframeUrl.href
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer utilities {
+  /* full screen on phones, the embedded files UI needs all the space it can get */
+  .location-picker-modal {
+    @apply overflow-hidden max-w-[90vw] max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none max-sm:border-0;
+  }
+
+  .location-picker-modal .oc-modal-body {
+    @apply p-0;
+  }
+  .location-picker-modal .oc-modal-body-message {
+    @apply m-0 h-[70vh] max-sm:h-full;
+  }
+}
+</style>

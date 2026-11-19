@@ -1,0 +1,594 @@
+import { UserManager } from './userManager'
+import { PublicLinkManager } from './publicLinkManager'
+import {
+  getGuestLinkError,
+  GuestLinkRenewal,
+  GuestSession,
+  GuestSessionManager,
+  isGuestSessionInvalidError
+} from './guestSessionManager'
+import {
+  AuthStore,
+  ClientService,
+  UserStore,
+  CapabilityStore,
+  ConfigStore,
+  useTokenTimerWorker,
+  AuthServiceInterface,
+  SpacesStore,
+  queryItemAsString,
+  isMessageFromParent
+} from '@opencloud-eu/web-pkg'
+import { isNavigationFailure, RouteLocation, Router } from 'vue-router'
+import {
+  extractPublicLinkToken,
+  isAnonymousContext,
+  isGuestContextAllowed,
+  isGuestContextRequired,
+  isIdpContextRequired,
+  isPublicLinkContextRequired,
+  isUserContextRequired
+} from '../../router/helpers'
+import { unref } from 'vue'
+import { Ability } from '@opencloud-eu/web-client'
+import { Language } from 'vue3-gettext'
+import { PublicLinkType } from '@opencloud-eu/web-client'
+import { WebWorkersStore } from '@opencloud-eu/web-pkg'
+import { ErrorTimeout } from 'oidc-client-ts'
+import { resetSSE } from '@opencloud-eu/web-client/sse'
+
+/**
+ * Network-class errors during silent renewal are transient (e.g. the device just
+ * woke from sleep and the connection isn't back yet) and worth retrying. Any other
+ * error (most notably an OAuth error response) means the session is truly gone and
+ * must not be retried.
+ */
+function isTransientRenewError(error: unknown): boolean {
+  return error instanceof ErrorTimeout || error instanceof TypeError
+}
+
+export class AuthService implements AuthServiceInterface {
+  private clientService: ClientService
+  private configStore: ConfigStore
+  private router: Router
+  private userManager: UserManager
+  private publicLinkManager: PublicLinkManager
+  private guestSessionManager: GuestSessionManager
+  private ability: Ability
+  private language: Language
+  private userStore: UserStore
+  private authStore: AuthStore
+  private capabilityStore: CapabilityStore
+  private webWorkersStore: WebWorkersStore
+
+  private tokenTimerWorker: ReturnType<typeof useTokenTimerWorker>
+  private tokenTimerInitialized = false
+  private silentRenewRetryPromise: Promise<boolean> | null = null
+
+  // number of seconds before an access token is to expire to raise the accessTokenExpiring event
+  private accessTokenExpiryThreshold = 10
+
+  public hasAuthErrorOccurred: boolean
+
+  public initialize(
+    configStore: ConfigStore,
+    clientService: ClientService,
+    router: Router,
+    ability: Ability,
+    language: Language,
+    userStore: UserStore,
+    authStore: AuthStore,
+    capabilityStore: CapabilityStore,
+    webWorkersStore: WebWorkersStore,
+    spacesStore: SpacesStore
+  ): void {
+    this.configStore = configStore
+    this.clientService = clientService
+    this.router = router
+    this.hasAuthErrorOccurred = false
+    this.ability = ability
+    this.language = language
+    this.userStore = userStore
+    this.authStore = authStore
+    this.capabilityStore = capabilityStore
+    this.webWorkersStore = webWorkersStore
+    this.guestSessionManager?.dispose()
+    this.guestSessionManager = new GuestSessionManager({
+      clientService,
+      authStore,
+      spacesStore,
+      onLogoutInOtherTab: () => {
+        this.router.push({ name: 'logout', query: { guest: 'true' } })
+      }
+    })
+  }
+
+  /**
+   * Initialize publicLinkContext and userContext (whichever is available, respectively).
+   *
+   * FIXME: at the moment the order "publicLink first, user second" is important, because we trigger the `ready` hook of all applications
+   * as soon as any context is ready. This works well for user context pages, because they can't have a public link context at the same time.
+   * Public links on the other hand could have a logged in user as well, thus we need to make sure that the public link context is loaded first.
+   * For the moment this is fine. In the future we might want to wait triggering the `ready` hook of applications until all available contexts
+   * are loaded.
+   *
+   * @param to {Route}
+   */
+  public async initializeContext(to: RouteLocation) {
+    if (!this.publicLinkManager) {
+      this.publicLinkManager = new PublicLinkManager({
+        clientService: this.clientService,
+        authStore: this.authStore,
+        capabilityStore: this.capabilityStore
+      })
+    }
+
+    if (isPublicLinkContextRequired(this.router, to)) {
+      const publicLinkToken = extractPublicLinkToken(to)
+      if (publicLinkToken) {
+        this.publicLinkManager.updateContext(publicLinkToken)
+      }
+    } else if (to.name !== 'resolvePublicLink') {
+      // no need to clear public context if we're routing the to public link resolving page
+      this.publicLinkManager.clearContext()
+    }
+
+    if (!this.userManager) {
+      this.userManager = new UserManager({
+        clientService: this.clientService,
+        configStore: this.configStore,
+        ability: this.ability,
+        language: this.language,
+        userStore: this.userStore,
+        authStore: this.authStore,
+        capabilityStore: this.capabilityStore,
+        webWorkersStore: this.webWorkersStore,
+        accessTokenExpiryThreshold: this.accessTokenExpiryThreshold,
+        router: this.router
+      })
+
+      if (!this.tokenTimerWorker) {
+        const { options } = this.configStore
+
+        if (!options.embed?.enabled || !options.embed?.delegateAuthentication) {
+          this.tokenTimerWorker = useTokenTimerWorker({ authService: this, router: this.router })
+          this.tokenTimerWorker.startWorker()
+        }
+      }
+    }
+
+    const isUserSignedIn = await this.isUserSignedIn()
+    if (isGuestContextAllowed(to) && !isUserSignedIn) {
+      // active sessions only, anything else is sent to the login by the guard
+      await this.guestSessionManager.restoreContext()
+    } else if (this.isGuestContextExcluded(to, isUserSignedIn)) {
+      // a guest might only pass a user route, keep a pending renewal until a user signs in
+      if (isUserSignedIn) {
+        this.guestSessionManager.clear()
+      } else if (!this.authStore.isGuestContext) {
+        this.guestSessionManager.expire()
+      }
+    } else if (isGuestContextRequired(this.router, to)) {
+      await this.guestSessionManager.restoreContext(queryItemAsString(to.query.permissionId))
+    } else if (to.name !== 'resolveGuestLink') {
+      this.guestSessionManager.deactivate()
+    }
+
+    if (isPublicLinkContextRequired(this.router, to)) {
+      const user = await this.userManager.getUser()
+
+      if (user?.expired) {
+        try {
+          await this.userManager.signinSilent()
+        } catch {
+          await this.userManager.removeUser()
+        }
+      }
+    }
+
+    if (!isAnonymousContext(this.router, to) && !isGuestContextRequired(this.router, to)) {
+      const fetchUserData = !isIdpContextRequired(this.router, to)
+
+      if (!this.userManager.areEventHandlersRegistered) {
+        this.userManager.events.addAccessTokenExpired((): void => {
+          console.debug('AccessToken Expired')
+          // error (+ potential retry) is handled by the token timer worker
+        })
+
+        this.userManager.events.addAccessTokenExpiring(() => {
+          console.debug('AccessToken Expiring')
+        })
+
+        this.userManager.events.addUserLoaded(async (user) => {
+          this.tokenTimerWorker?.setTokenTimer({
+            expiry: user.expires_in,
+            expiryThreshold: this.accessTokenExpiryThreshold
+          })
+
+          if (!this.tokenTimerInitialized) {
+            this.tokenTimerInitialized = true
+          }
+
+          console.debug(`New User Loaded`)
+          try {
+            await this.userManager.updateContext(user.access_token, user.profile.sid, fetchUserData)
+          } catch (e) {
+            console.error(e)
+
+            if (this.silentRenewRetryPromise) {
+              // This event was raised by a silent renewal that is still in flight. Handling
+              // the error here would wait for that very renewal to finish (see
+              // `renewToken`) and therefore deadlock. Let the renewal fail
+              // instead, its caller takes care of the error.
+              throw e
+            }
+
+            await this.handleAuthError(unref(this.router.currentRoute))
+          }
+        })
+
+        this.userManager.events.addUserUnloaded(async () => {
+          console.log('User Unloaded')
+          this.tokenTimerWorker?.resetTokenTimer()
+          this.resetStateAfterUserLogout()
+
+          if (this.userManager.unloadReason === 'authError') {
+            this.hasAuthErrorOccurred = true
+            await this.router.push({
+              name: 'accessDenied',
+              query: { redirectUrl: unref(this.router.currentRoute)?.fullPath }
+            })
+          }
+        })
+        this.userManager.events.addSilentRenewError(async (error) => {
+          console.error('Silent Renew Error:', error)
+          await this.handleAuthError(unref(this.router.currentRoute))
+        })
+
+        this.userManager.areEventHandlersRegistered = true
+      }
+
+      // This is to prevent issues in embed mode when the expired token is still saved but already expired
+      // If the following code gets executed, it would toggle errorOccurred var which would then lead to redirect to the access denied screen
+      if (
+        this.configStore.options.embed?.enabled &&
+        this.configStore.options.embed.delegateAuthentication
+      ) {
+        return
+      }
+
+      // relevant for page reload: token is already in userStore
+      // no userLoaded event and no signInCallback gets triggered
+      const user = await this.userManager.getUser()
+      const accessToken = user?.access_token
+      const sessionId = user?.profile?.sid
+
+      if (user?.expired === true) {
+        // throw auth error, which will retry another silent signin
+        await this.handleAuthError(unref(this.router.currentRoute))
+        return
+      }
+
+      if (accessToken) {
+        console.debug('[authService:initializeContext] - updating context with saved access_token')
+
+        try {
+          await this.userManager.updateContext(accessToken, sessionId, fetchUserData)
+
+          if (!this.tokenTimerInitialized) {
+            const user = await this.userManager.getUser()
+            this.tokenTimerWorker?.setTokenTimer({
+              expiry: user.expires_in,
+              expiryThreshold: this.accessTokenExpiryThreshold
+            })
+
+            this.tokenTimerInitialized = true
+          }
+        } catch (e) {
+          console.error(e)
+          await this.handleAuthError(unref(this.router.currentRoute))
+        }
+      }
+    }
+  }
+
+  private isGuestContextExcluded(to: RouteLocation, isUserSignedIn: boolean): boolean {
+    if (isUserContextRequired(this.router, to) || isIdpContextRequired(this.router, to)) {
+      return true
+    }
+    if (isAnonymousContext(this.router, to) || isGuestContextRequired(this.router, to)) {
+      return false
+    }
+    return isUserSignedIn
+  }
+
+  private async isUserSignedIn(): Promise<boolean> {
+    const user = await this.userManager.getUser()
+    return !!user && !user.expired
+  }
+
+  public loginUser(redirectUrl?: string) {
+    this.userManager.setPostLoginRedirectUrl(redirectUrl)
+    return this.userManager.signinRedirect()
+  }
+
+  public setPostLoginRedirectUrl(redirectUrl?: string) {
+    this.userManager.setPostLoginRedirectUrl(redirectUrl)
+  }
+
+  public signinSilent() {
+    return this.userManager.signinSilent()
+  }
+
+  /**
+   * Sign in callback gets called from the IDP after initial login.
+   */
+  public async signInCallback(accessToken?: string, sessionId?: string) {
+    try {
+      if (
+        this.configStore.options.embed.enabled &&
+        this.configStore.options.embed.delegateAuthentication &&
+        accessToken
+      ) {
+        console.debug('[authService:signInCallback] - setting access_token and fetching user')
+        await this.userManager.updateContext(accessToken, sessionId, true)
+
+        // Setup a listener to handle token refresh
+        console.debug('[authService:signInCallback] - adding listener to update-token event')
+        window.addEventListener('message', this.handleDelegatedTokenUpdate)
+      } else {
+        await this.userManager.signinRedirectCallback(this.buildSignInCallbackUrl())
+      }
+
+      const redirectRoute = this.router.resolve(this.userManager.getAndClearPostLoginRedirectUrl())
+      return this.router.replace({
+        path: redirectRoute.path,
+        ...(redirectRoute.query && { query: redirectRoute.query })
+      })
+    } catch (e) {
+      console.warn('error during authentication:', e)
+      await this.handleAuthError(unref(this.router.currentRoute))
+
+      // the callback page is anonymous, so no navigation follows that lets the
+      // authGuard show the access denied page. Navigate there explicitly.
+      if (this.hasAuthErrorOccurred) {
+        return this.router.replace({ name: 'accessDenied' })
+      }
+    }
+  }
+
+  /**
+   * craft a url that the parser in oidc-client-ts can handle…
+   */
+  private buildSignInCallbackUrl() {
+    const currentQuery = unref(this.router.currentRoute).query
+    return '/?' + new URLSearchParams(currentQuery as Record<string, string>).toString()
+  }
+
+  /**
+   * Handles an auth error for the given route. Resolves to `true` if the token got renewed,
+   * so the caller can retry its request.
+   */
+  public async handleAuthError(route: RouteLocation, error?: unknown): Promise<boolean> {
+    if (
+      !this.authStore.userContextReady &&
+      !isPublicLinkContextRequired(this.router, route) &&
+      (isGuestContextRequired(this.router, route) || isGuestSessionInvalidError(error))
+    ) {
+      if (!isGuestSessionInvalidError(error)) {
+        return false
+      }
+      const permissionId =
+        getGuestLinkError(error)?.permissionId || this.authStore.guestPermissionId
+      this.guestSessionManager.expire()
+      // a private link only resolves for an active guest session, anything else needs a user
+      if (isGuestContextAllowed(route)) {
+        await this.router.replace({ path: '/login', query: { redirectUrl: route.fullPath } })
+        return false
+      }
+      if (!permissionId) {
+        return false
+      }
+      await this.router.replace({
+        name: 'renewGuestLink',
+        params: { permissionId },
+        ...(isGuestContextRequired(this.router, route) && {
+          query: { redirectUrl: route.fullPath }
+        })
+      })
+      return false
+    }
+    if (isPublicLinkContextRequired(this.router, route)) {
+      const token = extractPublicLinkToken(route)
+      this.publicLinkManager.clear(token)
+      await this.router.push({
+        name: 'resolvePublicLink',
+        params: { token },
+        query: { redirectUrl: route.fullPath }
+      })
+      return false
+    }
+    if (isUserContextRequired(this.router, route) || isIdpContextRequired(this.router, route)) {
+      const user = await this.userManager.getUser()
+
+      // An auth error occurred: an expired token after the device woke from sleep,
+      // or a 401 on a request. Before logging the user out, attempt a silent
+      // renewal with retries. The server may have rejected a token the client
+      // still considers valid (e.g. clock skew after wake) or one that just
+      // expired, while the IdP session is usually still alive. Only log the user
+      // out if renewal ultimately fails (non-transient error or retries
+      // exhausted), so a brief interruption doesn't kill an otherwise-valid
+      // session.
+      if (user && (await this.renewToken())) {
+        return true
+      }
+
+      await this.userManager.removeUser('authError')
+      this.tokenTimerWorker?.resetTokenTimer()
+      return false
+    }
+    // authGuard is taking care of redirecting the user to the
+    // accessDenied page if hasAuthErrorOccurred is set to true
+    // we can't push the route ourselves, see authGuard for details.
+    this.hasAuthErrorOccurred = true
+    return false
+  }
+
+  /**
+   * Attempts a silent token renewal, retrying transient network failures with
+   * exponential backoff. Resolves to `true` if a renewal succeeded, or `false` if
+   * it failed with a non-transient error or exhausted all retries.
+   *
+   * Concurrent `renewToken()` callers share the same in-flight attempt. Direct
+   * `signinSilent()` calls (e.g. the token timer) don't join it.
+   */
+  public renewToken(): Promise<boolean> {
+    if (this.silentRenewRetryPromise) {
+      return this.silentRenewRetryPromise
+    }
+
+    const maxAttempts = 5
+    const baseDelayInMs = 1000
+
+    const run = async (): Promise<boolean> => {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          await this.userManager.signinSilent()
+          return true
+        } catch (error) {
+          console.warn(
+            `silent token renewal failed (attempt ${attempt + 1}/${maxAttempts}, error: ${(error as Error)?.constructor?.name})`,
+            error
+          )
+          if (!isTransientRenewError(error) || attempt === maxAttempts - 1) {
+            return false
+          }
+          await new Promise((resolve) => setTimeout(resolve, baseDelayInMs * 2 ** attempt))
+        }
+      }
+      return false
+    }
+
+    this.silentRenewRetryPromise = run().finally(() => {
+      this.silentRenewRetryPromise = null
+    })
+
+    return this.silentRenewRetryPromise
+  }
+
+  public resolvePublicLink(
+    token: string,
+    passwordRequired: boolean,
+    password: string,
+    type: PublicLinkType
+  ) {
+    this.publicLinkManager.setPasswordRequired(token, passwordRequired)
+    this.publicLinkManager.setPassword(token, password)
+    this.publicLinkManager.setResolved(token, true)
+    this.publicLinkManager.setType(token, type)
+
+    this.publicLinkManager.updateContext(token)
+  }
+
+  public redeemGuestLink(token: string): Promise<GuestSession> {
+    return this.guestSessionManager.redeem(token)
+  }
+
+  public verifyGuestLinkPin(permissionId: string, pin: string): Promise<void> {
+    return this.guestSessionManager.verifyPin(permissionId, pin)
+  }
+
+  public ensureGuestLinkRenewal(permissionId: string): Promise<GuestLinkRenewal> {
+    return this.guestSessionManager.ensureRenewal(permissionId)
+  }
+
+  public refreshGuestSession(permissionId: string, pin: string): Promise<void> {
+    return this.guestSessionManager.refresh(permissionId, pin)
+  }
+
+  public getPendingGuestLinkRenewal(permissionId: string): GuestLinkRenewal | undefined {
+    return this.guestSessionManager.getPendingRenewal(permissionId)
+  }
+
+  public hasGuestSession(permissionId: string): boolean {
+    return this.guestSessionManager.hasSession(permissionId)
+  }
+
+  public resumeGuestSession(permissionId: string): Promise<GuestSession> {
+    return this.guestSessionManager.resume(permissionId)
+  }
+
+  public consumeExpiredGuestPermissionId(): string | undefined {
+    return this.guestSessionManager.consumeExpiredPermissionId()
+  }
+
+  public consumeUnavailableGuestPermissionId(): string | undefined {
+    return this.guestSessionManager.consumeUnavailablePermissionId()
+  }
+
+  public async logoutUser() {
+    const endSessionEndpoint = await this.userManager.metadataService?.getEndSessionEndpoint()
+    if (!endSessionEndpoint) {
+      await this.userManager.removeUser()
+      return this.router.push({ name: 'logout' })
+    }
+
+    const u = await this.userManager.getUser()
+    if (u && u.id_token) {
+      return this.userManager.signoutRedirect({ id_token_hint: u.id_token })
+    }
+
+    return await this.userManager.removeUser()
+  }
+
+  public async logoutGuest() {
+    // leave first, e.g. an app might still save unsaved changes with the session
+    const failure = await this.router.push({ name: 'logout', query: { guest: 'true' } })
+    if (isNavigationFailure(failure)) {
+      return failure
+    }
+    try {
+      await this.guestSessionManager.logout()
+    } catch (error) {
+      console.error('guest session could not be ended', error)
+      await this.router.replace({ name: 'logout', query: { guest: 'true', failed: 'true' } })
+    }
+  }
+
+  private resetStateAfterUserLogout() {
+    // TODO: create UserUnloadTask interface and allow registering unload-tasks in the authService
+    this.userStore.reset()
+    this.authStore.clearUserContext()
+    this.guestSessionManager.clear()
+    // stop the SSE stream from reconnecting with the now-removed access token
+    resetSSE()
+  }
+
+  public async getRefreshToken() {
+    const user = await this.userManager.getUser()
+    return user?.refresh_token
+  }
+
+  private handleDelegatedTokenUpdate = (event: MessageEvent) => {
+    if (!isMessageFromParent(event, this.configStore.options.embed?.delegateAuthenticationOrigin)) {
+      return
+    }
+
+    if (event.data?.name !== 'opencloud-embed:update-token') {
+      return
+    }
+
+    if (!event.data.data?.access_token) {
+      return
+    }
+
+    console.debug('[authService:handleDelegatedTokenUpdate] - going to update the access_token')
+    return this.userManager.updateContext(
+      event.data.data.access_token,
+      event.data.data.session_id,
+      false
+    )
+  }
+}
+
+export const authService = new AuthService()

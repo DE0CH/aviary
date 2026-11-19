@@ -1,0 +1,57 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`FileShares > collaborators list > renders sharedWithLabel and sharee list 1`] = `
+"<div data-v-5d17c3fa="" id="oc-files-sharing-sidebar" class="relative">
+  <invite-collaborator-form-stub data-v-5d17c3fa="" savebuttonlabel="" label="Share with people" invitelabel="" contextualhelper="[object Object]" class="mt-2"></invite-collaborator-form-stub>
+  <div data-v-5d17c3fa="" id="files-collaborators-headline" class="flex items-center justify-between">
+    <h3 data-v-5d17c3fa="" class="font-semibold text-base my-0">Shared with</h3>
+  </div>
+  <custom-component-target-stub data-v-5d17c3fa="" extensionpoint="[object Object]"></custom-component-target-stub>
+  <ul data-v-5d17c3fa="" id="files-collaborators-list" class="oc-list mb-2" aria-label="Share receivers">
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="true" removable="true" islocked="[Function]" isspaceshare="false" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="true" removable="true" islocked="[Function]" isspaceshare="false" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="true" removable="true" islocked="[Function]" isspaceshare="false" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="true" removable="true" islocked="[Function]" isspaceshare="false" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <custom-component-target-stub data-v-5d17c3fa="" extensionpoint="[object Object]"></custom-component-target-stub>
+  </ul>
+  <oc-pagination-inline-stub data-v-5d17c3fa="" currentpage="1" pages="1" label="Share receiver list pagination" class="justify-center mb-2" data-testid="collaborators-pagination"></oc-pagination-inline-stub>
+  <!--v-if-->
+</div>"
+`;
+
+exports[`FileShares > current space > loads space members if a space is given and the current user is member 1`] = `
+"<div data-v-5d17c3fa="" id="oc-files-sharing-sidebar" class="relative">
+  <invite-collaborator-form-stub data-v-5d17c3fa="" savebuttonlabel="" label="Share with people" invitelabel="" contextualhelper="[object Object]" class="mt-2"></invite-collaborator-form-stub>
+  <div data-v-5d17c3fa="" id="files-collaborators-headline" class="flex items-center justify-between">
+    <h3 data-v-5d17c3fa="" class="font-semibold text-base my-0">Shared with</h3>
+  </div>
+  <custom-component-target-stub data-v-5d17c3fa="" extensionpoint="[object Object]"></custom-component-target-stub>
+  <ul data-v-5d17c3fa="" id="files-collaborators-list" class="oc-list mb-4" aria-label="Share receivers">
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="false" removable="false" islocked="[Function]" isspaceshare="false" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <custom-component-target-stub data-v-5d17c3fa="" extensionpoint="[object Object]"></custom-component-target-stub>
+  </ul>
+  <oc-pagination-inline-stub data-v-5d17c3fa="" currentpage="1" pages="1" label="Share receiver list pagination" class="justify-center mb-2" data-testid="collaborators-pagination"></oc-pagination-inline-stub>
+  <div data-v-5d17c3fa="" class="flex items-center justify-between mt-2">
+    <h3 data-v-5d17c3fa="" class="font-semibold text-base my-2">Space members</h3>
+  </div>
+  <ul data-v-5d17c3fa="" id="space-collaborators-list" class="oc-list oc-list-divider overflow-hidden m-0" aria-label="Space members">
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="false" removable="false" islocked="false" isspaceshare="true" filterterm=""></collaborator-list-item-stub>
+    </li>
+    <li data-v-5d17c3fa="">
+      <collaborator-list-item-stub data-v-5d17c3fa="" share="[object Object]" modifiable="false" removable="false" islocked="false" isspaceshare="true" filterterm=""></collaborator-list-item-stub>
+    </li>
+  </ul>
+  <oc-pagination-inline-stub data-v-5d17c3fa="" currentpage="1" pages="1" label="Space member list pagination" class="justify-center mt-2" data-testid="space-members-pagination"></oc-pagination-inline-stub>
+</div>"
+`;

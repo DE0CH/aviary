@@ -1,0 +1,510 @@
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { useTextEditor } from '../../../../src/editor/composables/useTextEditor'
+import { withSetup } from './helpers'
+import { nextTick, ref, toRef, unref } from 'vue'
+import * as Y from 'yjs'
+import { Awareness } from 'y-protocols/awareness'
+import { yCursorPlugin, yUndoPluginKey } from '@tiptap/y-tiptap'
+import { createMockStore, createTestingPinia } from '@opencloud-eu/web-test-helpers'
+
+vi.mock('@tiptap/y-tiptap', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tiptap/y-tiptap')>()
+  return { ...actual, yCursorPlugin: vi.fn(actual.yCursorPlugin) }
+})
+
+function createEditor(options = {}) {
+  const defaults = { contentType: 'html' as const, modelValue: toRef('<p>hello</p>') }
+  return withSetup(() => useTextEditor({ ...defaults, ...options }))
+}
+
+describe('useTextEditor', () => {
+  beforeEach(() => {
+    createTestingPinia()
+  })
+
+  it('creates an editor instance', () => {
+    const { result } = createEditor()
+    expect(result.editor.value).not.toBeNull()
+  })
+
+  it('exposes contentType as ref', () => {
+    const { result } = createEditor({ contentType: 'markdown' })
+    expect(result.contentType.value).toBe('markdown')
+  })
+
+  it('exposes readonly as ref', () => {
+    const { result } = createEditor({ readonly: true })
+    expect(result.readonly.value).toBe(true)
+  })
+
+  it('exposes yjsStatus as ref', () => {
+    const { result } = createEditor({ yjsStatus: 'connected' })
+    expect(result.yjsStatus.value).toBe('connected')
+  })
+
+  it('follows a yjs status getter that flips after setup', async () => {
+    const status = ref<'connecting' | 'connected'>('connecting')
+    const { result } = createEditor({ yjsStatus: () => unref(status) })
+    expect(result.yjsStatus.value).toBe('connecting')
+
+    status.value = 'connected'
+    await nextTick()
+
+    expect(result.yjsStatus.value).toBe('connected')
+  })
+
+  // Regression: `readonly` was snapshotted during setup, so a collaborative
+  // session turning read-only after mount (locking the room on an app-version
+  // mismatch, for one) hid the toolbar but left ProseMirror editable. The user
+  // kept typing into a document that could never be saved.
+  it('follows a readonly getter that flips after setup', async () => {
+    const locked = ref(false)
+    const { result } = createEditor({ readonly: () => unref(locked) })
+    expect(result.editor.value.isEditable).toBe(true)
+
+    locked.value = true
+    await nextTick()
+
+    expect(result.readonly.value).toBe(true)
+    expect(result.editor.value.isEditable).toBe(false)
+  })
+
+  it('getContent serializes via strategy', () => {
+    const { result } = createEditor({ contentType: 'html', modelValue: toRef('<p>test</p>') })
+    const content = result.getContent()
+    expect(content).toContain('test')
+  })
+
+  it('isEmpty returns true for empty editor', () => {
+    const { result } = createEditor({ modelValue: toRef('') })
+    expect(result.isEmpty.value).toBe(true)
+  })
+
+  it('destroy cleans up editor', () => {
+    const { result } = createEditor()
+    result.destroy()
+    expect(result.editor.value).toBeNull()
+  })
+
+  describe('slash commands', () => {
+    it('does not register the slash commands extension when slashCommands is false', () => {
+      const { result } = createEditor({ slashCommands: false })
+      const pluginNames = result.editor.value?.extensionManager.extensions.map((e) => e.name) ?? []
+      expect(pluginNames).not.toContain('slashCommands')
+    })
+
+    it('registers the slash commands extension when slashCommands is true', () => {
+      const { result } = createEditor({ slashCommands: true })
+      const pluginNames = result.editor.value?.extensionManager.extensions.map((e) => e.name) ?? []
+      expect(pluginNames).toContain('slashCommands')
+    })
+
+    it('registers the extension for plain-text when a slash action is available', () => {
+      const { result } = createEditor({
+        contentType: 'plain-text',
+        modelValue: toRef('hi'),
+        slashCommands: true
+      })
+      const pluginNames = result.editor.value?.extensionManager.extensions.map((e) => e.name) ?? []
+      expect(pluginNames).toContain('slashCommands')
+    })
+  })
+
+  describe('find and replace', () => {
+    it.each(['plain-text', 'markdown', 'html', 'tiptap-json'] as const)(
+      'registers the findAndReplace extension for %s',
+      (contentType) => {
+        const modelValue =
+          contentType === 'tiptap-json'
+            ? JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] })
+            : ''
+        const { result } = createEditor({ contentType, modelValue: toRef(modelValue) })
+        const pluginNames =
+          result.editor.value?.extensionManager.extensions.map((e) => e.name) ?? []
+        expect(pluginNames).toContain('findAndReplace')
+      }
+    )
+  })
+
+  describe('history', () => {
+    it('runs redo through the Collaboration history when bound to Yjs', () => {
+      const ydoc = new Y.Doc()
+      const { result } = createEditor({
+        contentType: 'plain-text',
+        modelValue: toRef(''),
+        ydoc,
+        awareness: new Awareness(ydoc)
+      })
+      const editor = result.editor.value!
+      const historyActions =
+        result.actionGroups().find((group) => group.id === 'navigation')?.actions ?? []
+      const undoAction = historyActions.find((action) => action.id === 'undo')!
+      const redoAction = historyActions.find((action) => action.id === 'redo')!
+
+      try {
+        editor.commands.insertContent('hello')
+
+        expect(editor.getText()).toBe('hello')
+        expect(undoAction.isEnabled!(editor)).toBe(true)
+
+        undoAction.toolbarAction!(editor)
+
+        expect(editor.getText()).toBe('')
+        expect(redoAction.isEnabled!(editor)).toBe(true)
+
+        redoAction.toolbarAction!(editor)
+
+        expect(editor.getText()).toBe('hello')
+      } finally {
+        result.destroy()
+        ydoc.destroy()
+      }
+    })
+
+    it('tracks UndoManager-originated changes so redo remains available', () => {
+      const ydoc = new Y.Doc()
+      const { result } = createEditor({
+        contentType: 'plain-text',
+        modelValue: toRef(''),
+        ydoc,
+        awareness: new Awareness(ydoc)
+      })
+      const editor = result.editor.value!
+      const historyActions =
+        result.actionGroups().find((group) => group.id === 'navigation')?.actions ?? []
+      const undoAction = historyActions.find((action) => action.id === 'undo')!
+      const redoAction = historyActions.find((action) => action.id === 'redo')!
+
+      try {
+        const undoManager = yUndoPluginKey.getState(editor.state).undoManager
+        undoManager.removeTrackedOrigin(undoManager)
+
+        editor.commands.insertContent('hello')
+
+        expect(editor.getText()).toBe('hello')
+
+        undoAction.toolbarAction!(editor)
+
+        expect(editor.getText()).toBe('')
+        expect(redoAction.isEnabled!(editor)).toBe(true)
+
+        redoAction.toolbarAction!(editor)
+
+        expect(editor.getText()).toBe('hello')
+      } finally {
+        result.destroy()
+        ydoc.destroy()
+      }
+    })
+  })
+
+  describe('remote cursors', () => {
+    it('hides the remote caret and its name label from assistive technology', () => {
+      const ydoc = new Y.Doc()
+      const { result } = createEditor({
+        contentType: 'plain-text',
+        modelValue: toRef(''),
+        ydoc,
+        awareness: new Awareness(ydoc)
+      })
+
+      try {
+        const { cursorBuilder } = vi.mocked(yCursorPlugin).mock.lastCall[1]
+        const caret = cursorBuilder({ name: 'Mary Kenneth Keller', color: '#ff0000' }, 1)
+
+        expect(caret.getAttribute('aria-hidden')).toBe('true')
+        expect(caret.textContent).toBe('Mary Kenneth Keller')
+      } finally {
+        result.destroy()
+        ydoc.destroy()
+      }
+    })
+  })
+
+  describe('mentions', () => {
+    it('registers the mentions extension when mention options are provided', () => {
+      const { result } = createEditor({
+        mentions: {
+          getItems: vi.fn().mockResolvedValue([]),
+          onSelect: vi.fn()
+        }
+      })
+      const extensionNames =
+        result.editor.value?.extensionManager.extensions.map(({ name }) => name) ?? []
+
+      expect(extensionNames).toContain('mentions')
+    })
+
+    it('does not register the mentions extension without mention options', () => {
+      const { result } = createEditor()
+      const extensionNames =
+        result.editor.value?.extensionManager.extensions.map(({ name }) => name) ?? []
+
+      expect(extensionNames).not.toContain('mentions')
+    })
+  })
+
+  describe('links', () => {
+    it('prevents auxiliary clicks from opening a link', () => {
+      const { result } = createEditor({
+        modelValue: toRef('<p><a href="https://opencloud.eu">OpenCloud</a></p>')
+      })
+      const editor = result.editor.value!
+      const anchor = editor.view.dom.querySelector('a')!
+      const event = new PointerEvent('auxclick', { button: 1, cancelable: true })
+      Object.defineProperty(event, 'target', { value: anchor })
+
+      const handled = editor.options.editorProps.handleDOMEvents!.auxclick!(editor.view, event)
+
+      expect(handled).toBe(true)
+      expect(event.defaultPrevented).toBe(true)
+    })
+
+    it('allows native auxiliary link navigation when readonly', () => {
+      const { result } = createEditor({
+        modelValue: toRef('<p><a href="https://opencloud.eu">OpenCloud</a></p>'),
+        readonly: true
+      })
+      const editor = result.editor.value!
+      const anchor = editor.view.dom.querySelector('a')!
+      const event = new PointerEvent('auxclick', { button: 1, cancelable: true })
+      Object.defineProperty(event, 'target', { value: anchor })
+
+      const handled = editor.options.editorProps.handleDOMEvents!.auxclick!(editor.view, event)
+
+      expect(handled).toBe(false)
+      expect(event.defaultPrevented).toBe(false)
+      expect(result.state.linkPanel.value).toBeNull()
+    })
+
+    it.each(['markdown', 'html', 'tiptap-json'] as const)(
+      'autolinks pasted URLs for the %s strategy',
+      (contentType) => {
+        const modelValue =
+          contentType === 'tiptap-json'
+            ? JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] })
+            : ''
+        const { result } = createEditor({ contentType, modelValue: toRef(modelValue) })
+        const editor = result.editor.value!
+
+        editor.view.pasteText('https://opencloud.eu ')
+
+        const textNode = editor.state.doc.firstChild?.firstChild
+        expect(editor.state.doc.textContent).toBe('https://opencloud.eu ')
+        expect(textNode?.text).toBe('https://opencloud.eu')
+        expect(textNode?.marks.find(({ type }) => type.name === 'link')?.attrs.href).toBe(
+          'https://opencloud.eu'
+        )
+      }
+    )
+
+    it.each(['markdown', 'html', 'tiptap-json'] as const)(
+      'links selected text when a URL is pasted for the %s strategy',
+      (contentType) => {
+        const modelValue =
+          contentType === 'tiptap-json'
+            ? JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] })
+            : ''
+        const { result } = createEditor({ contentType, modelValue: toRef(modelValue) })
+        const editor = result.editor.value!
+        editor.commands.insertContent('OpenCloud')
+        editor.commands.setTextSelection({ from: 1, to: 10 })
+
+        editor.view.pasteText('https://opencloud.eu')
+
+        const textNode = editor.state.doc.firstChild?.firstChild
+        expect(textNode?.text).toBe('OpenCloud')
+        expect(textNode?.marks.find(({ type }) => type.name === 'link')?.attrs.href).toBe(
+          'https://opencloud.eu'
+        )
+      }
+    )
+  })
+
+  describe('onUpdate debounce', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('calls onUpdate after 250ms debounce', () => {
+      const onUpdate = vi.fn()
+      const { result } = createEditor({ onUpdate })
+
+      result.editor.value!.commands.insertContent('x')
+      expect(onUpdate).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(250)
+      expect(onUpdate).toHaveBeenCalledTimes(1)
+    })
+
+    it('batches rapid updates — only fires once with latest content', () => {
+      const onUpdate = vi.fn()
+      const { result } = createEditor({ onUpdate })
+
+      result.editor.value!.commands.insertContent('a')
+      result.editor.value!.commands.insertContent('b')
+      result.editor.value!.commands.insertContent('c')
+
+      vi.advanceTimersByTime(250)
+      expect(onUpdate).toHaveBeenCalledTimes(1)
+      expect(onUpdate.mock.calls[0][0]).toContain('c')
+    })
+  })
+
+  describe('destroy flush', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('flushes pending debounce on destroy', () => {
+      const onUpdate = vi.fn()
+      const { result } = createEditor({ onUpdate })
+
+      result.editor.value!.commands.insertContent('pending')
+      expect(onUpdate).not.toHaveBeenCalled()
+
+      result.destroy()
+      expect(onUpdate).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not call onUpdate on destroy when no pending debounce', () => {
+      const onUpdate = vi.fn()
+      const { result } = createEditor({ onUpdate })
+
+      result.destroy()
+      expect(onUpdate).not.toHaveBeenCalled()
+    })
+
+    it('does not call onUpdate on destroy after the debounce already fired', () => {
+      const onUpdate = vi.fn()
+      const { result } = createEditor({ onUpdate })
+
+      result.editor.value!.commands.insertContent('x')
+      vi.advanceTimersByTime(250)
+      expect(onUpdate).toHaveBeenCalledTimes(1)
+
+      result.destroy()
+      expect(onUpdate).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('excludeActions', () => {
+    const collectIds = (groups: { actions: { id: string; childActions?: any[] }[] }[]) => {
+      const ids: string[] = []
+      const walk = (actions: { id: string; childActions?: any[] }[]) => {
+        for (const action of actions) {
+          ids.push(action.id)
+          if (action.childActions) {
+            walk(action.childActions)
+          }
+        }
+      }
+      groups.forEach((group) => walk(group.actions))
+      return ids
+    }
+
+    it('keeps image actions by default', () => {
+      const { result } = createEditor({ contentType: 'markdown' })
+      expect(collectIds(result.actionGroups())).toContain('image')
+    })
+
+    it('removes excluded actions including nested dropdown children', () => {
+      const { result } = createEditor({
+        contentType: 'markdown',
+        excludeActions: ['image', 'image-upload', 'image-url']
+      })
+      const ids = collectIds(result.actionGroups())
+      expect(ids).not.toContain('image')
+      expect(ids).not.toContain('image-upload')
+      expect(ids).not.toContain('image-url')
+    })
+
+    it('keeps the source mode action when a Yjs session is active', () => {
+      createMockStore({ configState: { options: { yjsServerUrl: 'wss://example.test/yjs' } } })
+      const { result } = createEditor({ contentType: 'markdown', ydoc: new Y.Doc() })
+      expect(collectIds(result.actionGroups())).toContain('source-mode')
+    })
+  })
+
+  describe('sourceModeReadonly', () => {
+    const findSourceModeAction = (groups: { actions: { id: string; title: string }[] }[]) =>
+      groups.flatMap((group) => group.actions).find(({ id }) => id === 'source-mode')
+
+    it('is true when a Yjs session is active', () => {
+      createMockStore({ configState: { options: { yjsServerUrl: 'wss://example.test/yjs' } } })
+      const { result } = createEditor({ contentType: 'markdown', ydoc: new Y.Doc() })
+      expect(result.state.sourceModeReadonly.value).toBe(true)
+    })
+
+    it('is false without a Yjs server', () => {
+      const { result } = createEditor({ contentType: 'markdown', ydoc: new Y.Doc() })
+      expect(result.state.sourceModeReadonly.value).toBe(false)
+    })
+
+    it('is false for non-collaborative editors', () => {
+      createMockStore({ configState: { options: { yjsServerUrl: 'wss://example.test/yjs' } } })
+      const { result } = createEditor({ contentType: 'markdown' })
+      expect(result.state.sourceModeReadonly.value).toBe(false)
+    })
+
+    it('titles the source mode action as read-only while a Yjs session is active', () => {
+      createMockStore({ configState: { options: { yjsServerUrl: 'wss://example.test/yjs' } } })
+      const { result } = createEditor({ contentType: 'markdown', ydoc: new Y.Doc() })
+      const action = findSourceModeAction(result.actionGroups())
+      expect(action?.title).toBe('Show source (read-only)')
+    })
+
+    it('titles the source mode action plainly for an editable editor', () => {
+      const { result } = createEditor({ contentType: 'markdown' })
+      const action = findSourceModeAction(result.actionGroups())
+      expect(action?.title).toBe('Show source')
+    })
+
+    it('follows the readonly option', () => {
+      const readonly = ref(false)
+      const { result } = createEditor({ contentType: 'markdown', readonly })
+      expect(result.state.sourceModeReadonly.value).toBe(false)
+
+      readonly.value = true
+      expect(result.state.sourceModeReadonly.value).toBe(true)
+    })
+  })
+
+  describe('ariaLabel', () => {
+    it('sets an aria-label on the editor textbox element', () => {
+      const { result } = createEditor({ ariaLabel: 'Info text' })
+      const dom = result.editor.value!.view.dom
+      expect(dom.getAttribute('aria-label')).toBe('Info text')
+      expect(dom.getAttribute('role')).toBe('textbox')
+      expect(dom.getAttribute('aria-multiline')).toBe('true')
+      expect(dom.hasAttribute('aria-readonly')).toBe(false)
+    })
+
+    it('does not add aria attributes when no aria-label or placeholder is given', () => {
+      const { result } = createEditor()
+      const dom = result.editor.value!.view.dom
+      expect(dom.hasAttribute('aria-label')).toBe(false)
+      expect(dom.hasAttribute('aria-multiline')).toBe(false)
+    })
+
+    it('marks the textbox as read-only while the editor is read-only', async () => {
+      const readonly = ref(true)
+      const { result } = createEditor({ readonly })
+      const dom = result.editor.value!.view.dom
+      expect(dom.getAttribute('aria-readonly')).toBe('true')
+
+      readonly.value = false
+      await nextTick()
+
+      expect(dom.hasAttribute('aria-readonly')).toBe(false)
+    })
+  })
+})

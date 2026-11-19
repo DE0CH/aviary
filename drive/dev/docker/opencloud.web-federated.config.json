@@ -1,0 +1,18 @@
+{
+  "server": "https://oc.opencloud.test:10200",
+  "options": {
+    "contextHelpersReadMore": true
+  },
+  "apps": [
+    "files",
+    "text-editor",
+    "pdf-viewer",
+    "search",
+    "external",
+    "admin-settings",
+    "ocm",
+    "webfinger",
+    "epub-reader",
+    "preview"
+  ]
+}

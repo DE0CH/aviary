@@ -1,0 +1,293 @@
+import translations from 'virtual:l10n/web-app-admin-settings'
+import General from './views/General.vue'
+import Users from './views/Users.vue'
+import Groups from './views/Groups.vue'
+import Spaces from './views/Spaces.vue'
+import Extensions from './views/Extensions.vue'
+import { urlJoin } from '@opencloud-eu/web-client'
+import {
+  ActionExtension,
+  ApplicationInformation,
+  AppMenuItemExtension,
+  ClassicApplicationScript,
+  defineWebApplication,
+  Extension,
+  FloatingActionButtonExtension,
+  useAbility,
+  useExtensionRegistry,
+  useRoute,
+  useUserStore
+} from '@opencloud-eu/web-pkg'
+import { computed, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { useGroupActionsCreateGroup, useUserActionsCreateUser } from './composables'
+import { APPID } from './appid'
+import { extensionPoints, spacesCreateExtensionPoint } from './extensionPoints'
+
+export const routes: ClassicApplicationScript['routes'] = ({ $ability, $gettext }) => [
+  {
+    path: '/',
+    component: General,
+    beforeEnter: () => {
+      if ($ability.can('read-all', 'Setting')) {
+        return { name: 'admin-settings-general' }
+      }
+      if ($ability.can('read-all', 'Account')) {
+        return { name: 'admin-settings-users' }
+      }
+      if ($ability.can('read-all', 'Group')) {
+        return { name: 'admin-settings-groups' }
+      }
+      if ($ability.can('read-all', 'Drive')) {
+        return { name: 'admin-settings-spaces' }
+      }
+      return { path: '/' }
+    }
+  },
+  {
+    path: '/general',
+    name: 'admin-settings-general',
+    component: General,
+    beforeEnter: () => {
+      if (!$ability.can('read-all', 'Setting')) {
+        return { path: '/' }
+      }
+    },
+    meta: {
+      authContext: 'user',
+      title: $gettext('General')
+    }
+  },
+  {
+    path: '/users',
+    name: 'admin-settings-users',
+    component: Users,
+    beforeEnter: () => {
+      if (!$ability.can('read-all', 'Account')) {
+        return { path: '/' }
+      }
+    },
+    meta: {
+      authContext: 'user',
+      title: $gettext('Users')
+    }
+  },
+  {
+    path: '/groups',
+    name: 'admin-settings-groups',
+    component: Groups,
+    beforeEnter: () => {
+      if (!$ability.can('read-all', 'Group')) {
+        return { path: '/' }
+      }
+    },
+    meta: {
+      authContext: 'user',
+      title: $gettext('Groups')
+    }
+  },
+  {
+    path: '/spaces',
+    name: 'admin-settings-spaces',
+    component: Spaces,
+    beforeEnter: () => {
+      if (!$ability.can('read-all', 'Drive')) {
+        return { path: '/' }
+      }
+    },
+    meta: {
+      authContext: 'user',
+      title: $gettext('Spaces')
+    }
+  },
+  {
+    path: '/apps',
+    name: 'admin-settings-extensions',
+    component: Extensions,
+    beforeEnter: () => {
+      if (!$ability.can('read-all', 'Setting')) {
+        return { path: '/' }
+      }
+    },
+    meta: {
+      authContext: 'user',
+      title: $gettext('Apps')
+    }
+  }
+]
+
+export const navItems: ClassicApplicationScript['navItems'] = ({ $ability, $gettext }) => [
+  {
+    name: $gettext('General'),
+    icon: 'settings-4',
+    route: {
+      path: `/${APPID}/general?`
+    },
+    isVisible: () => {
+      return $ability.can('read-all', 'Setting')
+    },
+    priority: 10
+  },
+  {
+    name: $gettext('Users'),
+    icon: 'user',
+    route: {
+      path: `/${APPID}/users?`
+    },
+    isVisible: () => {
+      return $ability.can('read-all', 'Account')
+    },
+    priority: 20
+  },
+  {
+    name: $gettext('Groups'),
+    icon: 'group-2',
+    route: {
+      path: `/${APPID}/groups?`
+    },
+    isVisible: () => {
+      return $ability.can('read-all', 'Group')
+    },
+    priority: 30
+  },
+  {
+    name: $gettext('Spaces'),
+    icon: 'layout-grid',
+    route: {
+      path: `/${APPID}/spaces?`
+    },
+    isVisible: () => {
+      return $ability.can('read-all', 'Drive')
+    },
+    priority: 40
+  },
+  {
+    name: $gettext('Apps'),
+    icon: 'store',
+    fillType: 'line',
+    route: {
+      path: `/${APPID}/apps?`
+    },
+    isVisible: () => {
+      return $ability.can('read-all', 'Setting')
+    },
+    priority: 50
+  }
+]
+
+export default defineWebApplication({
+  setup() {
+    const { can } = useAbility()
+    const userStore = useUserStore()
+    const { $gettext } = useGettext()
+    const currentRoute = useRoute()
+    const { requestExtensions } = useExtensionRegistry()
+
+    const { actions: createUserActions } = useUserActionsCreateUser()
+    const createUserAction = computed(() => unref(createUserActions)[0])
+    const { actions: createGroupActions } = useGroupActionsCreateGroup()
+    const createGroupAction = computed(() => unref(createGroupActions)[0])
+    const createSpaceActions = computed(() =>
+      (requestExtensions<ActionExtension>(spacesCreateExtensionPoint) || []).map((e) => e.action)
+    )
+    const createSpaceAction = computed(() => unref(createSpaceActions)[0])
+
+    const appInfo: ApplicationInformation = {
+      name: $gettext('Admin Settings'),
+      id: APPID,
+      icon: 'settings-4',
+      color: '#887ef1'
+    }
+
+    const extensions = computed<Extension[]>(() => {
+      const items: Extension[] = []
+
+      const menuItemAvailable =
+        userStore.user &&
+        (can('read-all', 'Setting') ||
+          can('read-all', 'Account') ||
+          can('read-all', 'Group') ||
+          can('read-all', 'Drive'))
+
+      if (menuItemAvailable) {
+        const menuItem: AppMenuItemExtension = {
+          id: `app.${appInfo.id}.menuItem`,
+          type: 'appMenuItem',
+          label: () => appInfo.name,
+          color: appInfo.color,
+          icon: appInfo.icon,
+          priority: 40,
+          path: urlJoin(appInfo.id)
+        }
+
+        items.push(menuItem)
+      }
+
+      const floatingActionButton: FloatingActionButtonExtension = {
+        id: `com.github.opencloud-eu.web.${appInfo.id}.floating-action-button`,
+        extensionPointIds: ['app.admin-settings.floating-action-button'],
+        type: 'floatingActionButton',
+        icon: 'add',
+        label: () => $gettext('New'),
+        mode: () => 'handler',
+        tooltip: () => {
+          if (unref(currentRoute).name === 'admin-settings-extensions') {
+            return $gettext('To add apps, use the App Store')
+          }
+        },
+        handler: () => {
+          if (unref(currentRoute).name === 'admin-settings-spaces') {
+            return unref(createSpaceAction)!.handler()
+          }
+
+          if (unref(currentRoute).name === 'admin-settings-users') {
+            return unref(createUserAction).handler()
+          }
+
+          if (unref(currentRoute).name === 'admin-settings-groups') {
+            return unref(createGroupAction).handler()
+          }
+
+          return null
+        },
+        isDisabled: () => {
+          if (
+            unref(currentRoute).name === 'admin-settings-spaces' &&
+            unref(createSpaceAction)?.isVisible()
+          ) {
+            return false
+          }
+
+          if (
+            unref(currentRoute).name === 'admin-settings-users' &&
+            unref(createUserAction).isVisible()
+          ) {
+            return false
+          }
+
+          if (
+            unref(currentRoute).name === 'admin-settings-groups' &&
+            unref(createGroupAction).isVisible()
+          ) {
+            return false
+          }
+
+          return true
+        }
+      }
+
+      items.push(floatingActionButton)
+
+      return items
+    })
+
+    return {
+      appInfo,
+      routes,
+      navItems,
+      translations,
+      extensions,
+      extensionPoints: extensionPoints()
+    }
+  }
+})

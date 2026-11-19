@@ -1,0 +1,212 @@
+<template>
+  <div class="flex w-full">
+    <files-view-wrapper>
+      <app-bar
+        :breadcrumbs="breadcrumbs"
+        :has-bulk-actions="true"
+        :space="space"
+        :view-modes="viewModes"
+      >
+        <template #actions>
+          <oc-button
+            v-if="emptyTrashBinAction.isVisible({ resources: [space] })"
+            :disabled="isEmpty"
+            :action-options="{ resources: [space] }"
+            :class="emptyTrashBinAction.class"
+            size="medium"
+            appearance="filled"
+            class="mr-2"
+            @click="emptyTrashBinAction.handler({ resources: [space] })"
+          >
+            <oc-icon :icon="emptyTrashBinActionIcon" size-class="size-5" />
+            {{ emptyTrashBinAction.label() }}
+          </oc-button>
+        </template>
+      </app-bar>
+      <app-loading-spinner v-if="areResourcesLoading" />
+      <template v-else>
+        <no-content-message
+          v-if="isEmpty"
+          id="files-trashbin-empty"
+          img-src="images/illustrations/trash.svg"
+        >
+          <template #message>
+            <span v-text="$gettext('This trash bin is empty')" />
+          </template>
+          <template #callToAction>
+            <span
+              v-text="$gettext('All deleted files and folders of this space will show up here')"
+            />
+          </template>
+        </no-content-message>
+        <component
+          :is="folderView.component"
+          v-else
+          :fields-displayed="['name', 'ddate']"
+          :are-paths-displayed="true"
+          :resources="paginatedResources"
+          :are-resources-clickable="false"
+          :are-thumbnails-displayed="false"
+          :header-position="fileListHeaderY"
+          :sort-by="sortBy"
+          :sort-dir="sortDir"
+          :space="space"
+          :view-mode="viewMode"
+          :has-actions="showActions"
+          :sort-fields="sortFields.filter((field) => field.name === 'name')"
+          :view-size="viewSize"
+          @sort="handleSort"
+          @update:selected-ids="selectedResourcesIds = $event"
+        >
+          <template #contextMenu="{ resource }">
+            <context-actions
+              v-if="isResourceInSelection(resource)"
+              :action-options="{ space, resources: selectedResources }"
+            />
+          </template>
+          <template #footer>
+            <pagination :pages="paginationPages" :current-page="paginationPage" />
+            <list-info v-if="paginatedResources.length > 0" class="w-full my-2" />
+          </template>
+        </component>
+      </template>
+    </files-view-wrapper>
+    <file-side-bar :space="space" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { storeToRefs } from 'pinia'
+import {
+  AppBar,
+  AppLoadingSpinner,
+  ContextActions,
+  createLocationTrash,
+  eventBus,
+  FileSideBar,
+  Pagination,
+  NoContentMessage,
+  useDocumentTitle,
+  useUserStore,
+  useResourcesStore,
+  useKeyboardActions
+} from '@opencloud-eu/web-pkg'
+
+import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
+import ListInfo from '../../components/FilesList/ListInfo.vue'
+import { useResourcesViewDefaults } from '../../composables'
+import {
+  useKeyboardFileNavigation,
+  useKeyboardFileMouseActions
+} from '../../composables/keyboardActions'
+import { useFileActionsEmptyTrashBin } from '../../composables'
+import { isProjectSpaceResource, SpaceResource, TrashResource } from '@opencloud-eu/web-client'
+import { folderViewsTrashExtensionPoint } from '../../extensionPoints'
+
+const props = defineProps<{
+  space?: SpaceResource | null
+  itemId?: string | number | null
+}>()
+
+const { $gettext } = useGettext()
+const resourcesStore = useResourcesStore()
+
+const userStore = useUserStore()
+const { user } = storeToRefs(userStore)
+
+const resourcesViewDefaults = useResourcesViewDefaults<TrashResource, any, any>({
+  folderViewExtensionPoint: folderViewsTrashExtensionPoint
+})
+
+const {
+  areResourcesLoading,
+  paginatedResources,
+  paginationPages,
+  paginationPage,
+  selectedResourcesIds,
+  fileListHeaderY,
+  sortBy,
+  sortDir,
+  handleSort,
+  selectedResources,
+  isResourceInSelection,
+  viewMode,
+  viewModes,
+  folderView,
+  viewSize,
+  sortFields
+} = resourcesViewDefaults
+
+const keyActions = useKeyboardActions()
+useKeyboardFileNavigation(keyActions, paginatedResources, viewMode)
+useKeyboardFileMouseActions(keyActions, viewMode)
+
+const isEmpty = computed(() => unref(resourcesViewDefaults.storeItems).length < 1)
+
+const { actions: emptyTrashBinActions } = useFileActionsEmptyTrashBin()
+const emptyTrashBinAction = computed(() => unref(emptyTrashBinActions)[0])
+const emptyTrashBinActionIcon = computed(() => {
+  const action = unref(emptyTrashBinAction)
+  return typeof action.icon === 'function' ? action.icon({ resources: [props.space] }) : action.icon
+})
+
+const breadcrumbs = computed(() => {
+  let currentNodeName = props.space?.name
+  if (props.space?.driveType === 'personal') {
+    currentNodeName = $gettext('Personal')
+  }
+  return [
+    {
+      text: $gettext('Deleted files'),
+      to: createLocationTrash('files-trash-overview')
+    },
+    {
+      text: currentNodeName,
+      onClick: () => eventBus.publish('app.files.list.load')
+    }
+  ]
+})
+
+const showActions = computed(() => {
+  return (
+    !isProjectSpaceResource(props.space) ||
+    props.space.canDeleteFromTrashBin({ user: user.value }) ||
+    props.space.canRestoreFromTrashbin({ user: user.value })
+  )
+})
+
+const titleSegments = computed(() => {
+  const segments = [$gettext('Deleted files')]
+  if (props.space?.name) {
+    segments.unshift(props.space.name)
+  }
+  return segments
+})
+useDocumentTitle({ titleSegments })
+
+const performLoaderTask = async () => {
+  if (!props.space) return
+  await resourcesViewDefaults.loadResources(props.space)
+  resourcesViewDefaults.refreshFileListHeaderPosition()
+  resourcesViewDefaults.scrollToResourceFromRoute(
+    unref(resourcesViewDefaults.sortedResources),
+    'files-app-bar'
+  )
+}
+
+let loadResourcesEventToken: string
+
+onMounted(() => {
+  performLoaderTask()
+  loadResourcesEventToken = eventBus.subscribe('app.files.list.load', () => {
+    performLoaderTask()
+  })
+})
+
+onBeforeUnmount(() => {
+  eventBus.unsubscribe('app.files.list.load', loadResourcesEventToken)
+  resourcesStore.setCurrentFolder(null)
+})
+</script>

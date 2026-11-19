@@ -1,0 +1,160 @@
+<template>
+  <div id="account-calendar">
+    <app-loading-spinner v-if="isCalDavLoading" />
+    <template v-else>
+      <account-heading
+        :title="$gettext('Calendar')"
+        :subtitle="
+          isCalDavAvailable
+            ? $gettext(
+                'Here, you can access your personal calendar for integration with third-party apps like Thunderbird, Apple Calendar, and others.'
+              )
+            : ''
+        "
+      />
+      <span v-if="!isCalDavAvailable" class="flex flex-row items-center">
+        <oc-icon name="information" size-class="size-4" fill-type="line" class="mr-1" />
+
+        <span
+          class="calendar-not-configured-message"
+          v-text="
+            $gettext(
+              'The calendar is not yet configured on your system, in order to learn how to enable click'
+            )
+          "
+        />
+        <oc-button
+          no-hover
+          class="ml-1"
+          appearance="raw"
+          type="a"
+          target="_blank"
+          href="https://docs.opencloud.eu/docs/admin/configuration/radicale-integration/"
+        >
+          <span v-text="$gettext('here')" />
+        </oc-button>
+      </span>
+      <template v-else>
+        <account-table
+          :fields="[$gettext('CalDAV information name'), $gettext('CalDAV information actions')]"
+        >
+          <oc-table-tr>
+            <oc-table-td>
+              <account-label
+                class="truncate [&>*]:truncate"
+                :title="serverUrl"
+                :label="$gettext('CalDAV URL')"
+                :description="serverUrl"
+              />
+            </oc-table-td>
+            <oc-table-td>
+              <oc-button
+                appearance="raw"
+                data-testid="copy-caldav-url"
+                size="small"
+                no-hover
+                @click="copyCalDavUrlToClipboard"
+              >
+                <oc-icon :name="copyCalDavUrlIcon" size-class="size-4" />
+                <span class="ml-0.5">{{ $gettext('Copy CalDAV URL') }}</span>
+              </oc-button>
+            </oc-table-td>
+          </oc-table-tr>
+          <oc-table-tr>
+            <oc-table-td>
+              <account-label
+                :label="$gettext('Username')"
+                :description="user.onPremisesSamAccountName"
+              />
+            </oc-table-td>
+            <oc-table-td>
+              <oc-button
+                appearance="raw"
+                data-testid="copy-caldav-username"
+                size="small"
+                no-hover
+                @click="copyCalDavUsernameToClipboard"
+              >
+                <oc-icon :name="copyCalDavUsernameIcon" size-class="size-4" />
+                <span class="ml-0.5">{{ $gettext('Copy CalDAV username') }}</span>
+              </oc-button>
+            </oc-table-td>
+          </oc-table-tr>
+          <oc-table-tr>
+            <oc-table-td colspan="2">
+              <account-label
+                :label="$gettext('Password')"
+                :description="$gettext('An app token needs to be generated and then can be used.')"
+              />
+            </oc-table-td>
+          </oc-table-tr>
+        </account-table>
+        <oc-hidden-announcer ref="copiedAnnouncer" />
+      </template>
+    </template>
+  </div>
+</template>
+<script setup lang="ts">
+import { useGettext } from 'vue3-gettext'
+import AccountTable from '../../components/Account/AccountTable.vue'
+import AccountHeading from '../../components/Account/AccountHeading.vue'
+import AccountLabel from '../../components/Account/AccountLabel.vue'
+import { useClientService, useConfigStore, useUserStore } from '@opencloud-eu/web-pkg'
+import { storeToRefs } from 'pinia'
+import { computed, onMounted, ref, unref, useTemplateRef } from 'vue'
+import { urlJoin } from '@opencloud-eu/web-client'
+import { useTask } from 'vue-concurrency'
+
+const { $gettext } = useGettext()
+const userStore = useUserStore()
+const { user } = storeToRefs(userStore)
+const { serverUrl } = storeToRefs(useConfigStore())
+const clientService = useClientService()
+
+const isCalDavAvailable = ref(false)
+const copiedIcon = 'check'
+const copyIcon = 'file-copy'
+
+const copyCalDavUrlIcon = ref(copyIcon)
+const copyCalDavUsernameIcon = ref(copyIcon)
+const copiedAnnouncer = useTemplateRef('copiedAnnouncer')
+
+const isCalDavLoading = computed(
+  () => unref(loadCalDavTask.isRunning) || !unref(loadCalDavTask.last)
+)
+
+function announceCopied() {
+  unref(copiedAnnouncer)?.announce($gettext('Copied to clipboard!'))
+}
+
+const copyCalDavUrlToClipboard = () => {
+  navigator.clipboard.writeText(unref(serverUrl))
+  copyCalDavUrlIcon.value = copiedIcon
+  announceCopied()
+  setTimeout(() => (copyCalDavUrlIcon.value = copyIcon), 1500)
+}
+
+const copyCalDavUsernameToClipboard = () => {
+  navigator.clipboard.writeText(user.value.onPremisesSamAccountName)
+  copyCalDavUsernameIcon.value = copiedIcon
+  announceCopied()
+  setTimeout(() => (copyCalDavUsernameIcon.value = copyIcon), 1500)
+}
+
+const loadCalDavTask = useTask(function* () {
+  const wellKnownUrl = '.well-known/caldav'
+  try {
+    const response = yield clientService.httpAuthenticated.get(wellKnownUrl, { method: 'OPTIONS' })
+    isCalDavAvailable.value = response.request.responseURL.includes(
+      urlJoin(unref(serverUrl), 'caldav')
+    )
+  } catch (e) {
+    console.error(e)
+    isCalDavAvailable.value = false
+  }
+})
+
+onMounted(async () => {
+  await loadCalDavTask.perform()
+})
+</script>

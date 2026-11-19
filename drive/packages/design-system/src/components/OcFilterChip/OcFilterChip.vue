@@ -1,0 +1,235 @@
+<template>
+  <div
+    class="oc-filter-chip flex"
+    :class="{ 'oc-filter-chip-toggle': isToggle, 'oc-filter-chip-raw': raw }"
+  >
+    <oc-button
+      :id="id"
+      ref="chipButtonRef"
+      :gap-size="filterActive ? 'small' : 'none'"
+      class="oc-filter-chip-button oc-pill py-1 rounded-md h-[32px] max-w-40 focus:z-90 transition-[gap]"
+      :class="{
+        'oc-filter-chip-button-selected rounded-l-md rounded-r-none pr-2 pl-3': filterActive,
+        'px-3': !filterActive
+      }"
+      :appearance="buttonAppearance"
+      :color-role="buttonColorRole"
+      :no-hover="filterActive || !hasActiveState"
+      :size="size"
+      :aria-pressed="isToggle ? isToggleActive.toString() : undefined"
+      :aria-label="selectionLabel"
+      @click="isToggle ? emit('toggleFilter') : false"
+    >
+      <oc-icon
+        :class="{
+          'transform-[scale(1)] ease-in': filterActive,
+          'transform-[scale(0)] ease-out w-0': !filterActive
+        }"
+        class="transition-all duration-250"
+        name="check"
+        size-class="size-4"
+      />
+      <span
+        class="truncate oc-filter-chip-label"
+        :title="selectedItemNames[0]"
+        v-text="!!selectedItemNames.length ? selectedItemNames[0] : filterLabel"
+      />
+      <span v-if="selectedItemNames.length > 1" v-text="` +${selectedItemNames.length - 1}`" />
+      <oc-icon
+        v-if="!filterActive && !isToggle"
+        name="arrow-down-s"
+        size-class="size-4"
+        fill-type="line"
+        class="ml-1"
+      />
+    </oc-button>
+    <oc-drop
+      v-if="!isToggle"
+      ref="dropRef"
+      :toggle="'#' + id"
+      :title="filterLabel"
+      class="oc-filter-chip-drop"
+      mode="click"
+      padding-size="small"
+      :close-on-click="closeOnClick"
+      @hide-drop="emit('hideDrop')"
+      @show-drop="emit('showDrop')"
+    >
+      <slot />
+    </oc-drop>
+    <oc-button
+      v-if="filterActive"
+      v-oc-tooltip="$gettext('Clear filter')"
+      class="oc-filter-chip-clear px-1 rounded-l-none rounded-r-md h-[32px] not-[.oc-filter-chip-toggle_.oc-filter-chip-clear]:ml-[1px] focus:z-90"
+      appearance="filled"
+      color-role="secondaryContainer"
+      :aria-label="$gettext('Clear filter %{filterLabel}', { filterLabel })"
+      :no-hover="filterActive"
+      @click="clearFilter"
+    >
+      <oc-icon name="close" size-class="size-4" />
+    </oc-button>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ComponentPublicInstance, computed, nextTick, unref, useTemplateRef } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { uniqueId } from '../../helpers'
+import OcDrop from '../OcDrop/OcDrop.vue'
+
+export interface Props {
+  /**
+   * @docs The label of the filter.
+   */
+  filterLabel: string
+  /**
+   * @docs Determines if the drop should close when an item is clicked.
+   * @default false
+   */
+  closeOnClick?: boolean
+  /**
+   * @docs The element ID of the filter.
+   */
+  id?: string
+  /**
+   * @docs Determines if the filter is a binary toggle.
+   * @default false
+   */
+  isToggle?: boolean
+  /**
+   * @docs Determines if the toggle is active.
+   * @default false
+   */
+  isToggleActive?: boolean
+  /**
+   * @docs Determines if the filter has a raw appearance.
+   * @default false
+   */
+  raw?: boolean
+  /**
+   * @docs Determines if the filter has an active state (e.g. if one or more items are selected).
+   * @default true
+   */
+  hasActiveState?: boolean
+  /**
+   * @docs The names of the selected items.
+   */
+  selectedItemNames?: string[]
+  /**
+   * @docs The size of the filter chip.
+   * @default medium
+   */
+  size?: 'small' | 'medium' | 'large'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the filter has been cleared.
+   */
+  (e: 'clearFilter'): void
+  /**
+   * @docs Emitted when the drop has been hidden.
+   */
+  (e: 'hideDrop'): void
+  /**
+   * @docs Emitted when the drop has been displayed.
+   */
+  (e: 'showDrop'): void
+  /**
+   * @docs Emitted when the filter has been toggled.
+   */
+  (e: 'toggleFilter'): void
+}
+
+export interface Slot {
+  /**
+   * @docs The content of the filter chip.
+   */
+  default: () => unknown
+}
+
+const {
+  filterLabel,
+  closeOnClick = false,
+  id = uniqueId('oc-filter-chip-'),
+  isToggle = false,
+  isToggleActive = false,
+  raw = false,
+  hasActiveState = true,
+  selectedItemNames = [],
+  size = 'medium'
+} = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+defineSlots<Slot>()
+
+const { $gettext } = useGettext()
+
+const dropRef = useTemplateRef<typeof OcDrop>('dropRef')
+
+const filterActive = computed(() => {
+  if (!hasActiveState) {
+    return false
+  }
+  if (isToggle) {
+    return isToggleActive
+  }
+  return !!selectedItemNames.length
+})
+
+// names the chip after the filter as well, because the visible label is replaced by the selection
+const selectionLabel = computed(() => {
+  if (!selectedItemNames.length) {
+    return undefined
+  }
+  const selection =
+    selectedItemNames.length > 1
+      ? `${selectedItemNames[0]} +${selectedItemNames.length - 1}`
+      : selectedItemNames[0]
+  return $gettext('%{filter}: %{selection}', { filter: filterLabel, selection })
+})
+
+const hideDrop = () => {
+  unref(dropRef)?.hide()
+}
+
+const chipButtonRef = useTemplateRef<ComponentPublicInstance>('chipButtonRef')
+async function clearFilter() {
+  emit('clearFilter')
+  // the clear button is removed, so hand the focus to the chip instead of losing it to the body
+  await nextTick()
+  unref(chipButtonRef)?.$el.focus()
+}
+
+const buttonAppearance = computed(() => {
+  if (unref(filterActive)) {
+    return 'filled'
+  }
+  if (raw) {
+    return 'raw-inverse'
+  }
+  return 'outline'
+})
+
+const buttonColorRole = computed(() => {
+  if (unref(filterActive)) {
+    return 'secondaryContainer'
+  }
+  if (raw) {
+    return 'surface'
+  }
+  return 'secondary'
+})
+
+defineExpose({ hideDrop })
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .oc-filter-chip-button {
+    outline-color: var(--color-role-outline-variant);
+  }
+}
+</style>

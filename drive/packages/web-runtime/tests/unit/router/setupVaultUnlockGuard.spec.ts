@@ -1,0 +1,712 @@
+import { Router } from 'vue-router'
+import { setupVaultUnlockGuard } from '../../../src/router/setupVaultUnlockGuard'
+import {
+  getVaultClaim,
+  resolveVaultEngine,
+  useAuthStore,
+  useSpacesLoading,
+  useSpacesStore
+} from '@opencloud-eu/web-pkg'
+
+vi.mock('@opencloud-eu/web-pkg', async () => {
+  const { getSpaceForDriveAliasAndItem } =
+    await import('../../../../web-pkg/src/helpers/spaces/driveAlias')
+  const {
+    contextRouteNameKey,
+    contextRouteParamsKey,
+    contextRouteQueryKey,
+    queryItemAsString,
+    routeToContextQuery
+  } = await import('../../../../web-pkg/src/composables/appDefaults/useAppNavigation')
+  return {
+    contextRouteNameKey,
+    contextRouteParamsKey,
+    contextRouteQueryKey,
+    getSpaceForDriveAliasAndItem,
+    queryItemAsString,
+    routeToContextQuery,
+    getVaultClaim: vi.fn(),
+    resolveVaultEngine: vi.fn(),
+    useAuthStore: vi.fn(() => ({ isGuestContext: false })),
+    useExtensionRegistry: vi.fn(() => ({})),
+    useSpacesLoading: vi.fn(),
+    useSpacesStore: vi.fn()
+  }
+})
+
+const space = { id: 'space-1', driveAlias: 'personal/admin' }
+const unlockRoute = {
+  name: 'rclone-crypt-unlock',
+  query: { spaceId: 'space-1', vaultRoot: '/my.vault' }
+}
+
+type Guard = (to: any, from?: any) => Promise<unknown>
+
+// vue-router always tells a guard where the navigation came from. A cold start
+// gets the initial location, which carries no name.
+const coldStart = { name: undefined as string | undefined, fullPath: '/' }
+const fromSearch = { name: 'files-common-search', fullPath: '/search?term=secret' }
+
+const loadMountPoints = vi.fn()
+const createShareSpace = vi.fn()
+const getSpace = vi.fn()
+
+function installGuard({
+  spaces = [] as any[],
+  claim = null as any,
+  engine = null as any,
+  waitForSpaces = vi.fn(() => Promise.resolve()),
+  mountPointsInitialized = true
+} = {}): Guard {
+  vi.mocked(useSpacesLoading).mockReturnValue({ waitForSpaces } as any)
+  vi.mocked(useSpacesStore).mockReturnValue({
+    spaces,
+    mountPointsInitialized,
+    loadMountPoints,
+    createShareSpace,
+    getSpace
+  } as any)
+  vi.mocked(getVaultClaim).mockReturnValue(claim)
+  vi.mocked(resolveVaultEngine).mockResolvedValue(engine)
+
+  const clientService = { graphAuthenticated: {} } as any
+
+  let guard: Guard
+  const router = { beforeEach: (fn: Guard) => (guard = fn) } as unknown as Router
+  setupVaultUnlockGuard(router, clientService)
+  return guard
+}
+
+describe('setupVaultUnlockGuard', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('allows navigation without a drive target', async () => {
+    const guard = installGuard()
+    expect(await guard({ params: {} })).toBe(true)
+  })
+
+  it('lets the unlock route itself through', async () => {
+    const guard = installGuard({ spaces: [space] })
+    expect(
+      await guard({
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        name: 'rclone-crypt-unlock'
+      })
+    ).toBe(true)
+  })
+
+  it.each(['resolvePublicLink', 'resolvePublicOcmLink'])(
+    'does not wait for spaces on the %s route with a path after the token',
+    async (name) => {
+      // spaces of a public link only get initialized after the route resolved the token
+      const waitForSpaces = vi.fn(() => new Promise<void>(() => {}))
+      const guard = installGuard({ waitForSpaces })
+
+      const result = await Promise.race([
+        guard({ name, params: { token: 'token', driveAliasAndItem: 'sub' } }, coldStart),
+        new Promise((resolve) => setTimeout(() => resolve('pending'), 50))
+      ])
+
+      expect(result).toBe(true)
+      expect(waitForSpaces).not.toHaveBeenCalled()
+    }
+  )
+
+  it('allows a non-vault path', async () => {
+    const guard = installGuard({ spaces: [space], claim: null })
+    expect(
+      await guard({ params: { driveAliasAndItem: 'personal/admin/folder' }, fullPath: '/x' })
+    ).toBe(true)
+  })
+
+  it('allows an already-unlocked vault path (engine resolves)', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: {}
+    })
+    expect(
+      await guard({ params: { driveAliasAndItem: 'personal/admin/my.vault' }, fullPath: '/x' })
+    ).toBe(true)
+  })
+
+  it('waits for the spaces store before matching the target drive', async () => {
+    const spaces: any[] = []
+    const guard = installGuard({
+      spaces,
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null,
+      waitForSpaces: vi.fn(() => {
+        spaces.push(space)
+        return Promise.resolve()
+      })
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/personal/admin/my.vault'
+      },
+      coldStart
+    )
+
+    expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), space, '/my.vault')
+    expect(result).toMatchObject({ name: 'rclone-crypt-unlock' })
+  })
+
+  it('redirects a locked vault path to the unlock route, carrying the intended URL', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/personal/admin/my.vault'
+      },
+      coldStart
+    )
+
+    expect(result).toEqual({
+      name: 'rclone-crypt-unlock',
+      query: {
+        spaceId: 'space-1',
+        vaultRoot: '/my.vault',
+        redirectUrl: '/files/personal/admin/my.vault'
+      }
+    })
+  })
+
+  it('keeps the public link context, so anonymous visitors are not sent to the login', async () => {
+    const publicSpace = { id: 'token', driveAlias: 'public/token', driveType: 'public' }
+    const guard = installGuard({
+      spaces: [publicSpace],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        name: 'files-public-link',
+        params: { driveAliasAndItem: 'public/token/my.vault' },
+        query: {},
+        fullPath: '/files/link/public/token/my.vault'
+      },
+      coldStart
+    )
+
+    expect(result).toMatchObject({
+      query: {
+        contextRouteName: 'files-public-link',
+        contextRouteParams: { driveAliasAndItem: 'public/token/my.vault' }
+      }
+    })
+  })
+
+  it('keeps the guest context, so guests are not sent to the login', async () => {
+    vi.mocked(useAuthStore).mockReturnValueOnce({ isGuestContext: true } as any)
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    getSpace.mockReturnValueOnce(shareSpace)
+    const guard = installGuard({
+      spaces: [shareSpace],
+      claim: { vaultRoot: '/', unlockRoute },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        name: 'files-guest-link',
+        params: { driveAliasAndItem: 'share/myvault.vault' },
+        query: { shareId: 'share-123' },
+        fullPath: '/files/guest/share/myvault.vault?shareId=share-123'
+      },
+      coldStart
+    )
+
+    expect(result).toMatchObject({
+      query: {
+        contextRouteName: 'files-guest-link',
+        contextRouteParams: { driveAliasAndItem: 'share/myvault.vault' },
+        redirectUrl: '/files/guest/share/myvault.vault?shareId=share-123'
+      }
+    })
+  })
+
+  it("passes on an app route's own context, as the auth guard only looks one level deep", async () => {
+    vi.mocked(useAuthStore).mockReturnValueOnce({ isGuestContext: true } as any)
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    getSpace.mockReturnValueOnce(shareSpace)
+    const guard = installGuard({
+      spaces: [shareSpace],
+      claim: { vaultRoot: '/', unlockRoute },
+      engine: null
+    })
+    const contextQuery = {
+      contextRouteName: 'files-guest-link',
+      contextRouteParams: { driveAliasAndItem: 'share/myvault.vault' },
+      contextRouteQuery: { shareId: 'share-123' }
+    }
+
+    const result = (await guard(
+      {
+        name: 'text-editor',
+        params: { driveAliasAndItem: 'share/myvault.vault/notes.md' },
+        query: { shareId: 'share-123', permissionId: 'permission-1', ...contextQuery },
+        fullPath: '/text-editor/share/myvault.vault/notes.md'
+      },
+      coldStart
+    )) as any
+
+    expect(result.query).toMatchObject(contextQuery)
+    expect(result.query).not.toHaveProperty('permissionId')
+  })
+
+  it('carries where the user came from, so cancelling can return there', async () => {
+    // e.g. opening a vault from the search results: cancelling the unlock has to
+    // land back on the results, not next to the vault.
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/personal/admin/my.vault'
+      },
+      fromSearch
+    )
+
+    expect(result).toMatchObject({ query: { cancelUrl: '/search?term=secret' } })
+  })
+
+  it('omits the cancel URL on a cold start, where there is no page to return to', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = (await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/personal/admin/my.vault'
+      },
+      coldStart
+    )) as any
+
+    expect(result.query).not.toHaveProperty('cancelUrl')
+  })
+
+  it('omits the cancel URL when the user came from the unlock route itself', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = (await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/personal/admin/my.vault'
+      },
+      { name: 'rclone-crypt-unlock', fullPath: '/rclone-crypt/unlock?vaultRoot=%2Fmy.vault' }
+    )) as any
+
+    expect(result.query).not.toHaveProperty('cancelUrl')
+  })
+
+  it.each([
+    { name: 'oidcCallback', fullPath: '/web-oidc-callback?code=used-code&state=state' },
+    { name: 'resolvePrivateLink', fullPath: '/f/file-1' },
+    {
+      name: 'resolvePublicLink',
+      fullPath: '/s/token?redirectUrl=/files/link/public/token/my.vault'
+    },
+    {
+      name: 'resolvePublicOcmLink',
+      fullPath: '/o/token?redirectUrl=/files/link/public/token/my.vault'
+    },
+    { name: 'resolveGuestLink', fullPath: '/g/token' },
+    { name: 'renewGuestLink', fullPath: '/g/renew/permission-1' }
+  ])(
+    'omits the cancel URL when the user came from $name, a route that only redirects and cannot be returned to',
+    async (from) => {
+      const guard = installGuard({
+        spaces: [space],
+        claim: { vaultRoot: '/my.vault', unlockRoute },
+        engine: null
+      })
+
+      const result = (await guard(
+        {
+          params: { driveAliasAndItem: 'personal/admin/my.vault' },
+          fullPath: '/files/personal/admin/my.vault?scrollTo=file-1'
+        },
+        from
+      )) as any
+
+      expect(result.query).not.toHaveProperty('cancelUrl')
+    }
+  )
+
+  it('omits the cancel URL when the user came from inside the same vault', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = (await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault/sub' },
+        fullPath: '/files/spaces/personal/admin/my.vault/sub'
+      },
+      {
+        name: 'files-spaces-generic',
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/spaces/personal/admin/my.vault'
+      }
+    )) as any
+
+    expect(result.query).not.toHaveProperty('cancelUrl')
+  })
+
+  it('omits the cancel URL for anywhere in a vault space, whose root is "/"', async () => {
+    const vaultSpace = { id: 'space-2', driveAlias: 'project/secrets' }
+    const guard = installGuard({
+      spaces: [vaultSpace],
+      claim: {
+        vaultRoot: '/',
+        unlockRoute: { name: 'rclone-crypt-unlock', query: { spaceId: 'space-2', vaultRoot: '/' } }
+      },
+      engine: null
+    })
+
+    const result = (await guard(
+      {
+        params: { driveAliasAndItem: 'project/secrets/sub' },
+        fullPath: '/files/spaces/project/secrets/sub'
+      },
+      {
+        name: 'files-spaces-generic',
+        params: { driveAliasAndItem: 'project/secrets' },
+        fullPath: '/files/spaces/project/secrets'
+      }
+    )) as any
+
+    expect(result.query).not.toHaveProperty('cancelUrl')
+  })
+
+  it('keeps a cancel URL pointing next to the vault, not into it', async () => {
+    const guard = installGuard({
+      spaces: [space],
+      claim: { vaultRoot: '/my.vault', unlockRoute },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'personal/admin/my.vault' },
+        fullPath: '/files/spaces/personal/admin/my.vault'
+      },
+      {
+        name: 'files-spaces-generic',
+        params: { driveAliasAndItem: 'personal/admin' },
+        fullPath: '/files/spaces/personal/admin'
+      }
+    )
+
+    expect(result).toMatchObject({ query: { cancelUrl: '/files/spaces/personal/admin' } })
+  })
+
+  describe('two spaces of the same name', () => {
+    // The server derives a drive alias from the space name, so two spaces called
+    // "test" both live under `project/test`. Matching on the alias alone hands
+    // back an arbitrary one of them - and with it an arbitrary unlock state.
+    const unlockedVault = { id: 'space-a', fileId: 'space-a', driveAlias: 'project/test' }
+    const lockedVault = { id: 'space-b', fileId: 'space-b', driveAlias: 'project/test' }
+    const vaultClaim = {
+      vaultRoot: '/',
+      unlockRoute: { name: 'rclone-crypt-unlock', query: { vaultRoot: '/' } }
+    }
+
+    it('gates the space the fileId points at, not the first of that name', async () => {
+      const guard = installGuard({
+        spaces: [unlockedVault, lockedVault],
+        claim: vaultClaim,
+        // The engine only resolves for the unlocked space, which is what the
+        // scheme extension keys on internally.
+        engine: null
+      })
+
+      const result = await guard(
+        {
+          params: { driveAliasAndItem: 'project/test' },
+          query: { fileId: 'space-b' },
+          fullPath: '/files/spaces/project/test?fileId=space-b'
+        },
+        coldStart
+      )
+
+      expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), lockedVault, '/')
+      expect(resolveVaultEngine).toHaveBeenCalledWith(expect.anything(), lockedVault, '/')
+      expect(result).toMatchObject({ name: 'rclone-crypt-unlock' })
+    })
+
+    it('resolves a nested item to its own space', async () => {
+      const guard = installGuard({
+        spaces: [unlockedVault, lockedVault],
+        claim: vaultClaim,
+        engine: {}
+      })
+
+      const result = await guard(
+        {
+          params: { driveAliasAndItem: 'project/test/sub' },
+          query: { fileId: 'space-b!item-1' },
+          fullPath: '/files/spaces/project/test/sub?fileId=space-b%21item-1'
+        },
+        coldStart
+      )
+
+      expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), lockedVault, '/sub')
+      expect(result).toBe(true)
+    })
+
+    it('falls back to the drive alias when the URL carries no fileId', async () => {
+      const guard = installGuard({
+        spaces: [unlockedVault, lockedVault],
+        claim: vaultClaim,
+        engine: null
+      })
+
+      await guard(
+        {
+          params: { driveAliasAndItem: 'project/test' },
+          fullPath: '/files/spaces/project/test'
+        },
+        coldStart
+      )
+
+      expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), unlockedVault, '/')
+    })
+  })
+
+  it('does not match a sibling drive alias (prefix guard)', async () => {
+    // driveAlias is `personal/admin`; `personal/admin-other/...` must NOT match,
+    // otherwise we'd compute a wrong path and possibly mis-gate it.
+    const guard = installGuard({ spaces: [space], claim: null })
+
+    const result = await guard({
+      params: { driveAliasAndItem: 'personal/admin-other/x' },
+      fullPath: '/x'
+    })
+
+    expect(result).toBe(true)
+    expect(getVaultClaim).not.toHaveBeenCalled()
+  })
+
+  it('redirects a directly-shared vault root (path computed as "/") to unlock', async () => {
+    // The vault IS the share root: driveAliasAndItem === the share-space
+    // driveAlias, so the computed path is "/", and the claim roots the vault at
+    // "/". This is the share-receiver flow that previously got no unlock prompt.
+    const shareSpace = { id: 's1', driveAlias: 'share/myvault.vault' }
+    const guard = installGuard({
+      spaces: [shareSpace],
+      claim: {
+        vaultRoot: '/',
+        unlockRoute: { name: 'rclone-crypt-unlock', query: { spaceId: 's1', vaultRoot: '/' } }
+      },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'share/myvault.vault' },
+        fullPath: '/files/spaces/share/myvault.vault'
+      },
+      coldStart
+    )
+
+    expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), shareSpace, '/')
+    expect(result).toEqual({
+      name: 'rclone-crypt-unlock',
+      query: { spaceId: 's1', vaultRoot: '/', redirectUrl: '/files/spaces/share/myvault.vault' }
+    })
+  })
+
+  it('lazy-loads mount-points and builds the share space, then redirects a locked vault', async () => {
+    // On a hard reload into a share space, the share space isn't in the store
+    // yet (mount-point spaces are fetched on demand). Given the `shareId` query,
+    // the guard loads the mount points, finds the matching one, builds a share
+    // space from it, and only then gates the vault - otherwise a locked vault
+    // would slip through unguarded.
+    const mountPoint = {
+      id: 'mp1',
+      name: 'myvault.vault',
+      root: { remoteItem: { id: 'share-123' } }
+    }
+    const builtShareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    const spaces: any[] = []
+    loadMountPoints.mockImplementation(() => {
+      // simulate the store getting populated once the load resolves
+      spaces.push(mountPoint)
+    })
+    createShareSpace.mockReturnValue(builtShareSpace)
+
+    const guard = installGuard({
+      spaces,
+      mountPointsInitialized: false,
+      claim: {
+        vaultRoot: '/',
+        unlockRoute: {
+          name: 'rclone-crypt-unlock',
+          query: { spaceId: 'share-123', vaultRoot: '/' }
+        }
+      },
+      engine: null
+    })
+
+    const result = await guard(
+      {
+        params: { driveAliasAndItem: 'share/myvault.vault' },
+        query: { shareId: 'share-123' },
+        fullPath: '/files/spaces/share/myvault.vault'
+      },
+      coldStart
+    )
+
+    expect(loadMountPoints).toHaveBeenCalledWith({ graphClient: expect.anything() })
+    expect(createShareSpace).toHaveBeenCalledWith({
+      driveAliasPrefix: 'share',
+      id: 'share-123',
+      shareName: 'myvault.vault'
+    })
+    expect(result).toEqual({
+      name: 'rclone-crypt-unlock',
+      query: {
+        spaceId: 'share-123',
+        vaultRoot: '/',
+        redirectUrl: '/files/spaces/share/myvault.vault'
+      }
+    })
+  })
+
+  it('does not build a share space when no mount point matches the share id', async () => {
+    const guard = installGuard({
+      spaces: [{ id: 'other', root: { remoteItem: { id: 'different' } } }],
+      mountPointsInitialized: true
+    })
+
+    const result = await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault' },
+      query: { shareId: 'share-123' },
+      fullPath: '/x'
+    })
+
+    expect(result).toBe(true)
+    expect(createShareSpace).not.toHaveBeenCalled()
+    expect(getVaultClaim).not.toHaveBeenCalled()
+  })
+
+  it('builds the share space from the share id for guests without loading mount points', async () => {
+    vi.mocked(useAuthStore).mockReturnValueOnce({ isGuestContext: true } as any)
+    createShareSpace.mockReturnValue({ id: 'share-123', driveAlias: 'share/myvault.vault' })
+    const guard = installGuard({ mountPointsInitialized: false, claim: null })
+
+    const result = await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault/sub' },
+      query: { shareId: 'share-123' },
+      fullPath: '/x'
+    })
+
+    expect(result).toBe(true)
+    expect(loadMountPoints).not.toHaveBeenCalled()
+    expect(createShareSpace).toHaveBeenCalledWith({
+      driveAliasPrefix: 'share',
+      id: 'share-123',
+      shareName: 'myvault.vault'
+    })
+    expect(getVaultClaim).toHaveBeenCalled()
+  })
+
+  it('prefers the share space of the share id over a share with the same drive alias', async () => {
+    const otherShareSpace = { id: 'other-share', driveAlias: 'share/myvault.vault' }
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    getSpace.mockReturnValueOnce(shareSpace)
+    const guard = installGuard({ spaces: [otherShareSpace], claim: null })
+
+    await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault' },
+      query: { shareId: 'share-123' },
+      fullPath: '/x'
+    })
+
+    expect(getSpace).toHaveBeenCalledWith('share-123')
+    expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), shareSpace, '/')
+    expect(createShareSpace).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to a share with the same drive alias when the share id is unknown', async () => {
+    vi.mocked(useAuthStore).mockReturnValueOnce({ isGuestContext: true } as any)
+    const otherShareSpace = { id: 'other-share', driveAlias: 'share/myvault.vault' }
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    createShareSpace.mockReturnValue(shareSpace)
+    const guard = installGuard({ spaces: [otherShareSpace], claim: null })
+
+    await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault' },
+      query: { shareId: 'share-123' },
+      fullPath: '/x'
+    })
+
+    expect(createShareSpace).toHaveBeenCalledWith({
+      driveAliasPrefix: 'share',
+      id: 'share-123',
+      shareName: 'myvault.vault'
+    })
+    expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), shareSpace, '/')
+  })
+
+  it('falls back to the invited share for guests without a share id, like the drive resolver', async () => {
+    vi.mocked(useAuthStore).mockReturnValueOnce({
+      isGuestContext: true,
+      guestSpaceId: 'share-123'
+    } as any)
+    const otherShareSpace = { id: 'other-share', driveAlias: 'share/myvault.vault' }
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    getSpace.mockReturnValueOnce(shareSpace)
+    const guard = installGuard({ spaces: [otherShareSpace, shareSpace], claim: null })
+
+    await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault' },
+      fullPath: '/x'
+    })
+
+    expect(getSpace).toHaveBeenCalledWith('share-123')
+    expect(getVaultClaim).toHaveBeenCalledWith(expect.anything(), shareSpace, '/')
+  })
+
+  it('skips the mount-point lazy load when the share space is already in the store', async () => {
+    const shareSpace = { id: 'share-123', driveAlias: 'share/myvault.vault' }
+    getSpace.mockReturnValueOnce(shareSpace)
+    const guard = installGuard({
+      spaces: [shareSpace],
+      mountPointsInitialized: false,
+      claim: null
+    })
+
+    await guard({
+      params: { driveAliasAndItem: 'share/myvault.vault' },
+      query: { shareId: 'share-123' },
+      fullPath: '/x'
+    })
+
+    expect(loadMountPoints).not.toHaveBeenCalled()
+    expect(createShareSpace).not.toHaveBeenCalled()
+  })
+})

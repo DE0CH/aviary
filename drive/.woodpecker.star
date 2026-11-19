@@ -1,0 +1,1940 @@
+repo_slug = "opencloud-eu/web"
+docker_repo_slug = "opencloudeu/web"
+
+ALPINE_GIT = "alpine/git:latest"
+
+# renovate: datasource=docker depName=apache/tika
+APACHE_TIKA = "apache/tika:4.3.0-SNAPSHOT"
+
+# renovate: datasource=docker depName=shumc/imagor
+IMAGOR = "shumc/imagor:1.10.1"
+
+# renovate: datasource=docker depName=collabora/code
+COLLABORA_CODE = "collabora/code:26.04.5.2.1"
+
+# renovate: datasource=docker depName=quay.io/keycloak/keycloak
+KEYCLOAK = "quay.io/keycloak/keycloak:26.7.3"
+MINIO_MC = "quay.io/opencloudeu/minio-mc-ci:1.0"
+OC_CI_BAZEL_BUILDIFIER = "quay.io/opencloudeu/bazel-buildifier-ci:latest"
+OC_CI_GOLANG = "quay.io/opencloudeu/golang-ci:1.26"
+OC_CI_NODEJS = "quay.io/opencloudeu/nodejs-ci:24"
+OC_CI_NODEJS_ALPINE = "quay.io/opencloudeu/nodejs-alpine-ci:24"
+OC_CI_WAIT_FOR = "quay.io/opencloudeu/wait-for-ci:latest"
+
+# renovate: datasource=docker depName=ghcr.io/euro-office/documentserver
+EURO_OFFICE_DOCUMENT_SERVER = "ghcr.io/euro-office/documentserver:v9.3.2"
+PLUGINS_DOCKER_BUILDX = "woodpeckerci/plugin-docker-buildx:latest"
+PLUGINS_DOCKER_PUSHRM = "chko/docker-pushrm:1"
+PLUGINS_GH_PAGES = "plugins/gh-pages:1"
+PLUGINS_GITHUB_RELEASE = "plugins/github-release:1"
+PLUGINS_GIT_ACTION = "quay.io/thegeeklab/wp-git-action:2"
+PLUGINS_S3 = "plugins/s3:1.5"
+PLUGINS_S3_CACHE = "plugins/s3-cache:1"
+PLUGINS_SLACK = "plugins/slack:1"
+POSTGRES_ALPINE = "postgres:alpine3.24"
+OPENLDAP = "bitnamilegacy/openldap:2.6"
+READY_RELEASE_GO = "woodpeckerci/plugin-ready-release-go:latest"
+
+YJS_TAG_PREFIX = "yjs-v"
+YJS_DOCKERFILE = "services/yjs/Dockerfile"
+YJS_PACKAGE_JSON = "services/yjs/package.json"
+YJS_DOCKER_REPOS = "opencloudeu/yjs,quay.io/opencloudeu/yjs"
+YJS_DOCKER_PLATFORMS = "linux/amd64,linux/arm64"
+YJS_IMAGE_DESCRIPTION = "Yjs collaboration server for OpenCloud"
+
+WEB_PUBLISH_NPM_PACKAGES = ["design-system", "eslint-config", "extension-sdk", "prettier-config", "tsconfig", "web-client", "web-pkg", "web-test-helpers"]
+WEB_PUBLISH_NPM_ORGANIZATION = "@opencloud-eu"
+CACHE_S3_SERVER = "https://s3.ci.opencloud.eu"
+MACHINE_AUTH_API_KEY = "4f9e8d1c7a5b2e6f93c0a1d8e7b4f6c2d9a3e8f1b7c5d0a6e4f2c9b8a1d7e3f6"
+
+dir = {
+    "base": "/woodpecker/src/github.com/opencloud-eu/web",
+    "web": "/woodpecker/src/github.com/opencloud-eu/web/web",
+    "app": "/srv/app",
+    "openCloudConfig": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/config-opencloud.json",
+    "openCloudRevaDataRoot": "/srv/app/tmp/opencloud/opencloud/data/",
+    "federatedOpenCloudConfig": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/config-opencloud-federated.json",
+    "ocmProviders": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/providers.json",
+    "playwrightBrowsersArchive": "/woodpecker/src/github.com/opencloud-eu/web/web/playwright-browsers.tar.gz",
+}
+
+config = {
+    "app": "web",
+    "rocketchat": {
+        "channel": "builds",
+        "from_secret": "rocketchat_talk_webhook",
+    },
+    "branches": [
+        "main",
+        "stable-*",
+    ],
+    "pnpmlint": True,
+    "pnpmformat": True,
+    "check-types": True,
+    "e2e": {
+        "1": {
+            "earlyFail": True,
+            "skip": False,
+            "suites": [
+                "journeys/",
+                "smoke/",
+            ],
+            "browsers": [
+                "chromium",
+                "firefox",
+                "webkit",
+            ],
+        },
+        "2": {
+            "earlyFail": True,
+            "skip": False,
+            "suites": [
+                "admin-settings/",
+                "spaces/",
+                "rclone-crypt/",
+            ],
+        },
+        "3": {
+            "earlyFail": True,
+            "skip": False,
+            "tikaNeeded": True,
+            "suites": [
+                "search",
+                "shares",
+            ],
+            "extraServerEnvironment": {
+                "FRONTEND_FULL_TEXT_SEARCH_ENABLED": True,
+                "SEARCH_EXTRACTOR_TYPE": "tika",
+                "SEARCH_EXTRACTOR_TIKA_TIKA_URL": "http://tika:9998",
+                "SEARCH_EXTRACTOR_CS3SOURCE_INSECURE": True,
+            },
+        },
+        "4": {
+            "earlyFail": True,
+            "skip": False,
+            "suites": [
+                "navigation/",
+                "user-settings/",
+                "file-action/",
+                "app-store/",
+                "embed/",
+            ],
+        },
+        "preview": {
+            "earlyFail": True,
+            "skip": False,
+            "imagorNeeded": True,
+            "suites": [
+                "preview/",
+            ],
+            "extraServerEnvironment": {
+                "WEBDAV_THUMBNAILS_GENERATOR_URL": "http://imagor:8000",
+                "OC_THUMBNAILS_ADDITIONAL_SOURCE_TYPES": "image/heic,image/heif,image/avif,image/heic-sequence,image/heif-sequence",
+            },
+        },
+        "a11y": {
+            "earlyFail": True,
+            "skip": False,
+            "suites": [
+                "a11y",
+            ],
+            "browsers": [
+                "chromium",
+                "firefox",
+                "webkit",
+            ],
+        },
+        "app-provider": {
+            "skip": False,
+            "suites": [
+                "app-provider/",
+            ],
+            "extraServerEnvironment": {
+                "GATEWAY_GRPC_ADDR": "0.0.0.0:9142",
+                "MICRO_REGISTRY": "nats-js-kv",
+                "MICRO_REGISTRY_ADDRESS": "0.0.0.0:9233",
+                "NATS_NATS_HOST": "0.0.0.0",
+                "NATS_NATS_PORT": 9233,
+                "COLLABORA_DOMAIN": "collabora:9980",
+                "WEB_UI_CONFIG_FILE": None,
+                "OC_MACHINE_AUTH_API_KEY": MACHINE_AUTH_API_KEY,
+                "OC_ADD_RUN_SERVICES": "collaboration",
+                "COLLABORATION_WOPI_SRC": "https://opencloud:9200",
+                "COLLABORATION_APP_NAME": "CollaboraOnline",
+                "COLLABORATION_APP_PRODUCT": "Collabora",
+                "COLLABORATION_APP_ADDR": "https://collabora:9980",
+                "COLLABORATION_APP_ICON": "https://collabora:9980/favicon.ico",
+                "COLLABORATION_APP_INSECURE": True,
+                "COLLABORATION_CS3API_DATAGATEWAY_INSECURE": True,
+                # collabora reads the WOPI proof key from the hardcoded path /etc/coolwsd/proof_key,
+                # which cannot be provided from a woodpecker step
+                "COLLABORATION_APP_PROOF_DISABLE": True,
+            },
+        },
+        "app-provider-euro-office": {
+            "skip": False,
+            "suites": [
+                "app-provider-euro-office/",
+            ],
+            "extraServerEnvironment": {
+                "GATEWAY_GRPC_ADDR": "0.0.0.0:9142",
+                "MICRO_REGISTRY": "nats-js-kv",
+                "MICRO_REGISTRY_ADDRESS": "0.0.0.0:9233",
+                "NATS_NATS_HOST": "0.0.0.0",
+                "NATS_NATS_PORT": 9233,
+                "EURO_OFFICE_DOMAIN": "euro-office:443",
+                "WEB_UI_CONFIG_FILE": None,
+                "OC_MACHINE_AUTH_API_KEY": MACHINE_AUTH_API_KEY,
+                "OC_ADD_RUN_SERVICES": "collaboration",
+                "COLLABORATION_WOPI_SRC": "https://opencloud:9200",
+                "COLLABORATION_APP_NAME": "Euro-Office",
+                "COLLABORATION_APP_PRODUCT": "OnlyOffice",
+                "COLLABORATION_APP_ADDR": "https://euro-office:443",
+                "COLLABORATION_APP_ICON": "http://euro-office/web-apps/apps/documenteditor/main/resources/img/favicon.ico",
+                "COLLABORATION_APP_INSECURE": True,
+                "COLLABORATION_CS3API_DATAGATEWAY_INSECURE": True,
+                "COLLABORATION_APP_PROOF_DISABLE": True,
+            },
+        },
+        "yjs": {
+            "skip": False,
+            "suites": [
+                "yjs/",
+            ],
+            "extraServerEnvironment": {
+                "WEB_UI_CONFIG_FILE": None,
+                "WEB_OPTION_YJS_SERVER_URL": "wss://opencloud:9200/yjs",
+            },
+        },
+        "oidc-refresh-token": {
+            "skip": False,
+            "suites": [
+                "oidc/refreshToken",
+            ],
+            "extraServerEnvironment": {
+                "IDP_ACCESS_TOKEN_EXPIRATION": 30,
+                "WEB_OIDC_SCOPE": "openid profile email offline_access",
+            },
+        },
+        "oidc-iframe": {
+            "skip": False,
+            "suites": [
+                "oidc/iframeTokenRenewal",
+            ],
+            "extraServerEnvironment": {
+                "IDP_ACCESS_TOKEN_EXPIRATION": 30,
+            },
+        },
+        "ocm": {
+            "earlyFail": True,
+            "skip": False,
+            "federationServer": True,
+            "suites": [
+                "ocm",
+            ],
+            "extraServerEnvironment": {
+                "OC_ADD_RUN_SERVICES": "ocm",
+                "OC_ENABLE_OCM": True,
+                "GRAPH_INCLUDE_OCM_SHAREES": True,
+                "OCM_OCM_INVITE_MANAGER_INSECURE": True,
+                "OCM_OCM_SHARE_PROVIDER_INSECURE": True,
+                "OCM_OCM_STORAGE_PROVIDER_INSECURE": True,
+                "OCM_OCM_PROVIDER_AUTHORIZER_PROVIDERS_FILE": "%s" % dir["ocmProviders"],
+            },
+        },
+        "mobile-view": {
+            "skip": False,
+            "suites": [
+                "mobile-view/",
+            ],
+        },
+        "localization-de": {
+            "skip": False,
+            "suites": [
+                "a11y/smoke",
+            ],
+            "extraServerEnvironment": {
+                "OC_DEFAULT_LANGUAGE": "de",
+            },
+        },
+    },
+    "build": True,
+}
+
+# minio mc environment variables
+minio_mc_environment = {
+    "CACHE_BUCKET": {
+        "from_secret": "cache_s3_bucket",
+    },
+    "MC_HOST": CACHE_S3_SERVER,
+    "AWS_ACCESS_KEY_ID": {
+        "from_secret": "cache_s3_access_key",
+    },
+    "AWS_SECRET_ACCESS_KEY": {
+        "from_secret": "cache_s3_secret_key",
+    },
+    "PUBLIC_BUCKET": "public",
+}
+
+web_workspace = {
+    "base": dir["base"],
+    "path": config["app"],
+}
+
+event = {
+    "base": {
+        "event": ["push", "manual"],
+        "branch": ["main", "stable-*"],
+    },
+    "main_branch": {
+        "event": ["push", "manual"],
+        "branch": "main",
+    },
+    "pull_request": {
+        "event": "pull_request",
+    },
+    "tag": {
+        "event": "tag",
+    },
+    "cron": {
+        "event": "cron",
+        "branch": "main",
+    },
+}
+
+def main(ctx):
+    if ctx.build.event == "cron" and ctx.build.cron == "translation-sync":
+        return translation_sync(ctx)
+    if isYjsRelease(ctx):
+        return publishYjsImage(ctx)
+
+    is_release_pr = (ctx.build.event == "pull_request" and ctx.build.sender == "openclouders" and "🎉 release" in ctx.build.title.lower())
+    if is_release_pr:
+        license = licenseCheck()
+        return license + pipelinesDependsOn(notifyMatrixCheckSteps(), license)
+
+    release = readyReleaseGo()
+
+    before = beforePipelines(ctx)
+
+    stages = pipelinesDependsOn(stagePipelines(ctx), before)
+
+    if not stages:
+        print("Errors detected. Review messages above.")
+        return []
+
+    after = pipelinesDependsOn(afterPipelines(ctx), pnpmCache(ctx)) + designSystemDocs(ctx) + e2eTestingDocs(ctx)
+
+    pipelines = release + before + stages + after
+
+    return pipelines
+
+def beforePipelines(ctx):
+    return checkStarlark() + \
+           licenseCheck() + \
+           pnpmCache(ctx) + \
+           cacheOpenCloudPipeline(ctx) + \
+           pipelinesDependsOn(buildCacheWeb(ctx), pnpmCache(ctx)) + \
+           pipelinesDependsOn(pnpmlint(ctx, "lint"), pnpmCache(ctx)) + \
+           pipelinesDependsOn(pnpmlint(ctx, "format"), pnpmCache(ctx)) + \
+           pipelinesDependsOn(pnpmTypeCheck(ctx), pnpmCache(ctx))
+
+def stagePipelines(ctx):
+    unit_test_pipelines = unitTests(ctx)
+
+    # run only unit tests when publishing a standalone package
+    if determineReleasePackage(ctx) != None:
+        return unit_test_pipelines
+
+    e2e_pipelines = e2eTests(ctx)
+
+    keycloak_pipelines = e2eTestsOnKeycloak(ctx)
+    return unit_test_pipelines + e2e_pipelines + keycloak_pipelines
+
+def afterPipelines(ctx):
+    return publishRelease(ctx) + pipelinesDependsOn(notifyMatrixCheckSteps(), stagePipelines(ctx))
+
+def translation_sync(ctx):
+    return [{
+        "name": "translation-sync",
+        "steps": [
+            {
+                "name": "translation-update",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "make l10n-read",
+                    "curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash",
+                    ". ~/.profile",
+                    "make l10n-push",
+                    "make l10n-pull",
+                    "rm tx",
+                    "make l10n-write",
+                    "make l10n-clean",
+                    "git checkout pnpm-lock.yaml",  # ignore possible changes in package.lock
+                ],
+                "environment": {
+                    "TX_TOKEN": {
+                        "from_secret": "tx_token",
+                    },
+                },
+            },
+            {
+                "name": "translation-push",
+                "image": PLUGINS_GIT_ACTION,
+                "settings": {
+                    "action": ["commit", "push"],
+                    "branch": ctx.build.branch,
+                    "message": "[tx] updated from transifex",
+                    "author_name": "opencloudeu",
+                    "author_email": "devops@opencloud.eu",
+                    "netrc_username": {
+                        "from_secret": "github_username",
+                    },
+                    "netrc_password": {
+                        "from_secret": "github_token",
+                    },
+                    "empty_commit": False,
+                },
+            },
+        ],
+        "when": [
+            {
+                "event": "cron",
+                "cron": "translation-sync",
+            },
+        ],
+    }]
+
+def pnpmCache(ctx):
+    return [{
+        "name": "cache-pnpm",
+        "workspace": web_workspace,
+        "steps": installPnpm() +
+                 rebuildBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
+                 checkBrowsersCache() +
+                 installBrowsers() +
+                 cacheBrowsers(),
+        "when": [
+            event["base"],
+            event["cron"],
+            event["tag"],
+            {
+                "event": "pull_request",
+                "path": {
+                    "exclude": skipIfUnchanged(ctx, "cache"),
+                },
+            },
+        ],
+    }]
+
+# lintType can be "lint" or "format"
+def pnpmlint(ctx, lintType):
+    pipelines = []
+    name = "pnpm" + lintType
+    if name not in config:
+        return pipelines
+
+    if type(config[name]) == "bool":
+        if not config[name]:
+            return pipelines
+
+    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm()
+    if name == "pnpmformat":
+        steps += formatCheck()
+    else:
+        steps += lint()
+    result = {
+        "name": name,
+        "workspace": web_workspace,
+        "steps": steps,
+        "when": [
+            event["tag"],
+            event["cron"],
+            {
+                "event": ["push", "manual"],
+                "branch": config["branches"],
+            },
+            {
+                "event": "pull_request",
+                "path": {
+                    "exclude": skipIfUnchanged(ctx, "lint"),
+                },
+            },
+        ],
+    }
+
+    pipelines.append(result)
+
+    return pipelines
+
+def pnpmTypeCheck(ctx):
+    pipelines = []
+    if "check-types" not in config:
+        return pipelines
+
+    if type(config["check-types"]) == "bool":
+        if not config["check-types"]:
+            return pipelines
+
+    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + typeCheck()
+    result = {
+        "name": "check-types",
+        "workspace": web_workspace,
+        "steps": steps,
+        "when": [
+            event["tag"],
+            event["cron"],
+            {
+                "event": ["push", "manual"],
+                "branch": config["branches"],
+            },
+            {
+                "event": "pull_request",
+                "path": {
+                    "exclude": skipIfUnchanged(ctx, "typecheck"),
+                },
+            },
+        ],
+    }
+
+    pipelines.append(result)
+
+    return pipelines
+
+def publishRelease(ctx):
+    pipelines = []
+
+    if "build" not in config:
+        return pipelines
+
+    if type(config["build"]) == "bool":
+        if not config["build"]:
+            return pipelines
+
+    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + buildAndPublishRelease(ctx)
+
+    build_pipeline = {
+        "name": "publish-release",
+        "workspace": web_workspace,
+        "steps": steps,
+        "when": [event["tag"]],
+    }
+
+    pipelines.append(build_pipeline)
+
+    return pipelines
+
+def isYjsRelease(ctx):
+    return ctx.build.event == "tag" and ctx.build.ref.startswith("refs/tags/%s" % YJS_TAG_PREFIX)
+
+def determineYjsReleaseVersion(ctx):
+    return ctx.build.ref.replace("refs/tags/%s" % YJS_TAG_PREFIX, "")
+
+# The yjs image has its own version, independent of the web app version. It is released by
+# pushing a `yjs-vX.Y.Z` tag (see dev/scripts/create_and_push_yjs_tag.sh).
+def publishYjsImage(ctx):
+    version = determineYjsReleaseVersion(ctx)
+
+    # only stable releases move the rolling `latest` tag
+    tags = [version]
+    if len(version.split("-")) == 1:
+        tags.append("latest")
+
+    return [{
+        "name": "publish-yjs-image",
+        "steps": [
+            {
+                "name": "verify-version",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "package_version=$(jq -r '.version' < %s)" % YJS_PACKAGE_JSON,
+                    "echo \"tag version: %s, %s: $package_version\"" % (version, YJS_PACKAGE_JSON),
+                    "[ \"$package_version\" = \"%s\" ] || (echo \"git tag does not match version in %s\"; exit 1)" % (version, YJS_PACKAGE_JSON),
+                ],
+            },
+            {
+                "name": "build-and-push",
+                "image": PLUGINS_DOCKER_BUILDX,
+                "depends_on": ["verify-version"],
+                "settings": {
+                    "repo": YJS_DOCKER_REPOS,
+                    "dockerfile": YJS_DOCKERFILE,
+                    "platforms": YJS_DOCKER_PLATFORMS,
+                    "tags": tags,
+                    "pull_image": False,
+                    "logins": [
+                        {
+                            "registry": "https://index.docker.io/v1/",
+                            "username": {
+                                "from_secret": "docker_username",
+                            },
+                            "password": {
+                                "from_secret": "docker_password",
+                            },
+                        },
+                        {
+                            "registry": "https://quay.io",
+                            "username": {
+                                "from_secret": "quay_username",
+                            },
+                            "password": {
+                                "from_secret": "quay_password",
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "name": "push-readme-dockerhub",
+                "image": PLUGINS_DOCKER_PUSHRM,
+                "environment": {
+                    "DOCKER_USER": {
+                        "from_secret": "docker_username",
+                    },
+                    "DOCKER_PASS": {
+                        "from_secret": "docker_password",
+                    },
+                    "PUSHRM_TARGET": "opencloudeu/yjs",
+                    "PUSHRM_SHORT": YJS_IMAGE_DESCRIPTION,
+                    "PUSHRM_FILE": "services/yjs/README.md",
+                },
+                "depends_on": ["build-and-push"],
+            },
+            {
+                "name": "push-readme-quayio",
+                "image": PLUGINS_DOCKER_PUSHRM,
+                "environment": {
+                    "APIKEY__QUAY_IO": {
+                        "from_secret": "quay_apikey",
+                    },
+                    "PUSHRM_TARGET": "quay.io/opencloudeu/yjs",
+                    "PUSHRM_SHORT": YJS_IMAGE_DESCRIPTION,
+                    "PUSHRM_FILE": "services/yjs/README.md",
+                },
+                "depends_on": ["build-and-push"],
+            },
+        ],
+        "when": [event["tag"]],
+    }]
+
+def readyReleaseGo():
+    return [
+        {
+            "name": "release",
+            "steps": [
+                {
+                    "name": "release-helper",
+                    "image": READY_RELEASE_GO,
+                    "settings": {
+                        "git_email": "devops@opencloud.eu",
+                        "forge_type": "github",
+                        "forge_token": {
+                            "from_secret": "github_token",
+                        },
+                    },
+                },
+            ],
+            "when": [
+                {
+                    "event": ["push"],
+                    "branch": "${CI_REPO_DEFAULT_BRANCH}",
+                },
+            ],
+        },
+    ]
+
+def buildCacheWeb(ctx):
+    return [{
+        "name": "cache-web",
+        "workspace": web_workspace,
+        "steps": restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
+                 installPnpm() +
+                 [{
+                     "name": "build-web",
+                     "image": OC_CI_NODEJS,
+                     "environment": {
+                         "NO_INSTALL": True,
+                     },
+                     "commands": [
+                         "make dist",
+                     ],
+                 }] +
+                 rebuildBuildArtifactCache(ctx, "web-dist", "dist"),
+        "when": [
+            event["base"],
+            event["cron"],
+            event["tag"],
+            {
+                "event": "pull_request",
+                "path": {
+                    "exclude": skipIfUnchanged(ctx, "cache"),
+                },
+            },
+        ],
+    }]
+
+def unitTests(ctx):
+    return [{
+        "name": "unit-tests",
+        "workspace": web_workspace,
+        "steps": restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
+                 installPnpm() +
+                 [
+                     {
+                         "name": "unit-tests",
+                         "image": OC_CI_NODEJS_ALPINE,
+                         "commands": [
+                             "pnpm test:unit --coverage",
+                         ],
+                     },
+                 ],
+        "when": [
+            event["base"],
+            event["cron"],
+            event["tag"],
+            {
+                "event": "pull_request",
+                "path": {
+                    "exclude": skipIfUnchanged(ctx, "unit-tests"),
+                },
+            },
+        ],
+    }]
+
+def e2eTests(ctx):
+    default = {
+        "skip": False,
+        "logLevel": "2",
+        "db": "mysql:5.5",
+        "suites": [],
+        "features": [],
+        "tikaNeeded": False,
+        "imagorNeeded": False,
+        "federationServer": False,
+        "failOnUncaughtConsoleError": False,
+        "extraServerEnvironment": {},
+        "browsers": ["chromium"],
+    }
+
+    e2e_trigger = [
+        event["cron"],
+        {
+            "event": ["push", "manual"],
+            "branch": config["branches"],
+        },
+        event["pull_request"],
+        event["tag"],
+    ]
+
+    pipelines = []
+    params = {}
+    matrices = config["e2e"]
+
+    for suite, matrix in matrices.items():
+        for item in default:
+            params[item] = matrix[item] if item in matrix else default[item]
+
+        if "app-provider-euro-office" in suite and not "full-ci" in ctx.build.title.lower() and ctx.build.event != "cron":
+            continue
+
+        if "ocm" in suite and not "full-ci" in ctx.build.title.lower() and ctx.build.event != "cron":
+            continue
+
+        if "localization-de" in suite and "localization-de" not in ctx.build.title.lower():
+            continue
+
+        if params["skip"]:
+            continue
+
+        browsers_for_suite = params["browsers"]
+
+        for browser_name in browsers_for_suite:
+            environment = {
+                "OC_BASE_URL": "opencloud:9200",
+                "FAIL_ON_UNCAUGHT_CONSOLE_ERR": True,
+                "PLAYWRIGHT_BROWSERS_PATH": "tests/e2e/.playwright",
+                "TERM": "xterm-256color",
+                "FORCE_COLOR": "1",
+            }
+
+            steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + \
+                    installPnpm() + \
+                    restoreBrowsersCache(browser_name) + \
+                    restoreBuildArtifactCache(ctx, "web-dist", "dist") + \
+                    restoreOpenCloudCache()
+
+            if "app-provider-euro-office" in suite:
+                environment["FAIL_ON_UNCAUGHT_CONSOLE_ERR"] = False
+                steps += euroOfficeService() + \
+                         waitForWebOffice("https://euro-office:443") + \
+                         openCloudService(params["extraServerEnvironment"])
+
+            elif "app-provider" in suite:
+                environment["FAIL_ON_UNCAUGHT_CONSOLE_ERR"] = False
+                steps += collaboraService() + \
+                         waitForWebOffice("https://collabora:9980") + \
+                         openCloudService(params["extraServerEnvironment"])
+
+            elif "yjs" in suite:
+                environment["FAIL_ON_UNCAUGHT_CONSOLE_ERR"] = False
+                steps += yjsService() + \
+                         openCloudService(params["extraServerEnvironment"])
+
+            elif "ocm" in suite:
+                steps += openCloudService(params["extraServerEnvironment"]) + \
+                         (openCloudService(params["extraServerEnvironment"], "federation") if params["federationServer"] else [])
+            else:
+                # OpenCloud specific steps
+                steps += (tikaService() if params["tikaNeeded"] else []) + \
+                         (imagorService() if params["imagorNeeded"] else []) + \
+                         openCloudService(params["extraServerEnvironment"])
+
+            if browser_name == "firefox" or browser_name == "webkit":
+                environment["FAIL_ON_UNCAUGHT_CONSOLE_ERR"] = "False"
+
+            command = "cd tests/e2e && pnpm bddgen && pnpm playwright install '%s' --with-deps && pnpm playwright test --project='%s' " % (browser_name, browser_name)
+
+            if "suites" in matrix:
+                command += "%s" % " ".join(params["suites"])
+            elif "features" in matrix:
+                command += "%s" % " ".join(params["features"])
+            else:
+                print("Error: No suites or features defined for e2e test suite '%s'" % suite)
+                return []
+
+            if "mobile-view" in suite:
+                command = "cd tests/e2e && pnpm bddgen && pnpm playwright install chromium webkit && pnpm playwright test '%s' --project=mobile-chromium --project=mobile-webkit --project=ipad-chromium --project=ipad-landscape-webkit" % suite
+                pipeline_name = "e2e-tests-%s" % suite
+            else:
+                pipeline_name = "e2e-tests-%s-%s" % (suite, browser_name)
+
+            if "localization-de" in suite:
+                command = "pnpm playwright install chromium --with-deps && cd tests/e2e && pnpm bddgen && RUN_LOCALIZATION_TEST_FOR_LANG=de playwright test a11y --project=chromium"
+
+            steps += [{
+                         "name": "e2e-tests",
+                         "image": OC_CI_NODEJS,
+                         "environment": environment,
+                         "commands": [
+                             command,
+                         ],
+                     }] + \
+                     uploadTestArtifacts(pipeline_name)
+
+            pipelines.append({
+                "name": pipeline_name,
+                "workspace": web_workspace,
+                "steps": steps,
+                "depends_on": ["cache-opencloud"],
+                "when": e2e_trigger,
+            })
+
+    return pipelines
+
+def notifyMatrixCheckSteps():
+    pipelines = []
+
+    result = {
+        "name": "all-checks-finished",
+        "skip_clone": True,
+        "steps": [
+            {
+                "name": "notify-matrix",
+                "image": OC_CI_GOLANG,
+                "environment": {
+                    "HTTP_PROXY": {
+                        "from_secret": "ci_http_proxy",
+                    },
+                    "HTTPS_PROXY": {
+                        "from_secret": "ci_http_proxy",
+                    },
+                    "MATRIX_HOME_SERVER": "matrix.org",
+                    "MATRIX_ROOM_ALIAS": {
+                        "from_secret": "opencloud-notifications-channel",
+                    },
+                    "MATRIX_USER": {
+                        "from_secret": "opencloud-notifications-user",
+                    },
+                    "MATRIX_PASSWORD": {
+                        "from_secret": "opencloud-notifications-user-password",
+                    },
+                    "QA_REPO": "https://github.com/opencloud-eu/qa.git",
+                    "QA_REPO_BRANCH": "main",
+                    "CI_WOODPECKER_URL": {
+                        "from_secret": "oc_ci_url",
+                    },
+                    "CI_REPO_ID": "6",
+                    "CI_WOODPECKER_TOKEN": "no-auth-needed-on-this-repo",
+                },
+                "commands": [
+                    "git clone --single-branch --branch $QA_REPO_BRANCH $QA_REPO /tmp/qa",
+                    "cd /tmp/qa/scripts/matrix-notification/",
+                    "go run matrix-notification.go",
+                ],
+            },
+        ],
+        "when": [
+            dict(event["cron"], status = ["success", "failure"]),
+            dict(event["pull_request"], status = ["success", "failure"]),
+            {
+                "event": ["push", "manual"],
+                "branch": "${CI_REPO_DEFAULT_BRANCH}",
+                "status": ["success", "failure"],
+            },
+        ],
+    }
+
+    pipelines.append(result)
+    return pipelines
+
+def installPnpm():
+    return [{
+        "name": "pnpm-install",
+        "image": OC_CI_NODEJS,
+        "commands": [
+            'npm install --silent --global --force "$(jq -r ".packageManager" < package.json)"',
+            "pnpm config set store-dir ./.pnpm-store",
+            "pnpm install",
+        ],
+    }]
+
+def installBrowsers():
+    return [{
+        "name": "install-browsers",
+        "image": OC_CI_NODEJS,
+        "environment": {
+            "PLAYWRIGHT_BROWSERS_PATH": "tests/e2e/.playwright",
+        },
+        "commands": [
+            ". ./.woodpecker.env",
+            "if $BROWSER_CACHE_FOUND; then exit 0; fi",
+            "pnpm exec playwright install",
+            "pnpm exec playwright install --list",
+            "tar -czvf %s -C tests/e2e .playwright" % dir["playwrightBrowsersArchive"],
+        ],
+    }]
+
+def typeCheck():
+    return [{
+        "name": "type-check",
+        "image": OC_CI_NODEJS_ALPINE,
+        "commands": [
+            "pnpm check:types",
+        ],
+    }]
+
+def lint():
+    return [{
+        "name": "lint",
+        "image": OC_CI_NODEJS_ALPINE,
+        "commands": [
+            "pnpm lint",
+        ],
+    }]
+
+def formatCheck():
+    return [
+        {
+            "name": "format-check",
+            "image": OC_CI_NODEJS_ALPINE,
+            "commands": [
+                "pnpm format:check",
+            ],
+        },
+        {
+            "name": "show-diff",
+            "image": OC_CI_NODEJS_ALPINE,
+            "commands": [
+                "pnpm format:write",
+                "git diff",
+            ],
+            "when": {
+                "status": [
+                    "failure",
+                ],
+            },
+        },
+    ]
+
+def determineReleasePackage(ctx):
+    if ctx.build.event != "tag":
+        return None
+
+    matches = [p for p in WEB_PUBLISH_NPM_PACKAGES if ctx.build.ref.startswith("refs/tags/%s-v" % p)]
+    if len(matches) > 0:
+        return matches[0]
+
+    return None
+
+def determineReleaseVersion(ctx):
+    package = determineReleasePackage(ctx)
+    if package == None:
+        return ctx.build.ref.replace("refs/tags/v", "")
+
+    return ctx.build.ref.replace("refs/tags/" + package + "-v", "")
+
+def isPrerelease(ctx):
+    return len(ctx.build.ref.split("-")) > 1
+
+def buildAndPublishRelease(ctx):
+    steps = []
+    package = determineReleasePackage(ctx)
+    version = determineReleaseVersion(ctx)
+
+    if package == None:
+        steps += [
+            {
+                "name": "build-web",
+                "image": OC_CI_NODEJS,
+                "environment": {
+                    "NO_INSTALL": True,
+                },
+                "commands": [
+                    "cd %s" % dir["web"],
+                    "make -f Makefile.release",
+                ],
+            },
+            {
+                "name": "publish-github-release",
+                "image": PLUGINS_GITHUB_RELEASE,
+                "settings": {
+                    "api_key": {
+                        "from_secret": "github_token",
+                    },
+                    "files": [
+                        "release/*",
+                    ],
+                    "checksum": [
+                        "md5",
+                        "sha256",
+                    ],
+                    "title": ctx.build.ref.replace("refs/tags/v", ""),
+                    "prerelease": isPrerelease(ctx),
+                },
+                "when": [event["tag"]],
+            },
+        ]
+
+        # On a stable release tag (vX.Y.Z), create and push the per-package tags (<package>-vX.Y.Z)
+        # so the npm publish runs for each library. All package versions are kept in sync with the
+        # root version, so we reuse the version from the release tag. Skipped for prereleases.
+        if not isPrerelease(ctx):
+            remote = "https://x-access-token:$${GITHUB_TOKEN}@github.com/opencloud-eu/web.git"
+            tag_script = "; ".join([
+                "set -e",
+                "git config user.email \"devops@opencloud.eu\"",
+                "git config user.name \"OpenCloud DevOps\"",
+                "for pkg in %s" % " ".join(WEB_PUBLISH_NPM_PACKAGES),
+                "do tag=\"$pkg-v%s\"" % version,
+                "if git ls-remote --exit-code \"%s\" \"refs/tags/$tag\" >/dev/null 2>&1" % remote,
+                "then echo \"$tag already exists, skipping\"",
+                "else git tag -a \"$tag\" -m \"$tag\"",
+                "git push \"%s\" \"$tag\"" % remote,
+                "echo \"$tag created and pushed\"",
+                "fi",
+                "done",
+            ])
+            steps.append(
+                {
+                    "name": "create-package-tags",
+                    "image": OC_CI_NODEJS,
+                    "environment": {
+                        "GITHUB_TOKEN": {
+                            "from_secret": "github_token",
+                        },
+                    },
+                    "commands": [
+                        "bash -c '%s'" % tag_script,
+                    ],
+                    "when": [event["tag"]],
+                },
+            )
+    else:
+        full_package_name = "%s/%s" % (WEB_PUBLISH_NPM_ORGANIZATION, package)
+        steps.append(
+            {
+                "name": "publish",
+                "image": OC_CI_NODEJS,
+                "environment": {
+                    "NPM_TOKEN": {
+                        "from_secret": "npm_token",
+                    },
+                },
+                "commands": [
+                    "echo Build " + package + " " + version + " package.json: $(jq -r '.version' < packages/%s/package.json)" % package,
+                    "[ \"$(jq -r '.version'  < packages/%s/package.json)\" = \"%s\" ] || (echo \"git tag does not match version in packages/%s/package.json\"; exit 1)" % (package, version, package),
+                    "git checkout .",
+                    "git clean -fd",
+                    "git diff",
+                    "git status",
+                    "bash -c '[ \"%s\" == \"design-system\" ] && pnpm --filter \"%s\" build || true'" % (package, full_package_name),
+                    "bash -c '[ \"%s\" == \"web-client\" ] && pnpm --filter \"%s\" build || true'" % (package, full_package_name),
+                    "bash -c '[ \"%s\" == \"web-pkg\" ] && pnpm --filter \"%s\" build || true'" % (package, full_package_name),
+                    "bash -c '[ \"%s\" == \"web-test-helpers\" ] && pnpm --filter \"%s\" build || true'" % (package, full_package_name),
+                    "bash -c '[ \"%s\" == \"extension-sdk\" ] && pnpm --filter \"%s\" build || true'" % (package, full_package_name),
+                    # pnpm 11's rewritten publish ignores npm_config_* env vars (pnpm/pnpm#11098),
+                    # so the npm token must be provided via a workspace-root .npmrc instead.
+                    # The token is only ever written to the file (never echoed to stdout) and the
+                    # file is removed on exit via a trap; Woodpecker additionally masks secrets in logs.
+                    # until https://github.com/pnpm/pnpm/issues/5775 is resolved, we print pnpm whoami because that fails when the npm_token is invalid
+                    "bash -c 'set -e; trap \"rm -f .npmrc\" EXIT; echo \"//registry.npmjs.org/:_authToken=$${NPM_TOKEN}\" > .npmrc; pnpm whoami; pnpm publish --no-git-checks --filter %s --access public --tag latest'" % full_package_name,
+                ],
+                "when": [event["tag"]],
+            },
+        )
+
+    return steps
+
+def openCloudService(extra_env_config = {}, deploy_type = "opencloud"):
+    environment = {
+        "IDM_ADMIN_PASSWORD": "admin",  # override the random admin password from `opencloud init`
+        "OC_INSECURE": True,
+        "OC_LOG_LEVEL": "error",
+        "OC_JWT_SECRET": "some-opencloud-jwt-secret",
+        "LDAP_GROUP_SUBSTRING_FILTER_TYPE": "any",
+        "LDAP_USER_SUBSTRING_FILTER_TYPE": "any",
+        "PROXY_ENABLE_BASIC_AUTH": True,
+        "WEB_ASSET_CORE_PATH": "%s/dist" % dir["web"],
+        "FRONTEND_SEARCH_MIN_LENGTH": "2",
+        "OC_PASSWORD_POLICY_BANNED_PASSWORDS_LIST": "%s/tests/woodpecker/banned-passwords.txt" % dir["web"],
+        "PROXY_CSP_CONFIG_FILE_LOCATION": "%s/tests/woodpecker/csp.yaml" % dir["web"],
+        "OC_SHOW_USER_EMAIL_IN_RESULTS": True,
+        "OC_ENABLE_GUEST_LINKS": True,
+        # Needed for enabling all roles
+        "GRAPH_AVAILABLE_ROLES": "b1e2218d-eef8-4d4c-b82d-0f1a1b48f3b5,a8d5fe5e-96e3-418d-825b-534dbdf22b99,fb6c3e19-e378-47e5-b277-9732f9de6e21,58c63c02-1d89-4572-916a-870abc5a1b7d,2d00ce52-1fc2-4dbc-8b95-a73b73395f5a,1c996275-f1c9-4e71-abdf-a42f6495e960,312c0871-5ef7-4b3a-85b6-0e4074c64049,aa97fe03-7980-45ac-9e50-b325749fd7e6,63e64e19-8d43-42ec-a738-2b6af2610efa",
+        "ACTIVITYLOG_WRITE_BUFFER_DURATION": "0",
+    }
+
+    if deploy_type == "federation":
+        environment["OC_URL"] = "https://federation-opencloud:10200"
+        environment["PROXY_HTTP_ADDR"] = "federation-opencloud:10200"
+        environment["WEB_UI_CONFIG_FILE"] = dir["federatedOpenCloudConfig"]
+        container_name = "federation-opencloud"
+
+    else:
+        container_name = "opencloud"
+
+        environment["OC_URL"] = "https://opencloud:9200"
+        environment["WEB_UI_CONFIG_FILE"] = dir["openCloudConfig"]
+
+    for config in extra_env_config:
+        environment[config] = extra_env_config[config]
+
+    wait_for_service = waitForService("opencloud", "9200")
+    if "OC_EXCLUDE_RUN_SERVICES" not in environment or "idp" not in environment["OC_EXCLUDE_RUN_SERVICES"]:
+        wait_for_service = [
+            {
+                "name": "wait-for-%s" % container_name,
+                "image": OC_CI_GOLANG,
+                "commands": [
+                    "timeout 300 bash -c 'while [ $(curl -sk -uadmin:admin " +
+                    "%s/graph/v1.0/users/admin " % environment["OC_URL"] +
+                    "-w %{http_code} -o /dev/null) != 200 ]; do sleep 1; done'",
+                ],
+            },
+        ]
+
+    commands = [
+        "mkdir -p %s" % dir["openCloudRevaDataRoot"],
+        "mkdir -p /srv/app/tmp/opencloud/storage/users/",
+        "./opencloud init",
+        "cp %s/tests/woodpecker/app-registry.yaml /root/.opencloud/config/app-registry.yaml" % dir["web"],
+    ]
+
+    # The yjs suite routes /yjs through OpenCloud's own proxy, which needs the extra route config.
+    if "WEB_OPTION_YJS_SERVER_URL" in environment:
+        commands.append("cp %s/tests/woodpecker/proxy.yaml /root/.opencloud/config/proxy.yaml" % dir["web"])
+
+    commands.append("./opencloud server")
+
+    return [
+        {
+            "name": container_name,
+            "image": OC_CI_GOLANG,
+            "detach": True,
+            "environment": environment,
+            "commands": commands,
+        },
+    ] + wait_for_service
+
+def checkForExistingOpenCloudCache(ctx):
+    web_repo_path = "https://raw.githubusercontent.com/opencloud-eu/web/%s" % ctx.build.commit
+    return [
+        {
+            "name": "check-for-existing-cache",
+            "image": MINIO_MC,
+            "environment": minio_mc_environment,
+            "commands": [
+                "curl -o .woodpecker.env %s/.woodpecker.env" % web_repo_path,
+                "curl -o script.sh %s/tests/woodpecker/script.sh" % web_repo_path,
+                ". ./.woodpecker.env",
+                "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+                "mc ls --recursive s3/$CACHE_BUCKET/opencloud-build",
+                "bash script.sh check_opencloud_cache",
+            ],
+        },
+    ]
+
+def cacheOpenCloudPipeline(ctx):
+    steps = checkForExistingOpenCloudCache(ctx) + \
+            buildOpenCloud() + \
+            cacheOpenCloud()
+
+    return [{
+        "name": "cache-opencloud",
+        "skip_clone": True,
+        "steps": steps,
+        "when": [
+            event["base"],
+            event["cron"],
+            event["pull_request"],
+            event["tag"],
+        ],
+    }]
+
+def restoreOpenCloudCache():
+    return [{
+        "name": "restore-opencloud-cache",
+        "image": MINIO_MC,
+        "environment": minio_mc_environment,
+        "commands": [
+            ". ./.woodpecker.env",
+            "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+            "mc cp -r -a s3/$CACHE_BUCKET/opencloud-build/$OPENCLOUD_COMMITID/opencloud %s" % dir["web"],
+        ],
+    }]
+
+def buildOpenCloud():
+    opencloud_repo_url = "https://github.com/opencloud-eu/opencloud.git"
+
+    return [
+        {
+            "name": "clone-opencloud",
+            "image": OC_CI_GOLANG,
+            "commands": [
+                ". ./.woodpecker.env",
+                "if $OPENCLOUD_CACHE_FOUND; then exit 0; fi",
+                # ToDo is the note below still correct?
+                # NOTE: it is important to not start repo name with opencloud*
+                # because we copy opencloud binary to root workspace
+                # and upload binary <workspace>/opencloud to cache bucket.
+                # This prevents accidental upload of opencloud repo to the cache
+                "git clone -b $OPENCLOUD_BRANCH --single-branch %s repo_opencloud" % opencloud_repo_url,
+                "cd repo_opencloud",
+                "git checkout $OPENCLOUD_COMMITID",
+            ],
+        },
+        {
+            "name": "generate-opencloud",
+            "image": OC_CI_NODEJS,
+            "commands": [
+                ". ./.woodpecker.env",
+                "if $OPENCLOUD_CACHE_FOUND; then exit 0; fi",
+                "cd repo_opencloud",
+                "for i in $(seq 3); do make node-generate-prod && break || sleep 1; done",
+            ],
+        },
+        {
+            "name": "build-opencloud",
+            "image": OC_CI_GOLANG,
+            "commands": [
+                ". ./.woodpecker.env",
+                "if $OPENCLOUD_CACHE_FOUND; then exit 0; fi",
+                "cd repo_opencloud",
+                "for i in $(seq 3); do make -C opencloud build ENABLE_VIPS=1 && break || sleep 1; done",
+                "cp opencloud/bin/opencloud %s/" % dir["base"],
+            ],
+        },
+    ]
+
+def cacheOpenCloud():
+    return [{
+        "name": "upload-opencloud-cache",
+        "image": MINIO_MC,
+        "environment": minio_mc_environment,
+        "commands": [
+            ". ./.woodpecker.env",
+            "if $OPENCLOUD_CACHE_FOUND; then exit 0; fi",
+            "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+            "mc cp -a %s/opencloud s3/$CACHE_BUCKET/opencloud-build/$OPENCLOUD_COMMITID/" % dir["base"],
+            "mc ls --recursive s3/$CACHE_BUCKET/opencloud-build",
+        ],
+    }]
+
+def checkStarlark():
+    return [{
+        "name": "check-starlark",
+        "steps": [
+            {
+                "name": "format-check-starlark",
+                "image": OC_CI_BAZEL_BUILDIFIER,
+                "commands": [
+                    "buildifier --mode=check .woodpecker.star",
+                ],
+            },
+            {
+                "name": "show-diff",
+                "image": OC_CI_BAZEL_BUILDIFIER,
+                "commands": [
+                    "buildifier --mode=fix .woodpecker.star",
+                    "git diff",
+                ],
+                "when": {
+                    "status": [
+                        "failure",
+                    ],
+                },
+            },
+        ],
+        "when": [
+            event["base"],
+            event["cron"],
+            event["pull_request"],
+            event["tag"],
+        ],
+    }]
+
+# ToDo use pnpm cache
+def licenseCheck():
+    return [{
+        "name": "license-check",
+        "steps": installPnpm() + [
+            {
+                "name": "node-check-licenses",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "pnpm licenses:check",
+                ],
+            },
+            {
+                "name": "node-save-licenses",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "pnpm licenses:csv",
+                    "pnpm licenses:save",
+                ],
+            },
+        ],
+        "when": [
+            event["cron"],
+            event["pull_request"],
+            event["tag"],
+            event["main_branch"],
+        ],
+        "workspace": web_workspace,
+    }]
+
+def designSystemDocs(ctx):
+    return [{
+        "name": "design-system-docs",
+        "steps": restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + [
+            {
+                "name": "build",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "pnpm --filter 'design-system' docs:build",
+                    "cp -R packages/design-system/docs/.vitepress/dist docs",
+                    # add dummy woodpecker config to disable CI on push to the docs branch
+                    "printf 'def main(ctx):\n    return [{\n        \"name\":\"dummy-pipeline\",\n" +
+                    "        \"steps\":[{\"name\":\"dummy-step\",\"image\":\"alpine:latest\"}],\n" +
+                    "        \"when\":[{\"branch\":[\"main\"]}],\n    }]\n' > docs/.woodpecker.star",
+                ],
+            },
+            {
+                "name": "publish",
+                "image": PLUGINS_GH_PAGES,
+                "settings": {
+                    "username": {
+                        "from_secret": "github_username",
+                    },
+                    "password": {
+                        "from_secret": "github_token",
+                    },
+                    "pages_directory": "docs/",
+                    "copy_contents": True,
+                    "target_branch": "design-system-docs",
+                    "delete": True,
+                },
+                "when": [
+                    {
+                        "event": ["push"],
+                        "branch": "${CI_REPO_DEFAULT_BRANCH}",
+                        "path": "packages/design-system/**",
+                    },
+                ],
+            },
+        ],
+        "when": [
+            event["pull_request"],
+            event["main_branch"],
+        ],
+        "workspace": web_workspace,
+    }]
+
+def e2eTestingDocs(ctx):
+    return [{
+        "name": "e2e-testing-docs",
+        "steps": [
+            {
+                "name": "build",
+                "image": OC_CI_NODEJS,
+                "commands": [
+                    "node tests/e2e/scripts/generate-docs.mjs",
+                    # add dummy woodpecker config to disable CI on push to the docs branch
+                    "printf 'def main(ctx):\n    return [{\n        \"name\":\"dummy-pipeline\",\n" +
+                    "        \"steps\":[{\"name\":\"dummy-step\",\"image\":\"alpine:latest\"}],\n" +
+                    "        \"when\":[{\"branch\":[\"main\"]}],\n    }]\n' > tests/e2e/.docs-dist/.woodpecker.star",
+                ],
+            },
+            {
+                "name": "publish",
+                "image": PLUGINS_GH_PAGES,
+                "settings": {
+                    "username": {
+                        "from_secret": "github_username",
+                    },
+                    "password": {
+                        "from_secret": "github_token",
+                    },
+                    "pages_directory": "tests/e2e/.docs-dist/",
+                    "copy_contents": True,
+                    "target_branch": "web-testing-docs",
+                    "delete": True,
+                },
+                "when": [
+                    {
+                        "event": ["push"],
+                    },
+                ],
+            },
+        ],
+        "when": [
+            {
+                "event": "pull_request",
+                "path": "tests/e2e/README.md",
+            },
+            {
+                "event": "push",
+                "branch": "${CI_REPO_DEFAULT_BRANCH}",
+                "path": "tests/e2e/README.md",
+            },
+        ],
+        "workspace": web_workspace,
+    }]
+
+def pipelineDependsOn(pipeline, dependant_pipelines):
+    if "depends_on" in pipeline.keys():
+        pipeline["depends_on"] = pipeline["depends_on"] + getPipelineNames(dependant_pipelines)
+    else:
+        pipeline["depends_on"] = getPipelineNames(dependant_pipelines)
+    return pipeline
+
+def pipelinesDependsOn(pipelines, dependant_pipelines):
+    pipes = []
+    for pipeline in pipelines:
+        pipes.append(pipelineDependsOn(pipeline, dependant_pipelines))
+
+    return pipes
+
+def getPipelineNames(pipelines = []):
+    """getPipelineNames returns names of pipelines as a string array
+
+    Args:
+      pipelines: array of drone pipelines
+
+    Returns:
+      names of the given pipelines as string array
+    """
+    names = []
+    for pipeline in pipelines:
+        names.append(pipeline["name"])
+    return names
+
+def skipIfUnchanged(ctx, type):
+    if "full-ci" in ctx.build.title.lower() or ctx.build.event == "tag" or ctx.build.event == "cron":
+        return []
+
+    base = [
+        "^.github/.*",
+        "^config/.*",
+        "^dev/.*",
+        "README.md",
+    ]
+
+    unit = [
+        "^tests/e2e/.*",
+    ]
+    e2e = [
+        "^__fixtures__/.*",
+        "^__mocks__/.*",
+        "^packages/.*/tests/.*",
+        "^tests/unit/.*",
+    ]
+
+    skip = []
+    if type == "e2e-tests" or type == "lint" or type == "typecheck":
+        skip = base + unit
+    elif type == "unit-tests":
+        skip = base + e2e
+    elif type == "cache":
+        skip = base
+
+    return skip
+
+def genericCache(name, action, mounts, cache_path):
+    rebuild = False
+    restore = False
+    if action == "rebuild":
+        rebuild = True
+        action = "rebuild"
+    else:
+        restore = True
+        action = "restore"
+
+    step = {
+        "name": "%s_%s" % (action, name),
+        "image": PLUGINS_S3_CACHE,
+        "settings": {
+            "endpoint": CACHE_S3_SERVER,
+            "rebuild": rebuild,
+            "restore": restore,
+            "mount": mounts,
+            "access_key": {
+                "from_secret": "cache_s3_access_key",
+            },
+            "secret_key": {
+                "from_secret": "cache_s3_secret_key",
+            },
+            "filename": "%s.tar" % name,
+            "path": cache_path,
+            "fallback_path": cache_path,
+        },
+    }
+    return step
+
+def genericBuildArtifactCache(ctx, name, action, path):
+    if action == "rebuild" or action == "restore":
+        cache_path = "%s/%s/%s" % ("cache", repo_slug, ctx.build.commit + "-${CI_PIPELINE_NUMBER}")
+        name = "%s_build_artifact_cache" % name
+        return genericCache(name, action, [path], cache_path)
+    return []
+
+def restoreBuildArtifactCache(ctx, name, path):
+    return [genericBuildArtifactCache(ctx, name, "restore", path)]
+
+def rebuildBuildArtifactCache(ctx, name, path):
+    return [genericBuildArtifactCache(ctx, name, "rebuild", path)]
+
+def pipelineSanityChecks(pipelines):
+    """pipelineSanityChecks helps the CI developers to find errors before running it
+
+    These sanity checks are only executed on when converting starlark to yaml.
+    Error outputs are only visible when the conversion is done with the drone cli.
+
+    Args:
+      pipelines: pipelines to be checked, normally you should run this on the return value of main()
+
+    Returns:
+      none
+    """
+
+    # check if name length of pipeline and steps are exceeded.
+    max_name_length = 50
+    for pipeline in pipelines:
+        pipeline_name = pipeline["name"]
+        if len(pipeline_name) > max_name_length:
+            print("Error: pipeline name %s is longer than 50 characters" % pipeline_name)
+
+        for step in pipeline["steps"]:
+            step_name = step["name"]
+            if len(step_name) > max_name_length:
+                print("Error: step name %s in pipeline %s is longer than 50 characters" % (step_name, pipeline_name))
+
+    # check for non existing depends_on
+    possible_depends = []
+    for pipeline in pipelines:
+        possible_depends.append(pipeline["name"])
+
+    for pipeline in pipelines:
+        if "depends_on" in pipeline.keys():
+            for depends in pipeline["depends_on"]:
+                if not depends in possible_depends:
+                    print("Error: depends_on %s for pipeline %s is not defined" % (depends, pipeline["name"]))
+
+    # check for non declared volumes
+    # for pipeline in pipelines:
+    #   pipeline_volumes = []
+    #   if "workspace" in pipeline.keys():
+    #     for volume in pipeline["workspace"]:
+    #       pipeline_volumes.append(volume["base"])
+    #
+    #   for step in pipeline["steps"]:
+    #     if "workspace" in step.keys():
+    #       for volume in step["workspace"]:
+    #         if not volume["base"] in pipeline_volumes:
+    #           print("Warning: volume %s for step %s is not defined in pipeline %s" % (volume["base"], step["name"], pipeline["name"]))
+
+    # list used docker images
+    print("")
+    print("List of used docker images:")
+
+    images = {}
+
+    for pipeline in pipelines:
+        for step in pipeline["steps"]:
+            image = step["image"]
+            if image in images.keys():
+                images[image] = images[image] + 1
+            else:
+                images[image] = 1
+
+    for image in images.keys():
+        print(" %sx\t%s" % (images[image], image))
+
+def uploadTestArtifacts(pipeline_name):
+    return [{
+        "name": "upload-tests-artifacts",
+        "image": MINIO_MC,
+        "environment": minio_mc_environment,
+        "commands": [
+            "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+            "cd %s/tests/e2e/playwright-report && zip -r /tmp/playwright-report.zip ." % dir["web"],
+            "mc cp /tmp/playwright-report.zip s3/$PUBLIC_BUCKET/web/artifacts/$CI_REPO_NAME/$CI_PIPELINE_NUMBER/%s/playwright-report.zip" % pipeline_name,
+            'printf "=== HTML Report ===\ncurl -O $MC_HOST/$PUBLIC_BUCKET/web/artifacts/$CI_REPO_NAME/$CI_PIPELINE_NUMBER/%s/playwright-report.zip && npx playwright show-report playwright-report.zip\n"' % pipeline_name,
+        ],
+        "when": {
+            "status": ["failure", "success"],
+        },
+    }]
+
+def waitForService(host, port):
+    return [{
+        "name": "wait-for-%s" % host,
+        "image": OC_CI_WAIT_FOR,
+        "commands": [
+            "wait-for -host %s -port %s -timeout 300" % (host, port),
+        ],
+    }]
+
+def tikaService():
+    return [{
+        "name": "tika",
+        "image": APACHE_TIKA,
+        "detach": True,
+    }] + waitForService("tika", "9998")
+
+def imagorService():
+    # renders the previews the server can't, heic and avif among them
+    return [{
+        "name": "imagor",
+        "image": IMAGOR,
+        "detach": True,
+        "environment": {
+            "IMAGOR_UNSAFE": True,
+            "UPLOAD_LOADER_ENABLE": True,
+            "HTTP_LOADER_DISABLE": True,
+            "VIPS_MAX_WIDTH": "7680",
+            "VIPS_MAX_HEIGHT": "7680",
+            "VIPS_MAX_ANIMATION_FRAMES": "100",
+            "UPLOAD_LOADER_MAX_ALLOWED_SIZE": "50000000",
+        },
+    }] + waitForService("imagor", "8000")
+
+def collaboraService():
+    # the image has no shell, so it has to run its own entrypoint without any commands.
+    # coolwsd generates a self-signed certificate on startup, which is good enough for CI.
+    return [
+        {
+            "name": "collabora",
+            "image": COLLABORA_CODE,
+            "detach": True,
+            "environment": {
+                "aliasgroup1": "https://opencloud:9200",
+                "extra_params": "--o:ssl.enable=true --o:ssl.termination=true --o:ssl.ssl_verification=false --o:welcome.enable=false --o:home_mode.enable=true --o:net.frame_ancestors=https://opencloud:9200",
+            },
+        },
+    ]
+
+def yjsService():
+    # The yjs collaboration server (Hocuspocus)
+    return [
+        {
+            "name": "yjs",
+            "image": OC_CI_NODEJS,
+            "detach": True,
+            "environment": {
+                "PORT": "1234",
+                "OPENCLOUD_URL": "https://opencloud:9200",
+                "NODE_TLS_REJECT_UNAUTHORIZED": "0",
+            },
+            "commands": [
+                "cd services/yjs",
+                "node src/server.ts",
+            ],
+        },
+    ] + waitForService("yjs", "1234")
+
+def euroOfficeService():
+    return [
+        {
+            "name": "euro-office",
+            "image": EURO_OFFICE_DOCUMENT_SERVER,
+            "detach": True,
+            "environment": {
+                "WOPI_ENABLED": True,
+                "USE_UNAUTHORIZED_STORAGE": True,
+                "SSL_CERTIFICATE_PATH": "/var/www/euro-office/Data/certs/euro-office.crt",
+                "SSL_KEY_PATH": "/var/www/euro-office/Data/certs/euro-office.key",
+            },
+            "commands": [
+                "openssl req -x509 -newkey rsa:4096 -keyout euro-office.key -out euro-office.crt -sha256 -days 365 -batch -nodes",
+                "mkdir -p /var/www/euro-office/Data/certs",
+                "cp euro-office.key /var/www/euro-office/Data/certs/",
+                "cp euro-office.crt /var/www/euro-office/Data/certs/",
+                "chmod 400 /var/www/euro-office/Data/certs/euro-office.key",
+                "/entrypoint.sh",
+            ],
+        },
+    ]
+
+def postgresService():
+    return [
+        {
+            "name": "postgres",
+            "image": POSTGRES_ALPINE,
+            "environment": {
+                "POSTGRES_DB": "keycloak",
+                "POSTGRES_USER": "keycloak",
+                "POSTGRES_PASSWORD": "keycloak",
+            },
+        },
+    ]
+
+def ldapService():
+    return [
+        {
+            "name": "ldap-server",
+            "image": OPENLDAP,
+            "detach": True,
+            "environment": {
+                "BITNAMI_DEBUG": "true",
+                "LDAP_TLS_VERIFY_CLIENT": "never",
+                "LDAP_ENABLE_TLS": "yes",
+                "LDAP_TLS_CA_FILE": "/opt/bitnami/openldap/share/openldap.crt",
+                "LDAP_TLS_CERT_FILE": "/opt/bitnami/openldap/share/openldap.crt",
+                "LDAP_TLS_KEY_FILE": "/opt/bitnami/openldap/share/openldap.key",
+                "LDAP_ROOT": "dc=opencloud,dc=eu",
+                "LDAP_ADMIN_PASSWORD": "admin",
+            },
+            "commands": [
+                "mkdir -p /opt/bitnami/openldap/share",
+                "mkdir -p /tmp/custom-scripts",
+                "mkdir -p /tmp/ldif-files",
+                "cp tests/woodpecker/ldap/*.ldif /tmp/ldif-files/",
+                "cp tests/woodpecker/ldap/docker-entrypoint-override.sh /tmp/custom-scripts/",
+                "chmod +x /tmp/custom-scripts/docker-entrypoint-override.sh",
+                "/tmp/custom-scripts/docker-entrypoint-override.sh /opt/bitnami/scripts/openldap/run.sh",
+            ],
+            "backend_options": {
+                "docker": {
+                    "user": "0:0",
+                },
+            },
+        },
+    ] + waitForService("ldap-server", "1636") + waitForService("ldap-server", "1389")
+
+def keycloakService():
+    return [{
+               "name": "generate-keycloak-certs",
+               "image": OC_CI_NODEJS,
+               "commands": [
+                   "mkdir -p keycloak-certs",
+                   "openssl req -x509 -newkey rsa:2048 -keyout keycloak-certs/keycloakkey.pem -out keycloak-certs/keycloakcrt.pem -nodes -days 365 -subj '/CN=keycloak'",
+                   "chmod -R 755 keycloak-certs",
+               ],
+           }] + waitForService("postgres", "5432") + \
+           [{
+               "name": "keycloak",
+               "image": KEYCLOAK,
+               "detach": True,
+               "environment": {
+                   "OC_DOMAIN": "opencloud:9200",
+                   "KC_HOSTNAME": "keycloak",
+                   "KC_PORT": 8443,
+                   "KC_DB": "postgres",
+                   "KC_DB_URL": "jdbc:postgresql://postgres:5432/keycloak",
+                   "KC_DB_USERNAME": "keycloak",
+                   "KC_DB_PASSWORD": "keycloak",
+                   "KC_FEATURES": "impersonation",
+                   "KEYCLOAK_ADMIN": "admin",
+                   "KEYCLOAK_ADMIN_PASSWORD": "admin",
+                   "KC_HTTPS_CERTIFICATE_FILE": "./keycloak-certs/keycloakcrt.pem",
+                   "KC_HTTPS_CERTIFICATE_KEY_FILE": "./keycloak-certs/keycloakkey.pem",
+                   "LDAP_SERVER_URL": "ldaps://ldap-server:1636",
+                   "LDAP_BIND_DN": "cn=admin,dc=opencloud,dc=eu",
+                   "LDAP_BIND_PASSWORD": "admin",
+                   "LDAP_USERS_DN": "ou=users,dc=opencloud,dc=eu",
+               },
+               "commands": [
+                   "mkdir -p /opt/keycloak/data/import",
+                   "cp tests/woodpecker/opencloud_keycloak/opencloud-ci-realm.dist.json /opt/keycloak/data/import/openCloud-realm.json",
+                   "/opt/keycloak/bin/kc.sh start-dev --proxy-headers xforwarded --spi-connections-http-client-default-disable-trust-manager=true --import-realm --health-enabled=true",
+               ],
+           }] + waitForService("keycloak", "8443")
+
+def e2eTestsOnKeycloak(ctx):
+    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + \
+            installPnpm() + \
+            restoreBrowsersCache("chromium") + \
+            ldapService() + \
+            keycloakService() + \
+            restoreBuildArtifactCache(ctx, "web-dist", "dist") + \
+            restoreOpenCloudCache()
+
+    # configs to setup opencloud with keycloak and ldap
+    environment = {
+        "PROXY_AUTOPROVISION_ACCOUNTS": False,
+        "PROXY_ROLE_ASSIGNMENT_DRIVER": "oidc",
+        "OC_OIDC_ISSUER": "https://keycloak:8443/realms/openCloud",
+        "PROXY_OIDC_REWRITE_WELLKNOWN": True,
+        "WEB_OIDC_CLIENT_ID": "web",
+        "PROXY_USER_OIDC_CLAIM": "uuid",
+        "PROXY_USER_CS3_CLAIM": "userid",
+        "OC_ADMIN_USER_ID": "",
+        "OC_EXCLUDE_RUN_SERVICES": "idp,idm",
+        "GRAPH_ASSIGN_DEFAULT_USER_ROLE": False,
+        "SETTINGS_SETUP_DEFAULT_ASSIGNMENTS": False,
+        "GRAPH_USERNAME_MATCH": "none",
+        "KEYCLOAK_DOMAIN": "keycloak:8443",
+        "OC_LOG_LEVEL": "debug",
+        "OC_LDAP_URI": "ldaps://ldap-server:1636",
+        "OC_LDAP_INSECURE": True,
+        "OC_LDAP_BIND_DN": "cn=admin,dc=opencloud,dc=eu",
+        "OC_LDAP_BIND_PASSWORD": "admin",
+
+        # LDAP configs
+        "OC_LDAP_GROUP_BASE_DN": "ou=groups,dc=opencloud,dc=eu",
+        "OC_LDAP_GROUP_SCHEMA_ID": "entryUUID",
+        "GRAPH_LDAP_GROUP_CREATE_BASE_DN": "ou=custom,ou=groups,dc=opencloud,dc=eu",
+        "GRAPH_LDAP_REFINT_ENABLED": True,
+        "OC_LDAP_USER_BASE_DN": "ou=users,dc=opencloud,dc=eu",
+        "OC_LDAP_USER_FILTER": "(objectclass=inetOrgPerson)",
+        "OC_LDAP_USER_SCHEMA_ID": "entryUUID",
+        "OC_LDAP_DISABLE_USER_MECHANISM": "none",
+        "GRAPH_LDAP_SERVER_UUID": "true",
+        "FRONTEND_READONLY_USER_ATTRIBUTES": "user.onPremisesSamAccountName,user.displayName,user.mail,user.passwordProfile,user.accountEnabled,user.appRoleAssignments",
+        "OC_LDAP_SERVER_WRITE_ENABLED": False,
+    }
+
+    steps += openCloudService(environment) + \
+             [
+                 {
+                     "name": "e2e-tests",
+                     "image": OC_CI_NODEJS,
+                     "environment": {
+                         "OC_BASE_URL": "opencloud:9200",
+                         "KEYCLOAK": True,
+                         "KEYCLOAK_HOST": "keycloak:8443",
+                         "PLAYWRIGHT_BROWSERS_PATH": "tests/e2e/.playwright",
+                         "TERM": "xterm-256color",
+                         "FORCE_COLOR": "1",
+                     },
+                     "commands": [
+                         "cd tests/e2e && pnpm playwright install chromium && pnpm bddgen && pnpm playwright test keycloak --project=chromium",
+                     ],
+                 },
+             ] + \
+             uploadTestArtifacts("e2e-test-on-keycloak")
+
+    return [{
+        "name": "e2e-test-on-keycloak",
+        "workspace": web_workspace,
+        "steps": steps,
+        "services": postgresService(),
+        "when": [
+            event["base"],
+            event["cron"],
+            event["pull_request"],
+            event["tag"],
+        ],
+    }]
+
+def getOpenCloudlatestCommitId(ctx):
+    web_repo_path = "https://raw.githubusercontent.com/opencloud-eu/web/%s" % ctx.build.commit
+    return [
+        {
+            "name": "get-opencloud-latest-commit-id",
+            "image": OC_CI_GOLANG,
+            "commands": [
+                "curl -o .woodpecker.env %s/.woodpecker.env" % web_repo_path,
+                "curl -o script.sh %s/tests/woodpecker/script.sh" % web_repo_path,
+                ". ./.woodpecker.env",
+                "bash script.sh get_latest_opencloud_commit_id",
+            ],
+        },
+    ]
+
+def cacheBrowsers():
+    return [
+        {
+            "name": "upload-browsers-cache",
+            "image": MINIO_MC,
+            "environment": minio_mc_environment,
+            "commands": [
+                ". ./.woodpecker.env",
+                "if $BROWSER_CACHE_FOUND; then exit 0; fi",
+                "playwright_version=$(bash tests/woodpecker/script.sh get_playwright_version)",
+                "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+                "mc cp -r -a %s s3/$CACHE_BUCKET/web/browsers-cache/$playwright_version/" % dir["playwrightBrowsersArchive"],
+                "mc ls --recursive s3/$CACHE_BUCKET/web",
+            ],
+        },
+    ]
+
+def checkBrowsersCache():
+    return [{
+        "name": "check-browsers-cache",
+        "image": MINIO_MC,
+        "environment": minio_mc_environment,
+        "commands": [
+            "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+            "mc ls --recursive s3/$CACHE_BUCKET/web",
+            "bash tests/woodpecker/script.sh check_browsers_cache",
+        ],
+    }]
+
+def restoreBrowsersCache(browser):
+    return [
+        {
+            "name": "restore-browsers-cache",
+            "image": MINIO_MC,
+            "environment": minio_mc_environment,
+            "commands": [
+                "playwright_version=$(bash tests/woodpecker/script.sh get_playwright_version)",
+                "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
+                "mc cp -r -a s3/$CACHE_BUCKET/web/browsers-cache/$playwright_version/playwright-browsers.tar.gz %s" % dir["web"],
+            ],
+        },
+        {
+            "name": "unzip-browsers-cache",
+            "image": OC_CI_GOLANG,
+            "commands": [
+                "tar -xvf %s -C ." % dir["playwrightBrowsersArchive"],
+            ],
+        },
+    ]
+
+def waitForWebOffice(office_url = ""):
+    if office_url == "":
+        return []
+    office_url += "/hosting/discovery"
+    return [{
+        "name": "wait-for-weboffice",
+        "image": OC_CI_NODEJS,
+        "commands": [
+            "timeout 300 bash -c " +
+            "'while [ `curl %s" % office_url +
+            " -w \"%{http_code}\" -o /dev/null -sk` != \"200\" ]; do " +
+            "echo \"Waiting...\" && sleep 2; done'",
+        ],
+    }]

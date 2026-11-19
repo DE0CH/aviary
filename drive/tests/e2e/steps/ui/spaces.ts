@@ -1,0 +1,354 @@
+import { When, Then } from '../../environment/fixtures'
+import { DataTable } from 'playwright-bdd'
+import { expect } from '@playwright/test'
+import { World } from '../../environment/world'
+import { objects } from '../../support'
+import { pageObjectFor, actorPage } from '../../environment/pageObject'
+
+When(
+  '{string} navigates to the personal space page',
+  async function ({ world }: { world: World }, stepUser: string): Promise<void> {
+    const pageObject = pageObjectFor(world, stepUser, objects.applicationFiles.page.spaces.Personal)
+    await pageObject.navigate()
+  }
+)
+
+When(
+  '{string} navigates to the projects space page',
+  async function ({ world }: { world: World }, stepUser: string): Promise<void> {
+    const pageObject = pageObjectFor(world, stepUser, objects.applicationFiles.page.spaces.Projects)
+    await pageObject.navigate()
+  }
+)
+
+When(
+  '{string} creates the project space {string}',
+  async function ({ world }: { world: World }, stepUser: string, name: string): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.create({ key: name, space: { name } })
+  }
+)
+
+When(
+  '{string} creates the vault space {string} with password {string}',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    name: string,
+    password: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.create({ key: name, space: { name, password } })
+  }
+)
+
+When(
+  '{string} creates the project spaces with options',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    for (const info of stepTable.hashes()) {
+      const member = info.member
+        ? {
+            collaborator: world.usersEnvironment.getCreatedUser({ key: info.member }),
+            role: info.role
+          }
+        : undefined
+      await spacesObject.createWithOptions({
+        key: info.name,
+        space: {
+          name: info.name,
+          subtitle: info.subtitle,
+          description: info.description,
+          quota: info.quota?.replace(/[^0-9]/g, ''),
+          image: info.image ? world.filesEnvironment.getFile({ name: info.image }) : undefined,
+          member
+        }
+      })
+    }
+  }
+)
+
+When(
+  '{string} navigates to the project space {string}',
+  async function ({ world }: { world: World }, stepUser: string, key: string): Promise<void> {
+    const page = actorPage(world, stepUser)
+    const spacesObject = new objects.applicationFiles.Spaces({ page })
+    const pageObject = new objects.applicationFiles.page.spaces.Projects({ page })
+    await pageObject.navigate()
+    await spacesObject.open({ key })
+  }
+)
+
+When(
+  '{string} enters the vault space {string} with passphrase {string}',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    key: string,
+    passphrase: string
+  ): Promise<void> {
+    const page = actorPage(world, stepUser)
+    const spacesObject = new objects.applicationFiles.Spaces({ page })
+    const pageObject = new objects.applicationFiles.page.spaces.Projects({ page })
+    await pageObject.navigate()
+    await spacesObject.openVault({ key, passphrase })
+  }
+)
+
+When(
+  '{string} unlocks the vault space with passphrase {string}',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    passphrase: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.unlockVault({ passphrase })
+  }
+)
+
+Then(
+  '{string} should see the unlock page of the vault space {string}',
+  async function ({ world }: { world: World }, stepUser: string, key: string): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.expectVaultLocked({ key })
+  }
+)
+
+When(
+  /^"([^"]*)" (?:changes|updates) the space "([^"]*)" (name|subtitle|description|quota|image|icon) to "([^"]*)"$/,
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    key: string,
+    attribute: string,
+    value: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+
+    switch (attribute) {
+      case 'name':
+        await spacesObject.changeName({ key, value })
+        break
+      case 'subtitle':
+        await spacesObject.changeSubtitle({ key, value })
+        break
+      case 'description':
+        await spacesObject.changeDescription({ value })
+        break
+      case 'quota':
+        await spacesObject.changeQuota({ key, value })
+        break
+      case 'image':
+        await spacesObject.changeSpaceImage({
+          key,
+          resource: world.filesEnvironment.getFile({ name: value })
+        })
+        break
+      case 'icon':
+        await spacesObject.changeSpaceIcon({ key, icon: value })
+        break
+      default:
+        throw new Error(`${attribute} not implemented`)
+    }
+  }
+)
+
+When(
+  '{string} deletes the space {string} image',
+  async function ({ world }: { world: World }, stepUser: string, space: string): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.deleteSpaceImage({ space })
+  }
+)
+
+When(
+  '{string} adds following user(s) to the project space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    for (const { user, role, kind } of stepTable.hashes()) {
+      const collaborator =
+        kind === 'user'
+          ? world.usersEnvironment.getCreatedUser({ key: user })
+          : world.usersEnvironment.getCreatedGroup({ key: user })
+      const collaboratorWithRole = {
+        collaborator,
+        role
+      }
+      await spacesObject.addMembers({ users: [collaboratorWithRole] })
+    }
+  }
+)
+
+When(
+  '{string} removes access to following user(s) from the project space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    for (const { user, role } of stepTable.hashes()) {
+      const member = {
+        collaborator: world.usersEnvironment.getCreatedUser({ key: user }),
+        role
+      }
+      await spacesObject.removeAccessToMember({ users: [member] })
+    }
+  }
+)
+
+Then(
+  /^"([^"]*)" (should|should not) see space "([^"]*)"$/,
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    actionType: string,
+    space: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const spaceLocator = spacesObject.getSpaceLocator(space)
+    actionType === 'should'
+      ? await expect(spaceLocator).toBeVisible()
+      : await expect(spaceLocator).not.toBeVisible()
+  }
+)
+
+Then(
+  '{string} should see the following details of the project space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const { subtitle, description, quota } = stepTable.hashes()[0]
+    await spacesObject.expectSpaceOverview({
+      subtitle,
+      description,
+      quota: quota?.replace(/[^0-9]/g, '')
+    })
+  }
+)
+
+When(
+  '{string} changes the roles of the following user(s) in the project space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    for (const { user, role } of stepTable.hashes()) {
+      const member = {
+        collaborator: world.usersEnvironment.getCreatedUser({ key: user }),
+        role
+      }
+      await spacesObject.changeRoles({ users: [member] })
+    }
+  }
+)
+
+When(
+  '{string} as project manager removes their own access to the project space',
+  async function ({ world }: { world: World }, stepUser: any): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    await spacesObject.removeAccessToMember({
+      users: [
+        {
+          collaborator: world.usersEnvironment.getCreatedUser({ key: stepUser })
+        }
+      ],
+      removeOwnSpaceAccess: true
+    })
+  }
+)
+
+When(
+  '{string} sets the expiration date of the member {string} of the project space to {string}',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    memberName: string,
+    expirationDate: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const member = { collaborator: world.usersEnvironment.getCreatedUser({ key: memberName }) }
+    await spacesObject.addExpirationDate({ member, expirationDate })
+  }
+)
+
+When(
+  '{string} removes the expiration date of the member {string} of the project space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    memberName: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const member = { collaborator: world.usersEnvironment.getCreatedUser({ key: memberName }) }
+    await spacesObject.removeExpirationDate({ member })
+  }
+)
+
+When(
+  '{string} downloads the space {string}',
+  async function ({ world }: { world: World }, stepUser: string, space: string): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const downloadedResource = await spacesObject.downloadSpace()
+    expect(downloadedResource).toContain(`${space}.zip`)
+  }
+)
+
+Then(
+  '{string} should see activity of the space',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+
+    for (const info of stepTable.hashes()) {
+      await spacesObject.checkSpaceActivity({ activity: info.activity })
+    }
+  }
+)
+
+Then(
+  '{string} should see activities of the space mathing the following regex',
+  async function (
+    { world }: { world: World },
+    stepUser: string,
+    stepTable: DataTable
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+
+    for (const info of stepTable.hashes()) {
+      await spacesObject.checkSpaceActivity({ activity: new RegExp(info.activity) })
+    }
+  }
+)
+
+Then(
+  'space image should match {int}\\/{int} ratio for user {string}',
+  async function (
+    { world }: { world: World },
+    expectedWidth: number,
+    expectedHeight: number,
+    stepUser: string
+  ): Promise<void> {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationFiles.Spaces)
+    const { width, height } = await spacesObject.getSpaceImageRatio()
+
+    expect(width / height).toBeCloseTo(expectedWidth / expectedHeight, 0.1)
+  }
+)

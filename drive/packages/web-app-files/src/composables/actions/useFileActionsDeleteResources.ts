@@ -1,0 +1,385 @@
+import {
+  isLocationSpacesActive,
+  queryItemAsString,
+  useGetMatchingSpace,
+  useRouteQuery,
+  useClientService,
+  useRouter,
+  createFileRouteOptions,
+  isSameResource,
+  cloneStateObject,
+  useMessages,
+  useModals,
+  useSpacesStore,
+  useConfigStore,
+  useExtensionRegistry,
+  useVaultStore,
+  useResourcesStore,
+  encryptResourcePathsForServer,
+  useDeleteWorker,
+  useEventBus,
+  Key,
+  Modifier,
+  useKeyboardActions
+} from '@opencloud-eu/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { dirname } from 'path'
+import { computed, ref, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { storeToRefs } from 'pinia'
+import { useFileActionsUndoDelete } from './files/useFileActionsUndoDelete'
+
+interface UndoKeyAction {
+  id: string
+  deletionId: number
+  remove: () => void
+}
+
+// Ctrl+Z only undoes the latest deletion. Kept at module level because every instance of this
+// composable has its own keyboard actions, but there must only be one undo shortcut for the app.
+let deletionCount = 0
+let latestNotifiedDeletionId = 0
+let undoKeyActions: UndoKeyAction[] = []
+
+function removeUndoKeyActions(predicate: (action: UndoKeyAction) => boolean) {
+  undoKeyActions.filter(predicate).forEach(({ remove }) => remove())
+  undoKeyActions = undoKeyActions.filter((action) => !predicate(action))
+}
+
+export const useFileActionsDeleteResources = () => {
+  const configStore = useConfigStore()
+  const { showMessage, showErrorMessage, removeMessage } = useMessages()
+  const router = useRouter()
+  const language = useGettext()
+  const { getMatchingSpace } = useGetMatchingSpace()
+  const { $gettext, $ngettext } = language
+  const clientService = useClientService()
+  const { dispatchModal } = useModals()
+  const spacesStore = useSpacesStore()
+  const eventBus = useEventBus()
+  const { bindKeyAction, removeKeyAction } = useKeyboardActions()
+  const { startWorker } = useDeleteWorker({
+    concurrentRequests: configStore.options.concurrentRequests.resourceBatchActions
+  })
+
+  const { actions: undoActions } = useFileActionsUndoDelete()
+
+  const resourcesStore = useResourcesStore()
+  const { currentFolder } = storeToRefs(resourcesStore)
+  const extensionRegistry = useExtensionRegistry()
+  const vaultStore = useVaultStore()
+
+  const resourcesToDelete = ref<Resource[]>([])
+
+  const currentPageQuery = useRouteQuery('page', '1')
+  const currentPage = computed(() => {
+    return parseInt(queryItemAsString(unref(currentPageQuery)))
+  })
+
+  const itemsPerPageQuery = useRouteQuery('items-per-page', '1')
+  const itemsPerPage = computed(() => {
+    return parseInt(queryItemAsString(unref(itemsPerPageQuery)))
+  })
+
+  const resources = computed(() => {
+    return cloneStateObject<Resource[]>(unref(resourcesToDelete))
+  })
+
+  const showSuccessMessage = ({
+    space,
+    filesToDelete,
+    deletedFiles,
+    deletedServerFiles,
+    deletionId
+  }: {
+    space: SpaceResource
+    filesToDelete: Resource[]
+    deletedFiles: Resource[]
+    deletedServerFiles: Resource[]
+    deletionId: number
+  }) => {
+    const title =
+      deletedFiles.length === 1 && filesToDelete.length === 1
+        ? $gettext('"%{item}" was moved to trash bin', { item: deletedFiles[0].name })
+        : $ngettext(
+            '%{itemCount} item was moved to trash bin',
+            '%{itemCount} items were moved to trash bin',
+            deletedFiles.length,
+            { itemCount: deletedFiles.length.toString() }
+          )
+
+    const messageTimeout = 7 // in seconds
+    const undoAction = unref(undoActions)[0]
+    const undoAvailable = undoAction.isVisible({ space, resources: deletedServerFiles })
+
+    // only the latest deletion can be undone via Ctrl+Z (one deletion in several spaces has one undo per space),
+    // an earlier deletion that finishes late only keeps the undo button of its message
+    const isLatestDeletion = deletionId >= latestNotifiedDeletionId
+    if (isLatestDeletion) {
+      latestNotifiedDeletionId = deletionId
+      removeUndoKeyActions((action) => action.deletionId !== deletionId)
+    }
+
+    let keyActionId: string | undefined
+    const message = showMessage({
+      title,
+      timeout: messageTimeout,
+      actions: [undoAction],
+      actionOptions: {
+        space,
+        resources: deletedServerFiles,
+        callback: () => {
+          removeMessage(message)
+          if (keyActionId) {
+            removeUndoKeyActions(({ id }) => id === keyActionId)
+          }
+        }
+      }
+    })
+
+    if (undoAvailable && isLatestDeletion) {
+      keyActionId = bindKeyAction({ primary: Key.Z, modifier: Modifier.Ctrl }, () => {
+        removeUndoKeyActions(({ id }) => id === keyActionId)
+        return undoAction.handler({
+          space,
+          resources: deletedServerFiles,
+          callback: () => {
+            removeMessage(message)
+          }
+        })
+      })
+      undoKeyActions.push({
+        id: keyActionId,
+        deletionId,
+        remove: () => removeKeyAction(keyActionId)
+      })
+      setTimeout(() => removeUndoKeyActions(({ id }) => id === keyActionId), messageTimeout * 1000)
+    }
+  }
+
+  const dialogTitle = computed(() => {
+    const currentResources = unref(resources)
+    const isFolder = currentResources[0].type === 'folder'
+    let title: string = null
+
+    if (currentResources.length === 1) {
+      if (isFolder) {
+        title = $gettext('Permanently delete folder »%{name}«', {
+          name: currentResources[0].name
+        })
+      } else {
+        title = $gettext('Permanently delete file »%{name}«', {
+          name: currentResources[0].name
+        })
+      }
+      return title
+    }
+
+    return $ngettext(
+      'Permanently delete selected resource?',
+      'Permanently delete %{amount} selected resources?',
+      currentResources.length,
+      { amount: currentResources.length.toString() }
+    )
+  })
+
+  const dialogMessage = computed(() => {
+    const currentResources = unref(resources)
+    const isFolder = currentResources[0].type === 'folder'
+
+    if (currentResources.length === 1) {
+      if (isFolder) {
+        return $gettext(
+          'Are you sure you want to delete this folder? All its content will be permanently removed. This action cannot be undone.'
+        )
+      }
+      return $gettext(
+        'Are you sure you want to delete this file? All its content will be permanently removed. This action cannot be undone.'
+      )
+    }
+
+    return $gettext(
+      'Are you sure you want to delete all selected resources? All their content will be permanently removed. This action cannot be undone.'
+    )
+  })
+
+  const trashbin_delete = (space: SpaceResource) => {
+    const originalRoute = unref(router.currentRoute)
+
+    startWorker(
+      { topic: 'trashBinDelete', space, resources: unref(resources) },
+      ({ successful, failed }) => {
+        if (successful.length) {
+          const title =
+            successful.length === 1 && unref(resources).length === 1
+              ? $gettext('"%{item}" was deleted successfully', { item: successful[0].name })
+              : $ngettext(
+                  '%{itemCount} item was deleted successfully',
+                  '%{itemCount} items were deleted successfully',
+                  successful.length,
+                  { itemCount: successful.length.toString() }
+                )
+
+          showMessage({ title })
+        }
+
+        failed.forEach(({ resource }) => {
+          const title = $gettext('Failed to delete "%{item}"', { item: resource.name })
+          showErrorMessage({ title, errors: [new Error()] })
+        })
+
+        // user hasn't navigated to another location meanwhile
+        if (
+          originalRoute.name === unref(router.currentRoute).name &&
+          originalRoute.query?.fileId === unref(router.currentRoute).query?.fileId
+        ) {
+          resourcesStore.removeResources(successful)
+          resourcesStore.resetSelection()
+        }
+      }
+    )
+  }
+
+  const filesList_delete = (resources: Resource[]) => {
+    const deletionId = ++deletionCount
+    resourcesToDelete.value = [...resources]
+    resourcesStore.addResourcesIntoDeleteQueue(unref(resourcesToDelete).map(({ id }) => id))
+    unref(resourcesToDelete).forEach(({ id }) => resourcesStore.removeSelection(id))
+
+    const resourceSpaceMapping = unref(resources).reduce<
+      Record<string, { space: SpaceResource; resources: Resource[] }>
+    >((acc, resource) => {
+      if (resource.storageId in acc) {
+        acc[resource.storageId].resources.push(resource)
+        return acc
+      }
+
+      const matchingSpace = getMatchingSpace(resource)
+
+      if (!(matchingSpace.id in acc)) {
+        acc[matchingSpace.id] = { space: matchingSpace, resources: [] }
+      }
+
+      acc[matchingSpace.id].resources.push(resource)
+      return acc
+    }, {})
+
+    const originalCurrentFolderId = unref(currentFolder)?.id
+
+    const startGroup = async (
+      spaceForDeletion: SpaceResource,
+      resourcesForDeletion: Resource[]
+    ) => {
+      // The delete worker is a vanilla webdav client; translate any vault path
+      // back to its encrypted server form before handing the resources off
+      // (the cleartext originals stay in the store for UI state).
+      const workerResources = await encryptResourcePathsForServer(
+        extensionRegistry,
+        spaceForDeletion,
+        resourcesForDeletion
+      )
+      startWorker(
+        { topic: 'fileListDelete', space: spaceForDeletion, resources: workerResources },
+        async ({ successful, failed }) => {
+          // successful holds the worker clones with encrypted vault paths, only undo needs those
+          const deletedIds = new Set(successful.map(({ id }) => id))
+          const deletedResources = resourcesForDeletion.filter(({ id }) => deletedIds.has(id))
+
+          if (deletedResources.length) {
+            showSuccessMessage({
+              space: spaceForDeletion,
+              filesToDelete: resourcesForDeletion,
+              deletedFiles: deletedResources,
+              deletedServerFiles: successful,
+              deletionId
+            })
+            eventBus.publish('runtime.resource.deleted', deletedResources)
+
+            // A deleted (sub)tree may be, or contain, a vault root whose
+            // passphrase is now cached for a path that no longer exists.
+            // Evict it so a different vault re-created at the same path later
+            // isn't silently auto-unlocked with the old key.
+            deletedResources.forEach((r) =>
+              vaultStore.clearEnginesUnder(spaceForDeletion.id, r.path)
+            )
+          }
+
+          resourcesStore.removeResourcesFromDeleteQueue(failed.map(({ resource }) => resource.id))
+          resourcesStore.removeResourcesFromDeleteQueue([...deletedIds])
+
+          failed.forEach(({ error, resource }) => {
+            let title = $gettext('Failed to delete "%{resource}"', { resource: resource.name })
+            if (error.statusCode === 423) {
+              title = $gettext('Failed to delete "%{resource}" - the file is locked', {
+                resource: resource.name
+              })
+            }
+
+            showErrorMessage({ title, errors: [error] })
+          })
+
+          // user hasn't navigated to another location meanwhile
+          if (originalCurrentFolderId === unref(currentFolder)?.id) {
+            resourcesStore.removeResources(deletedResources)
+
+            const activeFilesCount = resourcesStore.activeResources.length
+            const pageCount = Math.ceil(unref(activeFilesCount) / unref(itemsPerPage))
+            if (unref(currentPage) > 1 && unref(currentPage) > pageCount) {
+              // reset pagination to avoid empty lists (happens when deleting all items on the last page)
+              currentPageQuery.value = pageCount.toString()
+            }
+          }
+
+          // Load quota
+          if (
+            isLocationSpacesActive(router, 'files-spaces-generic') &&
+            !['public', 'share'].includes(spaceForDeletion?.driveType)
+          ) {
+            const graphClient = clientService.graphAuthenticated
+            const updatedSpace = await graphClient.drives.getDrive(unref(resources)[0].storageId)
+            spacesStore.updateSpaceField({
+              id: updatedSpace.id,
+              field: 'spaceQuota',
+              value: updatedSpace.spaceQuota
+            })
+          }
+
+          if (
+            unref(resourcesToDelete).length &&
+            isSameResource(unref(resourcesToDelete)[0], unref(currentFolder))
+          ) {
+            // current folder is being deleted
+            return router.push(
+              createFileRouteOptions(spaceForDeletion, {
+                path: dirname(unref(resourcesToDelete)[0].path),
+                fileId: unref(resourcesToDelete)[0].parentFolderId
+              })
+            )
+          }
+        }
+      )
+    }
+
+    return Object.values(resourceSpaceMapping).map(
+      ({ space: spaceForDeletion, resources: resourcesForDeletion }) =>
+        startGroup(spaceForDeletion, resourcesForDeletion)
+    )
+  }
+
+  const displayDialog = (space: SpaceResource, resources: Resource[]) => {
+    resourcesToDelete.value = [...resources]
+
+    dispatchModal({
+      title: unref(dialogTitle),
+      message: unref(dialogMessage),
+      confirmText: $gettext('Delete'),
+      showCancelAction: true,
+      onConfirm: () => trashbin_delete(space)
+    })
+  }
+
+  return {
+    displayDialog,
+    filesList_delete
+  }
+}

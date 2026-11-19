@@ -1,0 +1,14 @@
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# Playwright-BDD
+/.features-gen/
+
+# Generated docs page (published to the web-testing-docs branch by CI)
+/.docs-dist/

@@ -1,0 +1,269 @@
+<template>
+  <div class="item-filter flex" :class="`item-filter-${filterName}`">
+    <oc-filter-chip
+      :filter-label="filterLabel"
+      :selected-item-names="selectedItems.map((i) => i[displayNameAttribute])"
+      :close-on-click="closeOnClick"
+      @clear-filter="clearFilter"
+      @show-drop="showDrop"
+    >
+      <template #default>
+        <p
+          v-if="!items.length && noItemsMessage"
+          class="item-filter-no-items text-sm text-role-on-surface-variant my-2"
+          v-text="noItemsMessage"
+        />
+        <oc-text-input
+          v-if="canFilterOptions && (items.length || !noItemsMessage)"
+          ref="filterInputRef"
+          v-model="filterTerm"
+          class="item-filter-input mb-4 mt-2"
+          autocomplete="off"
+          :label="optionFilterLabel === '' ? $gettext('Filter list') : optionFilterLabel"
+        />
+        <oc-list v-if="displayedItems.length" class="item-filter-list">
+          <li v-for="(item, index) in displayedItems" :key="index" class="my-1">
+            <oc-button
+              class="item-filter-list-item flex items-center w-full"
+              :class="{
+                'item-filter-list-item-active': !allowMultiple && isItemSelected(item),
+                'justify-start': allowMultiple,
+                'justify-between': !allowMultiple
+              }"
+              justify-content="space-between"
+              appearance="raw"
+              :data-test-value="item[displayNameAttribute as keyof Item]"
+              @click="toggleItemSelection(item)"
+            >
+              <div class="flex items-center truncate">
+                <oc-checkbox
+                  v-if="allowMultiple"
+                  size="large"
+                  class="mr-2 shrink-0"
+                  :label="$gettext('Toggle selection')"
+                  :model-value="isItemSelected(item)"
+                  :label-hidden="true"
+                  @update:model-value="toggleItemSelection(item)"
+                  @click.stop
+                />
+                <div>
+                  <slot name="image" :item="item" :term="filterTerm || ''" />
+                </div>
+                <div class="truncate [&>*]:truncate" :title="item[displayNameAttribute]">
+                  <slot name="item" :item="item" :term="filterTerm || ''" />
+                </div>
+              </div>
+              <div class="flex">
+                <oc-icon v-if="!allowMultiple && isItemSelected(item)" name="check" />
+              </div>
+            </oc-button>
+          </li>
+        </oc-list>
+        <p
+          v-if="hiddenItemCount"
+          class="item-filter-truncation-hint text-sm text-role-on-surface-variant mt-2 mb-0"
+          v-text="truncationHint"
+        />
+      </template>
+    </oc-filter-chip>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ComponentPublicInstance, computed, nextTick, ref, unref, useTemplateRef, watch } from 'vue'
+import Fuse, { FuseOptionKey } from 'fuse.js'
+import omit from 'lodash-es/omit'
+import isEqual from 'lodash-es/isEqual'
+import uniq from 'lodash-es/uniq'
+import { useRoute, useRouteQuery, useRouter } from '../composables'
+import { defaultFuseOptions, escapeFuseQuery } from '../helpers'
+import { queryItemAsString } from '../composables/appDefaults'
+import { OcTextInput } from '@opencloud-eu/design-system/components'
+import { useGettext } from 'vue3-gettext'
+
+type Item = Record<string, any>
+
+/**
+ * Long lists are truncated because rendering them all is expensive and unusable.
+ * Only applies if the option filter is available, otherwise the hidden items would be unreachable.
+ */
+const maxDisplayedItems = 20
+
+const {
+  filterLabel,
+  filterName,
+  items,
+  optionFilterLabel = '',
+  showOptionFilter = false,
+  allowMultiple = false,
+  idAttribute = 'id',
+  displayNameAttribute = 'name',
+  filterableAttributes = [],
+  closeOnClick = false,
+  noItemsMessage = '',
+  loading = false
+} = defineProps<{
+  filterLabel: string
+  filterName: string
+  items: Item[]
+  optionFilterLabel?: string
+  showOptionFilter?: boolean
+  allowMultiple?: boolean
+  idAttribute?: string
+  displayNameAttribute?: string
+  filterableAttributes?: FuseOptionKey<Item>[]
+  closeOnClick?: boolean
+  /**
+   * Shown instead of the list if there are no items to choose from.
+   */
+  noItemsMessage?: string
+  /**
+   * Set while the items are being loaded. Values from the route query that are not part of the
+   * items are only shown as selected once loading has finished.
+   */
+  loading?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'selectionChange', selectedItems: any[]): void
+}>()
+
+defineSlots<{
+  image?: (props: { item: Item; term: string }) => unknown
+  item?: (props: { item: Item; term: string }) => unknown
+}>()
+
+const { $ngettext } = useGettext()
+const router = useRouter()
+const currentRoute = useRoute()
+const filterInputRef = useTemplateRef<ComponentPublicInstance<typeof OcTextInput>>('filterInputRef')
+const selectedItems = ref<Item[]>([])
+
+const queryParam = `q_${filterName}`
+const currentRouteQuery = useRouteQuery(queryParam)
+
+const getId = (item: Item) => {
+  return item[idAttribute as keyof Item]
+}
+
+const setRouteQuery = () => {
+  return router.push({
+    query: {
+      ...omit(unref(currentRoute).query, [queryParam, 'page']),
+      ...(!!unref(selectedItems).length && {
+        [queryParam]: unref(selectedItems)
+          .reduce<string>((acc, item) => {
+            acc += `${getId(item)}+`
+            return acc
+          }, '')
+          .slice(0, -1)
+      })
+    }
+  })
+}
+
+const isItemSelected = (item: Item) => {
+  return !!unref(selectedItems).find((s) => getId(s) === getId(item))
+}
+
+const toggleItemSelection = async (item: Item) => {
+  if (isItemSelected(item)) {
+    selectedItems.value = unref(selectedItems).filter((s) => getId(s) !== getId(item))
+  } else {
+    if (!allowMultiple) {
+      selectedItems.value = []
+    }
+    selectedItems.value.push(item)
+  }
+  await setRouteQuery()
+  emit('selectionChange', unref(selectedItems))
+}
+
+const filterTerm = ref<string>()
+const filter = (items: Item[], filterTerm: string) => {
+  if (!(filterTerm || '').trim()) {
+    return items
+  }
+  const fuse = new Fuse(items, {
+    ...defaultFuseOptions,
+    keys: filterableAttributes
+  })
+
+  const results = fuse.search(escapeFuseQuery(filterTerm)).map((r) => r.item)
+  return items.filter((item) => results.includes(item))
+}
+const clearFilter = () => {
+  selectedItems.value = []
+  emit('selectionChange', unref(selectedItems))
+  setRouteQuery()
+}
+
+const canFilterOptions = computed(() => showOptionFilter && !!filterableAttributes.length)
+// selected values from the route query that are not part of the items, e.g. a deleted group
+const unknownSelectedItems = computed(() =>
+  unref(selectedItems).filter((s) => !items.some((i) => getId(i) === getId(s)))
+)
+const filteredItems = computed(() =>
+  filter([...items, ...unref(unknownSelectedItems)], unref(filterTerm))
+)
+const displayedItems = computed(() => {
+  const filtered = unref(filteredItems)
+  if (!unref(canFilterOptions) || filtered.length <= maxDisplayedItems) {
+    return filtered
+  }
+
+  // selected items are always displayed, they could not be de-selected otherwise
+  return [
+    ...filtered.slice(0, maxDisplayedItems),
+    ...filtered.slice(maxDisplayedItems).filter(isItemSelected)
+  ]
+})
+const hiddenItemCount = computed(() => unref(filteredItems).length - unref(displayedItems).length)
+const truncationHint = computed(() => {
+  const count = unref(hiddenItemCount)
+  return $ngettext(
+    '%{ count } more item is not shown. Use the filter to narrow down the list.',
+    '%{ count } more items are not shown. Use the filter to narrow down the list.',
+    count,
+    { count: count.toString() }
+  )
+})
+
+const showDrop = async () => {
+  filterTerm.value = undefined
+  await nextTick()
+  unref(filterInputRef)?.focus()
+}
+
+const setSelectedItemsBasedOnQuery = () => {
+  const ids = queryItemAsString(unref(currentRouteQuery))?.split('+') || []
+  const knownItems = items.filter((s) => ids.includes(getId(s)))
+  if (loading) {
+    selectedItems.value = knownItems
+    return
+  }
+
+  // keep unknown values selected so the filter shows why the list is empty and they can be removed
+  const unknownItems = uniq(ids)
+    .filter((id) => id && !items.some((i) => getId(i) === id))
+    .map((id) => ({ [idAttribute]: id, [displayNameAttribute]: id }))
+  selectedItems.value = [...knownItems, ...unknownItems]
+}
+
+defineExpose({
+  /** @deprecated the filter follows its route query by itself, calling this is no longer needed */
+  setSelectedItemsBasedOnQuery
+})
+
+// items can arrive after mount (e.g. loaded tags), the selection from the query needs them
+watch([() => items, () => loading], setSelectedItemsBasedOnQuery, { immediate: true })
+
+// the query can change without the filter being involved, e.g. via browser back
+watch(currentRouteQuery, () => {
+  const previousIds = unref(selectedItems).map(getId).sort()
+  setSelectedItemsBasedOnQuery()
+  if (!isEqual(previousIds, unref(selectedItems).map(getId).sort())) {
+    emit('selectionChange', unref(selectedItems))
+  }
+})
+</script>

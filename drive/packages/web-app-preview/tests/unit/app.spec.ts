@@ -1,0 +1,684 @@
+import App from '../../src/App.vue'
+import MediaAudio from '../../src/components/Sources/MediaAudio.vue'
+import MediaVideo from '../../src/components/Sources/MediaVideo.vue'
+import { defineComponent, h, nextTick, ref, unref } from 'vue'
+import { flushPromises, VueWrapper } from '@vue/test-utils'
+import {
+  createRouter,
+  defaultComponentMocks,
+  defaultPlugins,
+  shallowMount
+} from '@opencloud-eu/web-test-helpers'
+import { createFileRouteOptions, FileContext, queryItemAsString } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { mock } from 'vitest-mock-extended'
+import { Router } from 'vue-router'
+
+vi.mock('@panzoom/panzoom')
+
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  queryItemAsString: vi.fn(),
+  createFileRouteOptions: vi.fn(() => ({ params: {}, query: {} }))
+}))
+
+const activeFiles = [
+  {
+    id: '1',
+    fileId: '1',
+    name: 'bear.png',
+    mimeType: 'image/png',
+    path: 'personal/admin/bear.png',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '2',
+    fileId: '2',
+    name: 'elephant.png',
+    mimeType: 'image/png',
+    path: 'personal/admin/elephant.png',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '3',
+    fileId: '3',
+    name: 'wale_sounds.flac',
+    mimeType: 'audio/flac',
+    path: 'personal/admin/wale_sounds.flac',
+    hidden: true,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '4',
+    fileId: '4',
+    name: 'lonely_sloth_very_sad.gif',
+    mimeType: 'image/gif',
+    path: 'personal/admin/lonely_sloth_very_sad.gif',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '5',
+    fileId: '5',
+    name: 'tiger_eats_plants.mp4',
+    mimeType: 'video/mp4',
+    path: 'personal/admin/tiger_eats_plants.mp4',
+    hidden: true,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '6',
+    fileId: '6',
+    name: 'happy_hippo.gif',
+    mimeType: 'image/gif',
+    path: 'personal/admin/happy_hippo.gif',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '7',
+    fileId: '7',
+    name: 'sleeping_dog.gif',
+    mimeType: 'image/gif',
+    path: 'personal/admin/sleeping_dog.gif',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '8',
+    fileId: '8',
+    name: 'cat_murr_murr.gif',
+    mimeType: 'image/gif',
+    path: 'personal/admin/cat_murr_murr.gif',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  },
+  {
+    id: '9',
+    fileId: '9',
+    name: 'labrador.gif',
+    mimeType: 'image/gif',
+    path: 'personal/admin/labrador.gif',
+    hidden: false,
+    canDownload: () => true,
+    hasPreview: () => true
+  }
+]
+
+// visible files: bear.png, elephant.png, lonely_sloth_very_sad.gif, happy_hippo.gif,
+// sleeping_dog.gif, cat_murr_murr.gif, labrador.gif
+const wrappers: VueWrapper[] = []
+
+describe('Preview app', () => {
+  beforeEach(() => {
+    vi.mocked(queryItemAsString).mockReturnValue('1')
+  })
+
+  afterEach(() => {
+    while (wrappers.length) {
+      wrappers.pop().unmount()
+    }
+  })
+
+  describe('Preloading', () => {
+    // files are sorted by name: bear.png, cat_murr_murr.gif, elephant.png, happy_hippo.gif,
+    // labrador.gif, lonely_sloth_very_sad.gif, sleeping_dog.gif
+    it('loads the active file and then its forward and backward neighbors', async () => {
+      const { mocks } = createShallowMountWrapper()
+      await flushPromises()
+
+      expect(requestedNames(mocks)).toEqual(['bear.png', 'cat_murr_murr.gif', 'sleeping_dog.gif'])
+    })
+
+    it('does not load a preloaded file again when navigating to it', async () => {
+      const { wrapper, mocks } = createShallowMountWrapper()
+      await flushPromises()
+
+      ;(wrapper.vm as any).goToNext()
+      await flushPromises()
+
+      // cat_murr_murr.gif was preloaded, only its new forward neighbor is left to load
+      expect(requestedNames(mocks)).toEqual([
+        'bear.png',
+        'cat_murr_murr.gif',
+        'sleeping_dog.gif',
+        'elephant.png'
+      ])
+    })
+
+    it('does not load anything again while walking back and forth', async () => {
+      const { wrapper, mocks } = createShallowMountWrapper()
+      await flushPromises()
+
+      ;(wrapper.vm as any).goToNext()
+      await flushPromises()
+      ;(wrapper.vm as any).goToPrev()
+      await flushPromises()
+
+      // bear.png is back in the focus and so are its preloaded neighbors
+      expect(requestedNames(mocks)).toEqual([
+        'bear.png',
+        'cat_murr_murr.gif',
+        'sleeping_dog.gif',
+        'elephant.png'
+      ])
+    })
+  })
+
+  describe('Method "reloadMediaFileUrl"', () => {
+    it('fetches a fresh url without the cached download url and swaps it in', async () => {
+      const { wrapper, getUrlForResource, revokeUrl } = createShallowMountWrapper()
+      await nextTick()
+      getUrlForResource.mockClear()
+      revokeUrl.mockClear()
+      getUrlForResource.mockResolvedValue('new-url')
+
+      const resource = { downloadURL: 'expired-url' } as Resource
+      const mediaFile = { url: 'old-url', resource }
+      await (wrapper.vm as any).reloadMediaFileUrl(mediaFile)
+
+      expect(getUrlForResource).toHaveBeenCalledWith(
+        // no matching space in the test store
+        undefined,
+        expect.objectContaining({ downloadURL: undefined }),
+        expect.objectContaining({ signal: expect.anything() })
+      )
+      // the store resource must stay untouched
+      expect(resource.downloadURL).toBe('expired-url')
+      expect(revokeUrl).toHaveBeenCalledWith('old-url')
+      expect(mediaFile.url).toBe('new-url')
+    })
+
+    it('aborts a previous reload and discards its late url', async () => {
+      const { wrapper, getUrlForResource, revokeUrl } = createShallowMountWrapper()
+      await nextTick()
+      getUrlForResource.mockClear()
+      revokeUrl.mockClear()
+
+      let resolveFirst: (url: string) => void
+      getUrlForResource
+        .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
+        .mockResolvedValueOnce('second-url')
+
+      const mediaFile = { url: 'old-url', resource: {} as Resource }
+      const firstReload = (wrapper.vm as any).reloadMediaFileUrl(mediaFile)
+      await (wrapper.vm as any).reloadMediaFileUrl(mediaFile)
+      resolveFirst('first-url')
+      await firstReload
+
+      expect(getUrlForResource.mock.calls[0][2].signal.aborted).toBe(true)
+      expect(revokeUrl).toHaveBeenCalledWith('first-url')
+      expect(mediaFile.url).toBe('second-url')
+    })
+
+    it('discards the url when the app unmounts while the reload is in flight', async () => {
+      const { wrapper, getUrlForResource, revokeUrl } = createShallowMountWrapper()
+      await nextTick()
+      getUrlForResource.mockClear()
+      revokeUrl.mockClear()
+
+      let resolveUrl: (url: string) => void
+      getUrlForResource.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveUrl = resolve))
+      )
+
+      const mediaFile = { url: 'old-url', resource: {} as Resource }
+      const reload = (wrapper.vm as any).reloadMediaFileUrl(mediaFile)
+      wrapper.unmount()
+      resolveUrl('late-url')
+      await reload
+
+      expect(revokeUrl).toHaveBeenCalledWith('late-url')
+      expect(mediaFile.url).toBe('old-url')
+    })
+
+    it('keeps the current url when the request fails', async () => {
+      const { wrapper, getUrlForResource, revokeUrl } = createShallowMountWrapper()
+      await nextTick()
+      getUrlForResource.mockClear()
+      revokeUrl.mockClear()
+      getUrlForResource.mockRejectedValue(new Error('failed'))
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      const mediaFile = { url: 'old-url', resource: {} as Resource }
+      await (wrapper.vm as any).reloadMediaFileUrl(mediaFile)
+
+      expect(mediaFile.url).toBe('old-url')
+      expect(revokeUrl).not.toHaveBeenCalled()
+      consoleError.mockRestore()
+    })
+  })
+
+  describe('Swipe', () => {
+    const swipe = async (element: Element, fromX: number, toX: number) => {
+      const touchAt = (x: number) => ({ clientX: x, clientY: 300 }) as Touch
+      element.dispatchEvent(
+        new TouchEvent('touchstart', { bubbles: true, touches: [touchAt(fromX)] })
+      )
+      element.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [touchAt(toX)] }))
+      element.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [] }))
+      await nextTick()
+    }
+    const getStage = async ({ isZoomed = false } = {}) => {
+      const MediaImage = defineComponent({
+        setup(_, { expose }) {
+          expose({ isZoomed: () => isZoomed })
+          return () => h('div')
+        }
+      })
+      const { wrapper } = createShallowMountWrapper({ stubs: { MediaImage } })
+      await wrapper.setProps({ isFolderLoading: false })
+      await flushPromises()
+      return { wrapper, stage: wrapper.find('.stage_media').element }
+    }
+
+    it('goes to the next file on a swipe to the left and back on a swipe to the right', async () => {
+      const { wrapper, stage } = await getStage()
+      await swipe(stage, 300, 100)
+      expect((wrapper.vm as any).activeIndex).toBe(1)
+      await swipe(stage, 100, 300)
+      expect((wrapper.vm as any).activeIndex).toBe(0)
+    })
+
+    it('ignores swipes on a zoomed image, it is panned instead', async () => {
+      const { wrapper, stage } = await getStage({ isZoomed: true })
+      await swipe(stage, 300, 100)
+      expect((wrapper.vm as any).activeIndex).toBe(0)
+    })
+
+    it('ignores swipes shorter than the threshold', async () => {
+      const { wrapper, stage } = await getStage()
+      await swipe(stage, 300, 270)
+      expect((wrapper.vm as any).activeIndex).toBe(0)
+    })
+
+    it.each(['<audio></audio>', '<video controls></video>'])(
+      'ignores swipes that start on the native media controls of %s',
+      async (html) => {
+        const { wrapper, stage } = await getStage()
+        stage.insertAdjacentHTML('beforeend', html)
+        await swipe(stage.lastElementChild, 300, 100)
+        expect((wrapper.vm as any).activeIndex).toBe(0)
+      }
+    )
+  })
+
+  describe('Arrow keys', () => {
+    const getPreview = async () => {
+      const { wrapper } = createShallowMountWrapper()
+      await wrapper.setProps({ isFolderLoading: false })
+      await flushPromises()
+      return { wrapper, preview: wrapper.find('.stage').element.parentElement }
+    }
+
+    it('go to the next and the previous file', async () => {
+      const { wrapper, preview } = await getPreview()
+      preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      expect((wrapper.vm as any).activeIndex).toBe(1)
+      preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      expect((wrapper.vm as any).activeIndex).toBe(0)
+    })
+
+    it.each(['<audio controls></audio>', '<video controls></video>', '<input type="range">'])(
+      'are left to the focused %s',
+      async (html) => {
+        const { wrapper, preview } = await getPreview()
+        preview.insertAdjacentHTML('beforeend', html)
+        preview.lastElementChild.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+        )
+        expect((wrapper.vm as any).activeIndex).toBe(0)
+      }
+    )
+  })
+
+  describe('Switching files', () => {
+    it('keeps a folder with a hash in its name in the URL', async () => {
+      const router = createRouter({
+        routes: [
+          { name: 'preview-media', path: '/preview/:driveAliasAndItem(.*)?', component: {} },
+          { name: 'files-shares-with-me', path: '/files/shares/with-me', component: {} }
+        ]
+      })
+      await router.push('/preview/personal/admin/Doc%23A/bear.png?fileId=1')
+      vi.mocked(createFileRouteOptions).mockImplementationOnce((_, resource) => ({
+        params: { driveAliasAndItem: `personal/admin/Doc#A/${(resource as Resource).name}` },
+        query: { fileId: `${(resource as Resource).fileId}` }
+      }))
+      const { wrapper } = createShallowMountWrapper({ router })
+      await wrapper.setProps({ isFolderLoading: false })
+      await flushPromises()
+
+      wrapper
+        .find('.stage')
+        .element.parentElement.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+        )
+      await flushPromises()
+
+      const { params, query } = router.resolve(unref(router.currentRoute).fullPath)
+      expect(params.driveAliasAndItem).toBe('personal/admin/Doc#A/cat_murr_murr.gif')
+      expect(query.fileId).toBe('8')
+    })
+  })
+
+  describe('Deleting the active file', () => {
+    it('points the URL to the file that is shown next', async () => {
+      const { wrapper, mocks } = createShallowMountWrapper()
+      await flushPromises()
+      const [[onDeleteResourceCallback]] = wrapper.emitted('register:onDeleteResourceCallback') as [
+        [() => Promise<void>]
+      ]
+
+      await wrapper.setProps({ activeFiles: activeFiles.filter(({ id }) => id !== '1') })
+      await onDeleteResourceCallback()
+
+      expect(vi.mocked(createFileRouteOptions)).toHaveBeenLastCalledWith(
+        undefined,
+        expect.objectContaining({ name: 'cat_murr_murr.gif' })
+      )
+      expect(mocks.$router.replace).toHaveBeenCalled()
+    })
+
+    it('closes the app when no media file is left', async () => {
+      const { wrapper, mocks } = createShallowMountWrapper()
+      await flushPromises()
+
+      await wrapper.setProps({ activeFiles: [] })
+
+      expect(mocks.$router.push).toHaveBeenCalled()
+    })
+  })
+
+  describe('Folder changes', () => {
+    // sorted: bear.png, cat_murr_murr.gif, elephant.png, happy_hippo.gif, ...
+    const getElephantPreview = async () => {
+      vi.mocked(queryItemAsString).mockReturnValue('2')
+      const result = createShallowMountWrapper()
+      await flushPromises()
+      return result
+    }
+    const activeName = (wrapper: VueWrapper) => (wrapper.vm as any).activeMediaFile.name
+
+    it('keeps the active file when a file is added before it', async () => {
+      const { wrapper, mocks } = await getElephantPreview()
+      const aardvark = { ...activeFiles[0], id: '10', fileId: '10', name: 'aardvark.png' }
+
+      await wrapper.setProps({ activeFiles: [...activeFiles, aardvark] })
+
+      expect((wrapper.vm as any).activeIndex).toBe(3)
+      expect(activeName(wrapper)).toBe('elephant.png')
+      expect(wrapper.emitted('update:resource').at(-1)).toEqual([
+        expect.objectContaining({ name: 'elephant.png' })
+      ])
+      expect(mocks.$router.replace).not.toHaveBeenCalled()
+    })
+
+    it('keeps the active file when a file before it is removed', async () => {
+      const { wrapper, mocks } = await getElephantPreview()
+
+      await wrapper.setProps({ activeFiles: activeFiles.filter(({ id }) => id !== '1') })
+
+      expect((wrapper.vm as any).activeIndex).toBe(1)
+      expect(activeName(wrapper)).toBe('elephant.png')
+      expect(mocks.$router.replace).not.toHaveBeenCalled()
+    })
+
+    it('shows the next file and points the URL to it when the active file is removed', async () => {
+      const { wrapper, mocks } = await getElephantPreview()
+
+      await wrapper.setProps({ activeFiles: activeFiles.filter(({ id }) => id !== '2') })
+
+      expect(activeName(wrapper)).toBe('happy_hippo.gif')
+      expect(vi.mocked(createFileRouteOptions)).toHaveBeenLastCalledWith(
+        undefined,
+        expect.objectContaining({ name: 'happy_hippo.gif' })
+      )
+      expect(mocks.$router.replace).toHaveBeenCalled()
+    })
+  })
+
+  describe('Media that fails to play', () => {
+    it.each([
+      { name: 'clip.mp4', mimeType: 'video/mp4', component: MediaVideo },
+      { name: 'song.mp3', mimeType: 'audio/mpeg', component: MediaAudio }
+    ])('shows the error state for $name', async ({ name, mimeType, component }) => {
+      vi.mocked(queryItemAsString).mockReturnValue(name)
+      const file = {
+        id: name,
+        fileId: name,
+        name,
+        mimeType,
+        path: `personal/admin/${name}`,
+        hidden: false,
+        canDownload: () => true,
+        hasPreview: () => false
+      }
+      const { wrapper, getUrlForResource } = createShallowMountWrapper({
+        files: [file],
+        isFolderLoading: false
+      })
+      getUrlForResource.mockResolvedValue(`https://example.org/${name}`)
+      await flushPromises()
+
+      wrapper.findComponent(component).vm.$emit('error')
+      await nextTick()
+
+      expect(wrapper.findComponent(component).exists()).toBe(false)
+      expect(wrapper.text()).toContain(`Failed to load "${name}"`)
+    })
+
+    it('shows the error state when the video reload returns the same url', async () => {
+      vi.mocked(queryItemAsString).mockReturnValue('clip.mp4')
+      const file = {
+        id: 'clip.mp4',
+        fileId: 'clip.mp4',
+        name: 'clip.mp4',
+        mimeType: 'video/mp4',
+        path: 'personal/admin/clip.mp4',
+        hidden: false,
+        canDownload: () => true,
+        hasPreview: () => false
+      }
+      const { wrapper, getUrlForResource, revokeUrl } = createShallowMountWrapper({
+        files: [file],
+        isFolderLoading: false
+      })
+      getUrlForResource.mockResolvedValue('https://example.org/clip.mp4')
+      await flushPromises()
+
+      wrapper.findComponent(MediaVideo).vm.$emit('reload-url')
+      await flushPromises()
+
+      expect(getUrlForResource).toHaveBeenCalledTimes(2)
+      expect(revokeUrl).not.toHaveBeenCalled()
+      expect(wrapper.findComponent(MediaVideo).exists()).toBe(false)
+      expect(wrapper.text()).toContain('Failed to load "clip.mp4"')
+    })
+  })
+
+  describe('Deep link to a file that is no media file', () => {
+    it('shows an error instead of another file', async () => {
+      vi.mocked(queryItemAsString).mockReturnValue('plain-text-file')
+      const { wrapper, mocks } = createShallowMountWrapper({
+        currentFileContext: { fileName: 'plain.txt' },
+        isFolderLoading: false
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Failed to load "plain.txt"')
+      expect(wrapper.find('.stage').exists()).toBe(false)
+      expect(requestedNames(mocks)).toEqual([])
+      expect(wrapper.emitted('update:resource')).toBeUndefined()
+    })
+
+    it('passes the requested file on so the top bar can show it with a close button', async () => {
+      vi.mocked(queryItemAsString).mockReturnValue('plain-text-file')
+      const textFile = {
+        id: 'plain-text-file',
+        fileId: 'plain-text-file',
+        name: 'plain.txt',
+        mimeType: 'text/plain',
+        path: 'personal/admin/plain.txt',
+        hidden: false,
+        canDownload: () => true
+      }
+      const { wrapper } = createShallowMountWrapper({
+        currentFileContext: { fileName: 'plain.txt' },
+        files: [...activeFiles, textFile],
+        isFolderLoading: false
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Failed to load "plain.txt"')
+      expect(wrapper.emitted('update:resource')).toEqual([[textFile]])
+    })
+  })
+
+  describe('Generated "mediaFiles"', () => {
+    it('flags the still of a live photo as a motion or live photo', () => {
+      const file = (name: string, extra: Partial<Resource> = {}) =>
+        ({
+          id: name,
+          fileId: name,
+          name,
+          mimeType: 'image/jpeg',
+          path: `personal/admin/${name}`,
+          hidden: false,
+          canDownload: () => true,
+          hasPreview: () => true,
+          ...extra
+        }) as unknown as Resource
+      const { wrapper } = createShallowMountWrapper({
+        files: [file('live.jpg', { livePhoto: { contentId: 'preview-live' } }), file('plain.jpg')]
+      })
+      const mediaFiles = (wrapper.vm as any).mediaFiles as {
+        name: string
+        isMotionOrLivePhoto: boolean
+      }[]
+      expect(mediaFiles.find(({ name }) => name === 'live.jpg').isMotionOrLivePhoto).toBe(true)
+      expect(mediaFiles.find(({ name }) => name === 'plain.jpg').isMotionOrLivePhoto).toBe(false)
+    })
+
+    describe('images without a server rendered preview', () => {
+      const file = (name: string, mimeType: string, extra: Partial<Resource> = {}) =>
+        ({
+          id: name,
+          fileId: name,
+          name,
+          mimeType,
+          path: `personal/admin/${name}`,
+          hidden: false,
+          canDownload: () => true,
+          hasPreview: () => false,
+          isInVault: false,
+          ...extra
+        }) as unknown as Resource
+      const namesOf = (files: Resource[]) => {
+        const { wrapper } = createShallowMountWrapper({ files })
+        return ((wrapper.vm as any).mediaFiles as { name: string }[]).map(({ name }) => name)
+      }
+
+      it('leaves them out, the viewer only shows images as previews', () => {
+        const names = namesOf([
+          file('otter.heic', 'image/heic', { hasPreview: () => true }),
+          file('badger.heic', 'image/heic'),
+          file('plain.jpg', 'image/jpeg')
+        ])
+        expect(names).toEqual(['otter.heic'])
+      })
+
+      it('keeps the files that are shown from the original', () => {
+        const names = namesOf([
+          file('logo.svg', 'image/svg+xml'),
+          file('secret.jpg', 'image/jpeg', { isInVault: true }),
+          file('secret.heic', 'image/heic', { isInVault: true }),
+          file('song.mp3', 'audio/mpeg'),
+          file('clip.mp4', 'video/mp4')
+        ])
+        expect(names).toEqual(['clip.mp4', 'logo.svg', 'secret.heic', 'secret.jpg', 'song.mp3'])
+      })
+    })
+
+    it('should hide hidden shares if the share visibility query is not set to "hidden"', () => {
+      const { wrapper } = createShallowMountWrapper()
+      expect((wrapper.vm as any).mediaFiles.length).toStrictEqual(7)
+    })
+
+    it('should hide visible shares if the share visibility query is set to "hidden"', async () => {
+      const { wrapper } = createShallowMountWrapper({
+        currentFileContext: { routeQuery: ref({ ['q_share-visibility']: 'hidden' }) }
+      })
+      await nextTick()
+      expect((wrapper.vm as any).mediaFiles.length).toStrictEqual(2)
+    })
+  })
+})
+
+const requestedNames = (mocks: ReturnType<typeof defaultComponentMocks>) =>
+  mocks.$previewService.loadPreview.mock.calls.map(([{ resource }]) => resource.name)
+
+function createShallowMountWrapper({
+  currentFileContext,
+  stubs = {},
+  files = activeFiles,
+  isFolderLoading = true,
+  router
+}: {
+  currentFileContext?: Partial<FileContext>
+  stubs?: Record<string, unknown>
+  files?: unknown[]
+  isFolderLoading?: boolean
+  router?: Router
+} = {}) {
+  const mocks = defaultComponentMocks()
+  if (router) {
+    mocks.$router = router as typeof mocks.$router
+  }
+  // blob urls mirror what the preview service returns for private spaces and keep the
+  // browser cache warm-up out of the way, it has its own tests
+  mocks.$previewService.loadPreview.mockImplementation(({ resource }) =>
+    Promise.resolve(`blob:preview-${resource.name}`)
+  )
+
+  const getUrlForResource = vi.fn()
+  const revokeUrl = vi.fn()
+
+  const wrapper = shallowMount(App, {
+    props: {
+      currentFileContext: mock<FileContext>({
+        path: 'personal/admin/bear.png',
+        ...currentFileContext
+      }),
+      activeFiles: files as Resource[],
+      isFolderLoading,
+      revokeUrl,
+      getUrlForResource,
+      loadFolderForFileContext: vi.fn()
+    },
+    global: {
+      plugins: [...defaultPlugins()],
+      mocks,
+      provide: mocks,
+      stubs
+    }
+  })
+  wrappers.push(wrapper)
+
+  return {
+    wrapper,
+    mocks,
+    getUrlForResource,
+    revokeUrl
+  }
+}

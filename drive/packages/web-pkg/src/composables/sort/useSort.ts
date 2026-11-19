@@ -1,0 +1,293 @@
+import { ref, Ref, computed, unref, isRef, MaybeRef } from 'vue'
+import { ReadOnlyRef } from '../../utils'
+import { useRouteName, useRouter, useRouteQueryPersisted, QueryValue } from '../router'
+import { SortConstants } from './constants'
+import get from 'lodash-es/get'
+import { SortDir } from '@opencloud-eu/design-system/helpers'
+
+export interface SortableItem {
+  type?: string
+  isFolder?: boolean
+  extension?: string
+}
+
+export interface SortField {
+  name: string
+  prop?: string
+  // eslint-disable-next-line
+  sortable?: MaybeRef<boolean | Function | string>
+  sortDir?: MaybeRef<SortDir>
+  label?: string
+}
+
+export interface SortOptions<T extends object> {
+  items: MaybeRef<Array<T>>
+  fields: MaybeRef<Array<SortField>>
+  sortBy?: MaybeRef<string>
+  sortByQueryName?: MaybeRef<string>
+  sortDir?: MaybeRef<SortDir>
+  sortDirQueryName?: MaybeRef<string>
+  routeName?: MaybeRef<string>
+  foldersFirst?: MaybeRef<boolean>
+  /**
+   * Items matching this predicate get sorted before the rest, regardless of the sort direction.
+   * When folders are sorted first, this applies within the folder and the file group.
+   */
+  pinFirst?: (item: T) => boolean
+}
+
+export interface SortResult<T> {
+  items: Ref<Array<T>>
+  sortBy: ReadOnlyRef<string>
+  sortDir: ReadOnlyRef<SortDir>
+  handleSort({ sortBy, sortDir }: { sortBy: string; sortDir: SortDir }): void
+}
+
+export function useSort<T extends object>(options: SortOptions<T>): SortResult<T> {
+  const router = useRouter()
+  const sortByRef = createSortByQueryRef(options)
+  const sortDirRef = createSortDirQueryRef(options)
+
+  const sortBy = computed(
+    (): string =>
+      firstQueryValue(unref(sortByRef)) || unref(firstSortableField(unref(fields))?.name)
+  )
+  const sortDir = computed((): SortDir => {
+    return (
+      sortDirFromQueryValue(unref(sortDirRef)) || defaultSortDirection(unref(sortBy), unref(fields))
+    )
+  })
+  const fields = options.fields
+
+  const items = computed<Array<T>>((): T[] => {
+    // cast to T[] to avoid: Type 'T[] | readonly T[]' is not assignable to type 'T[]'.
+    const sortItems = unref(options.items) as T[]
+
+    if (!unref(sortBy)) {
+      return sortItems
+    }
+
+    return sortHelper(
+      sortItems,
+      unref(fields),
+      unref(sortBy),
+      unref(sortDir),
+      unref(options.foldersFirst) ?? true,
+      options.pinFirst
+    )
+  })
+
+  const handleSort = ({ sortBy, sortDir }: { sortBy: string; sortDir: SortDir }) => {
+    // normally we would just set sortBy and sortDir here, but then the router could lose one of the two changes.
+    // hence we update the router directly by setting both values as query.
+    return router.replace({
+      query: {
+        ...unref(router.currentRoute).query,
+        [unref(options.sortByQueryName) || SortConstants.sortByQueryName]: sortBy,
+        [unref(options.sortDirQueryName) || SortConstants.sortDirQueryName]: sortDir
+      }
+    })
+  }
+
+  return {
+    items,
+    sortBy,
+    sortDir,
+    handleSort
+  }
+}
+
+function createSortByQueryRef<T extends object>(options: SortOptions<T>): Ref<QueryValue> {
+  if (options.sortBy) {
+    return isRef(options.sortBy) ? options.sortBy : ref(options.sortBy)
+  }
+
+  return useRouteQueryPersisted({
+    name: unref(options.sortByQueryName) || SortConstants.sortByQueryName,
+    defaultValue: unref(firstSortableField(unref(options.fields))?.name),
+    storagePrefix: unref(options.routeName) || unref(useRouteName())
+  })
+}
+
+function createSortDirQueryRef<T extends object>(options: SortOptions<T>): Ref<QueryValue> {
+  if (options.sortDir) {
+    return isRef(options.sortDir) ? options.sortDir : ref(options.sortDir)
+  }
+
+  return useRouteQueryPersisted({
+    name: unref(options.sortDirQueryName) || SortConstants.sortDirQueryName,
+    defaultValue: unref(firstSortableField(unref(options.fields))?.sortDir),
+    storagePrefix: unref(options.routeName) || unref(useRouteName())
+  })
+}
+
+const firstSortableField = (fields: SortField[]): SortField => {
+  const sortableFields = fields.filter((f) => f.sortable)
+  if (sortableFields) {
+    return sortableFields[0]
+  }
+  return null
+}
+
+const defaultSortDirection = (name: string, fields: SortField[]): SortDir => {
+  const sortField = fields.find((f) => f.name === name)
+  if (sortField && sortField.sortDir) {
+    return unref(sortField.sortDir)
+  }
+  return SortDir.Desc
+}
+
+export const sortHelper = <T extends object>(
+  items: T[],
+  fields: SortField[],
+  sortBy: string,
+  sortDir: SortDir,
+  foldersFirst = true,
+  pinFirst?: (item: T) => boolean
+) => {
+  const field = fields.find((f) => {
+    return f.name === sortBy
+  })
+  if (!field) {
+    return items
+  }
+  const { sortable } = field
+  const collator = new Intl.Collator(navigator.language, { sensitivity: 'accent', numeric: true })
+
+  const compareItems = (a: T, b: T) => {
+    if (pinFirst && pinFirst(a) !== pinFirst(b)) {
+      return pinFirst(a) ? -1 : 1
+    }
+    return compare(a, b, collator, field.prop || field.name, sortDir, sortable)
+  }
+
+  if (foldersFirst) {
+    const isFolder = (item: T) => {
+      const { isFolder, type } = item as SortableItem
+      return isFolder || type === 'folder' || type === 'directory'
+    }
+    const folders = items.filter((i) => isFolder(i)).sort(compareItems)
+    const files = items.filter((i) => !isFolder(i)).sort(compareItems)
+    return folders.concat(files)
+  }
+  return [...items].sort(compareItems)
+}
+
+const pureLeadingZeroPrefixRegex = /^(0+)(?!\d)(.*)$/
+
+function compareNamesWithLeadingZeroPrefix(
+  aName: string,
+  bName: string,
+  collator: Intl.Collator
+): number | null {
+  const aMatch = pureLeadingZeroPrefixRegex.exec(aName)
+  const bMatch = pureLeadingZeroPrefixRegex.exec(bName)
+
+  if (!aMatch || !bMatch) {
+    return null
+  }
+
+  const aPrefixLength = aMatch[1].length
+  const bPrefixLength = bMatch[1].length
+  const aSuffix = aMatch[2]
+  const bSuffix = bMatch[2]
+  const aIsPureZero = aSuffix.length === 0
+  const bIsPureZero = bSuffix.length === 0
+
+  if (aPrefixLength !== bPrefixLength) {
+    return bPrefixLength - aPrefixLength
+  }
+
+  if (aIsPureZero && bIsPureZero) {
+    return collator.compare(aName, bName)
+  }
+
+  if (aIsPureZero !== bIsPureZero) {
+    return aIsPureZero ? -1 : 1
+  }
+
+  const restComparison = collator.compare(aSuffix, bSuffix)
+  if (restComparison !== 0) {
+    return restComparison
+  }
+
+  return collator.compare(aName, bName)
+}
+
+const compare = (
+  a: object,
+  b: object,
+  collator: Intl.Collator,
+  sortBy: string,
+  sortDir: SortDir,
+  sortable: SortField['sortable']
+) => {
+  let aValue = get(a, sortBy)
+  let bValue = get(b, sortBy)
+  const modifier = sortDir === SortDir.Asc ? 1 : -1
+
+  if (sortable) {
+    if (typeof sortable === 'string') {
+      const genArrComp = (vals: Record<string, unknown>[]) => {
+        return vals.map((val) => val[sortable]).join('')
+      }
+
+      aValue = genArrComp(aValue)
+      bValue = genArrComp(bValue)
+    } else if (typeof sortable === 'function') {
+      aValue = sortable(aValue)
+      bValue = sortable(bValue)
+    }
+  }
+
+  if (sortBy !== 'name' && !isNaN(aValue) && !isNaN(bValue)) {
+    return (aValue - bValue) * modifier
+  }
+
+  // For name sorting, extract basename (without extension) for comparison
+  const aCompare = (aValue || '').toString()
+  const bCompare = (bValue || '').toString()
+
+  if (sortBy === 'name') {
+    const getBasename = (name: string) => {
+      const lastDot = name.lastIndexOf('.')
+      return lastDot > 0 ? name.substring(0, lastDot) : name
+    }
+    const getExtension = (name: string) => {
+      const lastDot = name.lastIndexOf('.')
+      return lastDot > 0 ? name.substring(lastDot) : ''
+    }
+
+    const aBase = getBasename(aCompare)
+    const bBase = getBasename(bCompare)
+    const aExt = getExtension(aCompare)
+    const bExt = getExtension(bCompare)
+
+    const baseComparison =
+      compareNamesWithLeadingZeroPrefix(aBase, bBase, collator) ?? collator.compare(aBase, bBase)
+    if (baseComparison !== 0) {
+      return baseComparison * modifier
+    }
+
+    // If basenames are equal, compare extensions
+    return collator.compare(aExt, bExt) * modifier
+  }
+
+  const c = collator.compare(aCompare, bCompare)
+  return c * modifier
+}
+
+const firstQueryValue = (value: QueryValue): string => {
+  return Array.isArray(value) ? value[0] : value
+}
+
+const sortDirFromQueryValue = (value: QueryValue): SortDir | null => {
+  switch (firstQueryValue(value)) {
+    case SortDir.Asc:
+      return SortDir.Asc
+    case SortDir.Desc:
+      return SortDir.Desc
+  }
+
+  return null
+}

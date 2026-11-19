@@ -1,0 +1,112 @@
+import PQueue from 'p-queue'
+import { IncomingShareResource, isIncomingShareResource } from '@opencloud-eu/web-client'
+import { computed } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import {
+  FileAction,
+  FileActionOptions,
+  isLocationSpacesActive,
+  useAuthStore,
+  useClientService,
+  useConfigStore,
+  useLoadingService,
+  useMessages,
+  useResourcesStore,
+  useRouter
+} from '@opencloud-eu/web-pkg'
+
+export const useFileActionsEnableSync = () => {
+  const { showMessage, showErrorMessage } = useMessages()
+  const router = useRouter()
+  const { $gettext, $ngettext } = useGettext()
+
+  const clientService = useClientService()
+  const loadingService = useLoadingService()
+  const configStore = useConfigStore()
+  const authStore = useAuthStore()
+
+  const resourcesStore = useResourcesStore()
+  const { updateResourceField } = resourcesStore
+
+  const handler = async ({ resources }: FileActionOptions<IncomingShareResource>) => {
+    const errors: Error[] = []
+    const triggerPromises: Promise<void>[] = []
+    const triggerQueue = new PQueue({
+      concurrency: configStore.options.concurrentRequests.resourceBatchActions
+    })
+    const resourcesToSync = resources.filter((resource) => !resource.syncEnabled)
+    resourcesToSync.forEach((resource) => {
+      triggerPromises.push(
+        triggerQueue.add(async () => {
+          try {
+            const { graphAuthenticated } = clientService
+            await graphAuthenticated.driveItems.createDriveItem(resource.driveId, {
+              name: resource.name,
+              remoteItem: { id: resource.fileId }
+            })
+
+            updateResourceField<IncomingShareResource>({
+              id: resource.id,
+              field: 'syncEnabled',
+              value: true
+            })
+          } catch (error) {
+            console.error(error)
+            errors.push(error)
+          }
+        })
+      )
+    })
+    await Promise.all(triggerPromises)
+
+    if (errors.length === 0) {
+      resourcesStore.resetSelection()
+
+      if (isLocationSpacesActive(router, 'files-spaces-generic')) {
+        showMessage({
+          title: $ngettext(
+            'Sync for the selected share was enabled successfully',
+            'Sync for the selected shares was enabled successfully',
+            resourcesToSync.length
+          )
+        })
+      }
+
+      return
+    }
+
+    showErrorMessage({
+      title: $ngettext(
+        'Failed to enable sync for the the selected share',
+        'Failed to enable sync for the selected shares',
+        resourcesToSync.length
+      ),
+      errors
+    })
+  }
+
+  const actions = computed((): FileAction<IncomingShareResource>[] => [
+    {
+      name: 'enable-sync',
+      icon: 'check',
+      handler: (args) => loadingService.addTask(() => handler(args)),
+      label: () => $gettext('Enable sync'),
+      isVisible: ({ resources }) => {
+        if (resources.length === 0 || authStore.isGuestContext) {
+          return false
+        }
+
+        if (resources.some((r) => !isIncomingShareResource(r))) {
+          return false
+        }
+
+        return resources.some((resource) => !resource.syncEnabled)
+      },
+      class: 'oc-files-actions-enable-sync-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

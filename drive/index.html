@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+
+    <title>__TITLE__</title>
+    <link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
+    <link rel="icon" href="img/favicon.svg" />
+    <link
+      rel="preload"
+      href="./packages/design-system/src/assets/fonts/inter-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="./packages/design-system/src/styles/tailwind.css" />
+    <script>
+      // Apply background color early to prevent a white flash on dark theme before theme loading finishes.
+      function applyInitialThemeBackground() {
+        var themeIsDarkStorageKey = 'oc_currentThemeIsDark'
+        var storedThemeIsDark = null
+
+        try {
+          storedThemeIsDark = localStorage.getItem(themeIsDarkStorageKey)
+        } catch (error) {
+          // Ignore storage access errors and fall back to system preference.
+        }
+
+        var isDark = storedThemeIsDark === 'true'
+        var prefersDark =
+          window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        var shouldUseDark = storedThemeIsDark !== null ? isDark : prefersDark
+        var themeName = shouldUseDark ? 'dark' : 'light'
+        var backgroundColor = shouldUseDark ? '#1d2021' : '#f6f8fa'
+
+        document.documentElement.style.colorScheme = themeName
+        document.documentElement.dataset.colorScheme = themeName
+        document.documentElement.style.backgroundColor = backgroundColor
+      }
+
+      applyInitialThemeBackground()
+    </script>
+    <script type="module" src="./packages/web-runtime/src/index.ts"></script>
+    <script type="module">
+      // Fix Buffer usage in production (!)
+      // If single file downloads work in production after removing this, it can probably be removed permanently
+      import { Buffer } from 'buffer'
+      window.Buffer = Buffer
+    </script>
+    <style>
+      html,
+      body {
+        height: 100%;
+      }
+      .splash-banner {
+        padding: 0.5rem;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+      }
+      .splash-hide {
+        display: none;
+      }
+      /* Mirrors the OcSpinner component (size large) */
+      #loading {
+        position: relative;
+        display: inline-block;
+        width: 32px;
+        height: 32px;
+        animation: spin 1s linear infinite;
+      }
+      #loading::after {
+        content: '';
+        position: relative;
+        display: block;
+        width: 100%;
+        height: 100%;
+        box-sizing: border-box;
+        background-color: transparent;
+        border: 1px solid currentColor;
+        border-bottom-color: transparent;
+        border-radius: 9999px;
+      }
+      #splash-incompatible button {
+        margin: 30px 0;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash-incompatible" class="splash-banner splash-hide">
+      <div class="oc-card border rounded-sm w-lg max-w-full text-center">
+        <div class="oc-card-header">
+          <div class="flex items-center justify-center">
+            <span class="mr-2 oc-icon oc-icon-m oc-icon-warning">
+              <svg
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <g xmlns="http://www.w3.org/2000/svg">
+                  <path fill="none" d="M0 0h24v24H0z"></path>
+                  <path
+                    d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM11 7h2v2h-2V7zm0 4h2v6h-2v-6z"
+                  ></path>
+                </g>
+              </svg>
+            </span>
+            <h2>Your browser is not supported</h2>
+          </div>
+        </div>
+        <div class="oc-card-body oc-link-resolve-error-message">
+          <p>Your browser version is considered old and might not work correctly.</p>
+          <p>We recommend you update to a newer version.</p>
+        </div>
+      </div>
+      <button
+        class="oc-button oc-button-primary oc-button-primary-filled rounded-sm"
+        onclick="forceOldBrowser()"
+      >
+        I want to continue anyway
+      </button>
+    </div>
+    <div id="splash-loading" class="splash-banner splash-hide">
+      <span id="loading" aria-hidden="true" tabindex="-1"></span>
+    </div>
+    <div id="opencloud"></div>
+    <noscript>
+      <div class="splash-banner"><h3>Please enable JavaScript</h3></div>
+    </noscript>
+    <script>
+      // Disable Zod's JIT compilation probe to prevent CSP 'unsafe-eval' console errors.
+      globalThis.__zod_globalConfig = { jitless: true }
+
+      function runtimeLoaded() {}
+
+      var loader = document.getElementById('splash-loading')
+      var browserError = document.getElementById('splash-incompatible')
+
+      var loaderTimer = setTimeout(function () {
+        loader.classList.remove('splash-hide')
+      }, 500)
+
+      function displayError() {
+        loader.classList.remove('splash-hide')
+        loader.innerHTML = '<h3>Oops. Something went wrong.</h3>'
+      }
+
+      function displayBrowserError() {
+        clearTimeout(loaderTimer)
+        removeLoadingSpinner()
+        browserError.classList.remove('splash-hide')
+      }
+
+      function forceOldBrowser() {
+        localStorage.setItem(
+          'forceAllowOldBrowser',
+          JSON.stringify({ expiry: new Date().getTime() + 30 * 24 * 60 * 60 * 1000 })
+        )
+        location.reload()
+      }
+
+      function removeLoadingSpinner() {
+        if (!loader.classList.contains('splash-hide')) {
+          loader.classList.add('splash-hide')
+        }
+      }
+
+      function init() {
+        window.runtimeLoaded = function (runtime) {
+          clearTimeout(loaderTimer)
+          runtime.bootstrapApp('config.json', removeLoadingSpinner).catch((error) => {
+            removeLoadingSpinner()
+            runtime.bootstrapErrorApp(error)
+          })
+        }
+      }
+
+      const supportedBrowsers = __SUPPORTED_BROWSERS__
+      const forceAllowOldBrowser = localStorage.getItem('forceAllowOldBrowser') || false
+      const validForceAllowOldBrowser =
+        forceAllowOldBrowser &&
+        JSON.parse(localStorage.getItem('forceAllowOldBrowser')).expiry > new Date().getTime()
+
+      if (forceAllowOldBrowser && !validForceAllowOldBrowser)
+        localStorage.removeItem('forceAllowOldBrowser')
+
+      if (!validForceAllowOldBrowser && !supportedBrowsers.test(navigator.userAgent)) {
+        displayBrowserError()
+      } else {
+        init()
+      }
+
+      var scriptTags = document.getElementsByTagName('script')
+      for (let i = 0; i < scriptTags.length; i++) {
+        if (scriptTags[i].src) {
+          scriptTags[i].onerror = displayError
+        }
+      }
+    </script>
+  </body>
+</html>

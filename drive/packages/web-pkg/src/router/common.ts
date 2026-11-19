@@ -1,0 +1,64 @@
+import { RouteComponents } from './router'
+import { RouteLocationNamedRaw, RouteRecordRaw } from 'vue-router'
+import { createLocation, isLocationActiveDirector } from './utils'
+import { $gettext } from '../utils/dummyGettext'
+
+type commonTypes = 'files-common-favorites' | 'files-common-search'
+
+export const createLocationCommon = (name: commonTypes, location = {}): RouteLocationNamedRaw =>
+  createLocation(name, location)
+
+const locationFavorites = createLocationCommon('files-common-favorites')
+const locationSearch = createLocationCommon('files-common-search')
+
+export const isLocationCommonActive = isLocationActiveDirector<commonTypes>(
+  locationFavorites,
+  locationSearch
+)
+
+export const buildRoutes = (components: RouteComponents): RouteRecordRaw[] => [
+  {
+    path: '/search',
+    component: components.App,
+    redirect: (to) => createLocationCommon('files-common-search', to),
+    children: [
+      {
+        name: locationSearch.name,
+        path: 'list/:page?',
+        component: components.SearchResults,
+        meta: {
+          authContext: 'user',
+          title: $gettext('Search results'),
+          contextQueryItems: [
+            'term',
+            'provider',
+            'q_tags',
+            'q_lastModified',
+            'q_titleOnly',
+            'q_mediaType',
+            'scope',
+            'useScope',
+            'sort-by',
+            'sort-dir'
+          ]
+        }
+      }
+    ]
+  },
+  {
+    path: '/favorites',
+    component: components.App,
+    children: [
+      {
+        name: locationFavorites.name,
+        path: '',
+        component: components.Favorites,
+        meta: {
+          authContext: 'user',
+          title: $gettext('Favorite files'),
+          contextQueryItems: ['q_lastModified', 'q_mediaType', 'q_tags', 'sort-by', 'sort-dir']
+        }
+      }
+    ]
+  }
+]

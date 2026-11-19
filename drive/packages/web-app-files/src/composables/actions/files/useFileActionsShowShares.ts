@@ -1,0 +1,59 @@
+import { isProjectSpaceResource, isTrashResource, ShareResource } from '@opencloud-eu/web-client'
+import { computed } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import {
+  FileAction,
+  FileActionOptionsWithEvent,
+  useCanShare,
+  useInterceptModifierClick,
+  useResourcesStore,
+  useSideBar
+} from '@opencloud-eu/web-pkg'
+
+export const useFileActionsShowShares = () => {
+  const { $gettext } = useGettext()
+  const { canShare } = useCanShare()
+  const resourcesStore = useResourcesStore()
+  const { openSideBarPanel } = useSideBar()
+  const { interceptModifierClick } = useInterceptModifierClick()
+
+  const handler = ({ resources, event }: FileActionOptionsWithEvent) => {
+    const resource = resources[0]
+
+    if (event && interceptModifierClick(event, resource)) {
+      return
+    }
+
+    // the sidebar shows the selection, which can differ from the resource, e.g. in the breadcrumb
+    resourcesStore.setSelection([resource.id])
+    openSideBarPanel('sharing')
+  }
+
+  const actions = computed((): FileAction<ShareResource>[] => [
+    {
+      name: 'show-shares',
+      icon: 'user-add',
+      label: () => $gettext('Share'),
+      handler,
+      isVisible: ({ space, resources }) => {
+        if (resources.length !== 1) {
+          return false
+        }
+        if (isTrashResource(resources[0])) {
+          return false
+        }
+
+        if (isProjectSpaceResource(resources[0])) {
+          return false
+        }
+
+        return canShare({ space, resource: resources[0] })
+      },
+      class: 'oc-files-actions-show-shares-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

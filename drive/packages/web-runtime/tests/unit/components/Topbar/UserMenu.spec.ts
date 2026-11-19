@@ -1,0 +1,273 @@
+import UserMenu from '../../../../src/components/Topbar/UserMenu.vue'
+import {
+  defaultComponentMocks,
+  defaultPlugins,
+  RouteLocation,
+  shallowMount
+} from '@opencloud-eu/web-test-helpers'
+import { mock } from 'vitest-mock-extended'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
+import { AuthServiceInterface, WebThemeType } from '@opencloud-eu/web-pkg'
+import { OcButton } from '@opencloud-eu/design-system/components'
+
+const totalQuota = 1000
+const basicQuota = 300
+const warningQuota = 810
+const dangerQuota = 910
+
+const noEmail = ''
+const email = 'test@test.de'
+
+describe('User Menu component', () => {
+  describe('when user is not logged in', () => {
+    it('renders a navigation with login button', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true)
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota and no email is set', () => {
+    it('renders a navigation without email', () => {
+      const wrapper = getMountedWrapper({ used: basicQuota, total: totalQuota }, noEmail)
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when no quota and email is set', () => {
+    it('the user menu does not contain a quota', () => {
+      const wrapper = getMountedWrapper(null, email)
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when no quota and no email is set', () => {
+    it('the user menu does not contain a quota', () => {
+      const wrapper = getMountedWrapper(null, noEmail)
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota is below 80%', () => {
+    it('renders a primary quota progress bar', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: basicQuota,
+          total: totalQuota
+        },
+        email
+      )
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota is above 80% and below 90%', () => {
+    it('renders a warning quota progress bar', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: warningQuota,
+          total: totalQuota
+        },
+        email
+      )
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota is above 90%', () => {
+    it('renders a danger quota progress bar', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: dangerQuota,
+          total: totalQuota
+        },
+        email
+      )
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota is unlimited', () => {
+    it('renders no percentag of total and no progress bar', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: basicQuota,
+          total: 0
+        },
+        email
+      )
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('when quota is not defined', () => {
+    it('renders no percentag of total and no progress bar', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: dangerQuota,
+          total: 0
+        },
+        email
+      )
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+  })
+  describe('footer urls', () => {
+    it('should renders footer section if urls are defined', () => {
+      const wrapper = getMountedWrapper(
+        {
+          used: dangerQuota,
+          total: totalQuota
+        },
+        email,
+        false,
+        true
+      )
+      const element = wrapper.find('.imprint-footer')
+      expect(element.exists()).toBeTruthy()
+      const output = element.html()
+      expect(output).toContain('https://imprint.url')
+      expect(output).toContain('https://privacy.url')
+      expect(output).toContain('https://accessibility.url')
+    })
+  })
+  describe('account settings route', () => {
+    it('should link to account-information when user is logged in', () => {
+      const wrapper = getMountedWrapper({}, email)
+      const button = wrapper.findComponent<typeof OcButton>('#oc-topbar-account-manage')
+
+      expect((button.props('to') as RouteLocation).name).toEqual('account-information')
+    })
+    it('should link to account-preferences when user is not logged in', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true)
+      const button = wrapper.findComponent<typeof OcButton>('#oc-topbar-account-manage')
+
+      expect((button.props('to') as RouteLocation).name).toEqual('account-preferences')
+      expect((button.props('to') as RouteLocation).query.contextRouteName).toEqual(
+        'files-public-link'
+      )
+    })
+    it('should pass the public link token to account-preferences when user is not logged in', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true)
+      const button = wrapper.findComponent<typeof OcButton>('#oc-topbar-account-manage')
+
+      expect((button.props('to') as RouteLocation).query.contextRouteParams).toEqual({
+        driveAliasAndItem: 'public/token'
+      })
+    })
+    it('should not pass any context to account-information when user is logged in', () => {
+      const wrapper = getMountedWrapper({}, email)
+      const button = wrapper.findComponent<typeof OcButton>('#oc-topbar-account-manage')
+
+      expect((button.props('to') as RouteLocation).query).toEqual({})
+    })
+  })
+  describe('guest context', () => {
+    it('shows a guest label instead of the login button', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true, false, true)
+
+      expect(wrapper.find('#oc-topbar-account-guest').exists()).toBeTruthy()
+      expect(wrapper.find('#oc-topbar-account-login').exists()).toBeFalsy()
+    })
+    it('shows the guest email below the guest label and derives avatar initials from it', () => {
+      const wrapper = getMountedWrapper({}, 'alex.ackermann@example.org', true, false, true)
+      const guest = wrapper.find('#oc-topbar-account-guest')
+
+      expect(guest.find('span.block').text()).toBe('Guest')
+      expect(guest.find('span.text-sm').text()).toBe('alex.ackermann@example.org')
+      expect(guest.find('.avatar-initials').attributes('data-initials')).toBe('AA')
+      expect(
+        wrapper.find('.oc-topbar-guest-avatar .avatar-initials').attributes('data-initials')
+      ).toBe('AA')
+      expect(wrapper.find('#oc-topbar-account-login').exists()).toBeFalsy()
+    })
+    it('falls back to the guest label and user icon without an email', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true, false, true)
+
+      expect(wrapper.find('#oc-topbar-account-guest').text()).toBe('Guest')
+      expect(wrapper.find('#oc-topbar-account-guest .text-sm').exists()).toBeFalsy()
+      expect(wrapper.find('.oc-topbar-guest-avatar').exists()).toBeFalsy()
+    })
+    it('logs the guest out via the logout button', async () => {
+      const { wrapper, mocks } = getWrapper({}, noEmail, true, false, true)
+
+      await wrapper.findComponent<typeof OcButton>('#oc-topbar-account-logout').trigger('click')
+
+      expect(mocks.$authService.logoutGuest).toHaveBeenCalled()
+      expect(mocks.$authService.logoutUser).not.toHaveBeenCalled()
+    })
+    it('links to account-preferences in the guest context', () => {
+      const wrapper = getMountedWrapper({}, noEmail, true, false, true)
+      const button = wrapper.findComponent<typeof OcButton>('#oc-topbar-account-manage')
+
+      expect((button.props('to') as RouteLocation).name).toEqual('account-preferences')
+      expect((button.props('to') as RouteLocation).query.contextRouteName).toEqual(
+        'files-guest-link'
+      )
+    })
+  })
+})
+
+const getMountedWrapper = (...args: Parameters<typeof getWrapper>) => getWrapper(...args).wrapper
+
+const getWrapper = (
+  quota: Quota,
+  userEmail: string,
+  noUser = false,
+  areThemeUrlsSet = false,
+  isGuest = false
+) => {
+  const mocks = {
+    ...defaultComponentMocks({
+      currentRoute: mock<RouteLocation>({ path: '/files', fullPath: '/files' })
+    }),
+    $authService: mock<AuthServiceInterface>()
+  }
+
+  const wrapper = shallowMount(UserMenu, {
+    global: {
+      provide: mocks,
+      renderStubDefaultSlot: true,
+      plugins: [
+        ...defaultPlugins({
+          piniaOptions: {
+            themeState: {
+              currentTheme: {
+                urls: {
+                  privacy: areThemeUrlsSet ? 'https://privacy.url.theme' : '',
+                  imprint: areThemeUrlsSet ? 'https://imprint.url.theme' : '',
+                  accessibility: areThemeUrlsSet ? 'https://accessibility.url.theme' : ''
+                }
+              } as WebThemeType
+            },
+            userState: {
+              user: noUser
+                ? null
+                : {
+                    id: '1',
+                    onPremisesSamAccountName: 'einstein',
+                    displayName: 'Albert Einstein',
+                    mail: userEmail || ''
+                  }
+            },
+            spacesState: {
+              spaces: [
+                mock<SpaceResource>({
+                  spaceQuota: quota,
+                  isOwner: () => true,
+                  driveType: 'personal'
+                })
+              ]
+            },
+            authState: {
+              userContextReady: !noUser,
+              publicLinkContextReady: noUser && !isGuest,
+              publicLinkToken: noUser && !isGuest ? 'token' : null,
+              guestContextReady: isGuest,
+              guestEmail: isGuest ? userEmail : null
+            }
+          }
+        })
+      ],
+      stubs: {
+        OcAvatar: false,
+        UserAvatar: false
+      },
+      mocks
+    }
+  })
+
+  return { wrapper, mocks }
+}

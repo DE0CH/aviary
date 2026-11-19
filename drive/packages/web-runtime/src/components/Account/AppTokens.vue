@@ -1,0 +1,271 @@
+<template>
+  <div v-if="authStore.userContextReady" id="preferences-panel-app-tokens">
+    <account-heading
+      :title="$gettext('App Tokens')"
+      :subtitle="$gettext('Tokens for connecting apps and devices to your account.')"
+    >
+      <oc-button
+        v-if="!authAppServiceDisabled"
+        size="small"
+        class="create-app-token-btn"
+        @click="openCreateAppTokenModal"
+      >
+        <oc-icon name="add" size-class="size-4" />
+        <span v-text="$gettext('New')" />
+      </oc-button>
+    </account-heading>
+    <p
+      v-if="authAppServiceDisabled"
+      class="ml-2"
+      data-testid="auth-service-unavailable"
+      v-text="
+        $gettext(
+          'App tokens are not available because the »auth-app« service is not running. Please contact an administrator.'
+        )
+      "
+    />
+    <no-content-message
+      v-else-if="!appTokens.length"
+      img-src="images/illustrations/app-tokens.svg"
+      data-testid="no-app-tokens-available"
+    >
+      <template #message>
+        <span v-text="$gettext('No app tokens found')" />
+      </template>
+      <template #callToAction>
+        <span v-text="$gettext('Create a new app token and it will show up here')" />
+      </template>
+    </no-content-message>
+    <div v-else>
+      <oc-table
+        class="app-token-table [&_.oc-table-data-cell-creationDate]:w-1/4 [&_.oc-table-data-cell-expirationDate]:w-1/4"
+        :data="visibleAppTokens"
+        :fields="tableFields"
+        padding-x="remove"
+        :sort-by="sortBy"
+        :sort-dir="sortDir"
+        @sort="handleSort"
+      >
+        <template #label="{ item }">
+          <div class="w-full truncate" :title="item.label">
+            <span v-text="item.label || '-'" />
+          </div>
+        </template>
+        <template #creationDate="{ item }">
+          <div class="w-full truncate">
+            <span v-text="formatDateFromISO(item.created_date, currentLanguage)" />
+          </div>
+        </template>
+        <template #expirationDate="{ item }">
+          <div class="w-full truncate">
+            <span v-text="formatDateFromISO(item.expiration_date, currentLanguage)" />
+          </div>
+        </template>
+        <template #status="{ item }">
+          <oc-tag
+            v-if="isExpired(item.expiration_date)"
+            appearance="filled"
+            size="small"
+            class="border-0 !rounded-sm !bg-red-200 !text-red-900"
+          >
+            <span v-text="$gettext('Expired')" />
+          </oc-tag>
+          <oc-tag
+            v-else
+            appearance="filled"
+            size="small"
+            class="border-0 !rounded-sm !bg-green-200 !text-green-900"
+          >
+            <span v-text="$gettext('Active')" />
+          </oc-tag>
+        </template>
+        <template #actions="{ item }">
+          <oc-button
+            v-oc-tooltip="$gettext('Delete')"
+            appearance="raw"
+            no-hover
+            size="small"
+            :aria-label="$gettext('Delete app token')"
+            @click="openDeleteAppTokenModal(item)"
+          >
+            <oc-icon name="delete-bin-5" size-class="size-4" fill-type="line" />
+          </oc-button>
+        </template>
+      </oc-table>
+      <div v-if="appTokens.length > TOKENS_TO_DISPLAY" class="w-full flex justify-center mt-4">
+        <oc-button appearance="raw" no-hover @click="listExpanded = !listExpanded">
+          <span v-text="listExpanded ? $gettext('Show less') : $gettext('Show more')" />
+          <oc-icon :name="'arrow-' + (listExpanded ? 'up' : 'down') + '-s'" fill-type="line" />
+        </oc-button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { call } from '@opencloud-eu/web-client'
+import {
+  formatDateFromISO,
+  useAuthStore,
+  useClientService,
+  useMessages,
+  useModals,
+  useSort
+} from '@opencloud-eu/web-pkg'
+import { computed, markRaw, onMounted, onUnmounted, Ref, ref, unref } from 'vue'
+import { useTask } from 'vue-concurrency'
+import { useGettext } from 'vue3-gettext'
+import AppTokenModal from '../Modals/AppTokenModal.vue'
+import AccountHeading from './AccountHeading.vue'
+import { AppToken, AppTokenListSchema } from '../../helpers/appTokens'
+import { FieldType, SortDir } from '@opencloud-eu/design-system/helpers'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+
+const { $gettext, current: currentLanguage } = useGettext()
+const { dispatchModal } = useModals()
+const { showMessage, showErrorMessage } = useMessages()
+const { httpAuthenticated: client } = useClientService()
+const authStore = useAuthStore()
+
+const appTokens: Ref<AppToken[]> = ref([])
+const authAppServiceDisabled = ref<boolean | undefined>()
+const listExpanded = ref(false)
+
+const TOKENS_TO_DISPLAY = 5
+
+const loadTokensTask = useTask(function* (signal) {
+  try {
+    const { data } = yield* call(client.get<AppToken[]>('/auth-app/tokens', { signal }))
+    const tokens = AppTokenListSchema.parse(data)
+    appTokens.value = tokens
+    authAppServiceDisabled.value = false
+  } catch (error) {
+    console.error(error)
+    // FIXME: check the service availability beforehand when the server supports it
+    authAppServiceDisabled.value = true
+  }
+}).restartable()
+
+const deleteAppToken = async ({ token }: AppToken) => {
+  try {
+    await client.delete('/auth-app/tokens', { params: { token } })
+    appTokens.value = unref(appTokens).filter((appToken) => appToken.token !== token)
+    showMessage({ title: $gettext('The app token has been deleted.') })
+  } catch (error) {
+    console.error(error)
+    showErrorMessage({
+      title: $gettext('An error occurred while deleting the app token.'),
+      errors: [error]
+    })
+  }
+}
+
+const openCreateAppTokenModal = () => {
+  dispatchModal({
+    title: $gettext('Create a new app token'),
+    confirmText: $gettext('Create'),
+    customComponent: markRaw(AppTokenModal),
+    hideConfirmButton: true,
+    customComponentAttrs: () => ({
+      onCreated: () => loadTokensTask.perform()
+    }),
+    focusTrapInitial: '#app-token-note-input'
+  })
+}
+
+const openDeleteAppTokenModal = (appToken: AppToken) => {
+  dispatchModal({
+    title: $gettext('Delete app token'),
+    confirmText: $gettext('Delete'),
+    showCancelAction: true,
+    message: $gettext('Are you sure you want to delete this app token?'),
+    onConfirm: () => deleteAppToken(appToken)
+  })
+}
+
+function isExpired(expirationDate: string) {
+  return new Date(expirationDate) <= new Date()
+}
+
+const sortFields = [
+  { name: 'creationDate', prop: 'created_date', sortable: true, sortDir: SortDir.Desc },
+  { name: 'expirationDate', prop: 'expiration_date', sortable: true, sortDir: SortDir.Desc },
+  {
+    name: 'status',
+    prop: 'expiration_date',
+    // active tokens come first in ascending order
+    sortable: (expirationDate: string) => (isExpired(expirationDate) ? 1 : 0),
+    sortDir: SortDir.Asc
+  }
+]
+const {
+  items: sortedAppTokens,
+  sortBy,
+  sortDir,
+  handleSort
+} = useSort<AppToken>({
+  items: appTokens,
+  fields: sortFields
+})
+
+const visibleAppTokens = computed(() => {
+  if (unref(listExpanded)) {
+    return unref(sortedAppTokens)
+  }
+  return unref(sortedAppTokens).slice(0, TOKENS_TO_DISPLAY)
+})
+
+const tableFields = computed<FieldType[]>(() => {
+  return [
+    {
+      name: 'label',
+      type: 'slot',
+      wrap: 'truncate',
+      width: 'expand',
+      title: $gettext('Note')
+    },
+    {
+      name: 'creationDate',
+      type: 'slot',
+      wrap: 'truncate',
+      title: $gettext('Created at'),
+      sortable: true,
+      thClass: 'hidden md:table-cell',
+      tdClass: 'hidden md:table-cell'
+    },
+    {
+      name: 'expirationDate',
+      type: 'slot',
+      wrap: 'truncate',
+      title: $gettext('Expires at'),
+      sortable: true,
+      thClass: 'hidden md:table-cell',
+      tdClass: 'hidden md:table-cell'
+    },
+    {
+      name: 'status',
+      type: 'slot',
+      title: $gettext('Status'),
+      sortable: true,
+      width: 'shrink'
+    },
+    {
+      name: 'actions',
+      type: 'slot',
+      width: 'shrink',
+      alignH: 'right',
+      title: $gettext('Actions')
+    }
+  ]
+})
+
+onMounted(() => {
+  loadTokensTask.perform()
+})
+
+onUnmounted(() => {
+  if (loadTokensTask.isRunning) {
+    loadTokensTask.cancelAll()
+  }
+})
+</script>

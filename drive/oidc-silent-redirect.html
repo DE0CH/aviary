@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head></head>
+  <body>
+    <script>
+      // notify the parent window of the redirect URL containing the authorization code
+      window.parent.postMessage(
+        { source: 'oidc-client', url: window.location.href, keepOpen: false },
+        window.location.origin
+      )
+    </script>
+  </body>
+</html>

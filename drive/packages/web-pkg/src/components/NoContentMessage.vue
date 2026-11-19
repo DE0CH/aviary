@@ -1,0 +1,69 @@
+<template>
+  <div class="no-content-message flex flex-col justify-center items-center text-center">
+    <component
+      :is="isSvg ? InlineSvg : 'oc-image'"
+      v-if="imgSrc"
+      :src="imgSrcWithVersion"
+      class="mb-4 no-content-message-image"
+      width="120"
+      height="120"
+      :alt="isSvg ? undefined : ''"
+      aria-hidden="true"
+    />
+    <oc-icon
+      v-if="icon"
+      :icon="icon"
+      type="div"
+      size-class="size-22"
+      :fill-type="iconFillType"
+      class="mb-4"
+    />
+    <div class="text-role-on-surface-variant text-xl">
+      <slot name="message" />
+    </div>
+    <div class="text-role-on-surface-variant mt-1">
+      <slot name="callToAction" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import InlineSvg from 'vue-inline-svg'
+import { FillType, Icon, addVersionToAssetUrl } from '@opencloud-eu/design-system/helpers'
+
+InlineSvg.name = 'inline-svg'
+
+const {
+  icon = '',
+  iconFillType = 'fill',
+  imgSrc = ''
+} = defineProps<{
+  icon?: Icon
+  /** @deprecated use a named icon for the `icon` instead */
+  iconFillType?: FillType
+  imgSrc?: string
+}>()
+
+const isSvg = computed(() => imgSrc?.toLowerCase().endsWith('.svg'))
+
+const imgSrcWithVersion = computed(() => {
+  if (!imgSrc) {
+    return imgSrc
+  }
+  return addVersionToAssetUrl(imgSrc)
+})
+</script>
+<style scoped>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .no-content-message {
+    height: 65vh;
+  }
+
+  .no-content-message-image :deep(.background-splash) {
+    fill: var(--oc-role-surface-container-highest);
+  }
+}
+</style>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 35" width="140" height="35">
+<g transform="translate(0 1) scale(0.1119)" >
+<g transform="translate(-122 -118)">
+<g stroke-linejoin="round" stroke-width="10">
+  <path d="M239 133 L239 248 L137 305 L137 190 Z" fill="#02a9c4" stroke="#02a9c4"/>
+  <path d="M272 133 L272 248 L376 305 L376 190 Z" fill="#5fcfe0" stroke="#5fcfe0"/>
+  <path d="M156 342 L256 285 L355 342 L256 398 Z" fill="#e5a711" stroke="#e5a711"/>
+</g>
+</g></g>
+<text x="38" y="25" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="600" fill="#1b2a3a">YYC Drive</text>
+</svg>

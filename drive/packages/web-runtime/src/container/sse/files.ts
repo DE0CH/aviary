@@ -1,0 +1,686 @@
+import {
+  contextRouteParamsKey,
+  createFileRouteOptions,
+  ImageDimension,
+  isItemInCurrentFolder,
+  isLocationCommonActive,
+  isLocationTrashActive,
+  ProcessorType,
+  queryItemAsString,
+  renameResource
+} from '@opencloud-eu/web-pkg'
+import {
+  buildSpace,
+  extractNodeId,
+  isShareSpaceResource,
+  Resource,
+  SpaceResource,
+  urlJoin
+} from '@opencloud-eu/web-client'
+import { DavProperties, DavProperty } from '@opencloud-eu/web-client/webdav'
+import { until } from '@vueuse/core'
+import { unref } from 'vue'
+import { LocationQueryValue, RouteParams } from 'vue-router'
+import { dirname } from 'path'
+import { SSEEventOptions } from './types'
+
+/**
+ * Returns the space with the given id. Share recipients don't know the space a shared
+ * resource lives in, so if it is the space of the current folder, the current share
+ * space is used to access the resource instead.
+ */
+const getEventSpace = (
+  { spacesStore, resourcesStore }: Pick<SSEEventOptions, 'spacesStore' | 'resourcesStore'>,
+  spaceId: string
+) => {
+  const space = spacesStore.spaces.find((s) => s.id === spaceId)
+  if (space) {
+    return space
+  }
+
+  const currentSpace = spacesStore.currentSpace
+  if (
+    spaceId &&
+    isShareSpaceResource(currentSpace) &&
+    resourcesStore.currentFolder?.storageId === spaceId
+  ) {
+    return currentSpace
+  }
+}
+
+/**
+ * Loads the resource with the given id. Within shares the path of a file id can't be resolved
+ * relative to the share, so the resource is looked up by its id first and then loaded via its
+ * path in the current folder. Resources outside the current folder are returned as looked up
+ * by their id, without a path.
+ */
+const loadEventResource = async (
+  { clientService, resourcesStore }: Pick<SSEEventOptions, 'clientService' | 'resourcesStore'>,
+  space: SpaceResource,
+  fileId: string
+): Promise<Resource> => {
+  if (!isShareSpaceResource(space)) {
+    return clientService.webdav.getFileInfo(space, { path: '', fileId })
+  }
+
+  const resource = await clientService.webdav.getFileInfo(
+    buildSpace({ id: fileId, name: '' }),
+    { fileId },
+    { davProperties: [DavProperty.FileId, DavProperty.FileParent, DavProperty.Name] }
+  )
+
+  const currentFolder = resourcesStore.currentFolder
+  let parentPath: string
+  if (isItemInCurrentFolder({ resourcesStore, parentFolderId: resource.parentFolderId })) {
+    parentPath = currentFolder.path
+  } else if (currentFolder?.id === resource.id) {
+    parentPath = dirname(currentFolder.path)
+  } else {
+    return resource
+  }
+
+  return clientService.webdav.getFileInfo(space, { path: urlJoin(parentPath, resource.name) })
+}
+
+/**
+ * A running folder load replaces the resource list, possibly with a state from before the event.
+ * Hence events need to be applied after it has finished.
+ */
+function waitForResourcesLoad(resourcesStore: SSEEventOptions['resourcesStore']) {
+  return until(() => resourcesStore.resourcesLoading).toBe(false)
+}
+
+const folderRouteNames = ['files-spaces-generic', 'files-public-link', 'files-guest-link']
+
+/**
+ * Moves the files of a renamed folder in the store to its new path. Apps like the preview keep
+ * showing them, they would load them from the old path otherwise.
+ */
+function moveFolderChildren(
+  resourcesStore: SSEEventOptions['resourcesStore'],
+  space: SpaceResource,
+  oldPath: string,
+  newPath: string
+) {
+  for (const resource of resourcesStore.resources) {
+    if (urlJoin(dirname(resource.path)) !== urlJoin(oldPath)) {
+      continue
+    }
+    const movedResource = renameResource(space, { ...resource }, urlJoin(newPath, resource.name))
+    // download urls are signed for the old path
+    movedResource.downloadURL = undefined
+    resourcesStore.upsertResource(movedResource)
+  }
+}
+
+/**
+ * Replaces the folder of the file in the app route (and of the app's folder context) with the
+ * new path of the renamed folder, so a page reload finds the file.
+ */
+function replaceAppRouteFolder(
+  router: SSEEventOptions['router'],
+  space: SpaceResource,
+  oldPath: string,
+  newPath: string
+) {
+  const route = unref(router.currentRoute)
+  const oldFolderItem = space.getDriveAliasAndItem({ path: oldPath } as Resource)
+  const newFolderItem = space.getDriveAliasAndItem({ path: newPath } as Resource)
+  const item = queryItemAsString(route.params.driveAliasAndItem)
+  if (!item?.startsWith(`${oldFolderItem}/`)) {
+    return
+  }
+
+  const contextRouteParams = route.query[contextRouteParamsKey] as unknown as RouteParams
+  const isFolderContext = contextRouteParams?.driveAliasAndItem === oldFolderItem
+  return router.replace({
+    name: route.name,
+    params: {
+      ...route.params,
+      driveAliasAndItem: `${newFolderItem}${item.slice(oldFolderItem.length)}`
+    },
+    query: {
+      ...route.query,
+      ...(isFolderContext && {
+        [contextRouteParamsKey]: {
+          ...contextRouteParams,
+          driveAliasAndItem: newFolderItem
+        } as unknown as LocationQueryValue
+      })
+    }
+  })
+}
+
+export const onSSEItemRenamedEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService,
+  router
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  const currentFolder = resourcesStore.currentFolder
+  const resourceIsCurrentFolder = currentFolder?.id === sseData.itemid
+  const resource = resourceIsCurrentFolder
+    ? currentFolder
+    : resourcesStore.resources.find((f) => f.id === sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+  const space = getEventSpace({ spacesStore, resourcesStore }, resource.storageId)
+
+  if (!space) {
+    return
+  }
+
+  const updatedResource = await loadEventResource(
+    { clientService, resourcesStore },
+    space,
+    sseData.itemid
+  )
+
+  if (resourceIsCurrentFolder) {
+    resourcesStore.setCurrentFolder(updatedResource)
+
+    // apps (e.g. the preview) set the parent folder of the opened file as current folder,
+    // their route must not be replaced with the folder route
+    const routeName = unref(router.currentRoute).name as string
+    if (!folderRouteNames.includes(routeName)) {
+      if (currentFolder.path === updatedResource.path) {
+        return
+      }
+      moveFolderChildren(resourcesStore, space, currentFolder.path, updatedResource.path)
+      return replaceAppRouteFolder(router, space, currentFolder.path, updatedResource.path)
+    }
+
+    return router.push({
+      name: routeName,
+      ...createFileRouteOptions(space, {
+        path: updatedResource.path,
+        fileId: updatedResource.fileId
+      })
+    })
+  }
+
+  resourcesStore.upsertResource(updatedResource)
+}
+
+export const onSSEFileLockingEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService
+}: SSEEventOptions) => {
+  await waitForResourcesLoad(resourcesStore)
+
+  const resource = resourcesStore.resources.find((f) => f.id === sseData.itemid)
+  const space = getEventSpace({ spacesStore, resourcesStore }, resource?.storageId)
+
+  if (!resource || !space) {
+    return
+  }
+
+  const updatedResource = await loadEventResource(
+    { clientService, resourcesStore },
+    space,
+    sseData.itemid
+  )
+
+  resourcesStore.upsertResource(updatedResource)
+}
+
+export const onSSEProcessingFinishedEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService,
+  resourceQueue,
+  previewService
+}: SSEEventOptions) => {
+  await waitForResourcesLoad(resourcesStore)
+
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: sseData.parentitemid })) {
+    return false
+  }
+  const resource = resourcesStore.resources.find((f) => f.id === sseData.itemid)
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return
+  }
+
+  /**
+   * If resource is not loaded, it suggests an upload is in progress.
+   */
+  if (!resource) {
+    if (sseData.initiatorid === clientService.initiatorId) {
+      /**
+       * If the upload is initiated by the current client,
+       * there's no necessity to retrieve the resources again.
+       */
+      return
+    }
+
+    return resourceQueue.add(async () => {
+      const resource = await loadEventResource(
+        { clientService, resourcesStore },
+        space,
+        sseData.itemid
+      )
+
+      // check again for the current folder in case the user has navigated away in the meantime
+      if (isItemInCurrentFolder({ resourcesStore, parentFolderId: sseData.parentitemid })) {
+        resourcesStore.upsertResource(resource)
+      }
+    })
+  }
+
+  /**
+   * Resource not changed, don't fetch more data
+   */
+  if (resource.etag === sseData.etag) {
+    return resourcesStore.updateResourceField({
+      id: sseData.itemid,
+      field: 'processing',
+      value: false
+    })
+  }
+
+  const updatedResource = await loadEventResource(
+    { clientService, resourcesStore },
+    space,
+    sseData.itemid
+  )
+  resourcesStore.upsertResource(updatedResource)
+
+  const preview = await previewService.loadPreview({
+    resource,
+    space,
+    dimensions: ImageDimension.Thumbnail,
+    processor: ProcessorType.enum.thumbnail
+  })
+
+  if (preview) {
+    resourcesStore.updateResourceField({
+      id: sseData.itemid,
+      field: 'thumbnail',
+      value: preview
+    })
+  }
+}
+
+function isEventSpaceTrashActive({
+  sseData,
+  spacesStore,
+  router
+}: Pick<SSEEventOptions, 'sseData' | 'spacesStore' | 'router'>) {
+  return (
+    !!sseData.spaceid &&
+    isLocationTrashActive(router, 'files-trash-generic') &&
+    spacesStore.currentSpace?.id === sseData.spaceid
+  )
+}
+
+/**
+ * Trash items are identified by the node id of the deleted resource, without the space prefix.
+ */
+function upsertTrashItem({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService,
+  router,
+  resourceQueue
+}: Pick<
+  SSEEventOptions,
+  'sseData' | 'resourcesStore' | 'spacesStore' | 'clientService' | 'router' | 'resourceQueue'
+>) {
+  const trashItemId = extractNodeId(sseData.itemid)
+  if (!trashItemId) {
+    return
+  }
+
+  return resourceQueue.add(async () => {
+    let resource: Resource
+    try {
+      resource = await clientService.webdav.getFileInfo(
+        spacesStore.currentSpace,
+        { path: trashItemId },
+        { davProperties: DavProperties.Trashbin, isTrash: true }
+      )
+    } catch {
+      // the item might have been restored or deleted permanently in the meantime
+      return
+    }
+
+    // check again in case the user has navigated away in the meantime
+    if (!isEventSpaceTrashActive({ sseData, spacesStore, router })) {
+      return
+    }
+
+    resourcesStore.upsertResource(resource)
+  })
+}
+
+export const onSSEItemTrashedEvent = async ({
+  sseData,
+  language,
+  messageStore,
+  resourcesStore,
+  spacesStore,
+  clientService,
+  router,
+  resourceQueue
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  if (isLocationTrashActive(router, 'files-trash-overview')) {
+    return spacesStore.updateSpaceField({
+      id: sseData.spaceid,
+      field: 'hasTrashedItems',
+      value: true
+    })
+  }
+
+  if (isEventSpaceTrashActive({ sseData, spacesStore, router })) {
+    return upsertTrashItem({
+      sseData,
+      resourcesStore,
+      spacesStore,
+      clientService,
+      router,
+      resourceQueue
+    })
+  }
+
+  const { $gettext } = language
+
+  const currentFolder = resourcesStore.currentFolder
+  const resourceIsCurrentFolder = currentFolder?.id === sseData.itemid
+
+  if (resourceIsCurrentFolder) {
+    return messageStore.showMessage({
+      title: $gettext(
+        'The folder you were accessing has been removed. Please navigate to another location.'
+      )
+    })
+  }
+
+  const resource = resourcesStore.resources.find((f) => f.id === sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+
+  resourcesStore.removeResources([resource])
+}
+
+export const onSSEItemRestoredEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService,
+  router
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  if (isEventSpaceTrashActive({ sseData, spacesStore, router })) {
+    const trashItemId = extractNodeId(sseData.itemid)
+    const trashItem = resourcesStore.resources.find(({ id }) => id === trashItemId)
+    if (!trashItem) {
+      return
+    }
+
+    resourcesStore.removeResources([trashItem])
+    // selections only cover visible rows
+    return resourcesStore.setSelection(
+      resourcesStore.selectedIds.filter((id) => id !== trashItemId)
+    )
+  }
+
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return
+  }
+
+  const resource = await loadEventResource({ clientService, resourcesStore }, space, sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: resource.parentFolderId })) {
+    return false
+  }
+
+  resourcesStore.upsertResource(resource)
+}
+
+/**
+ * Flat lists like favorites or search results don't have a current folder. A moved resource stays
+ * in them with its new location. It only gets removed if it can't be loaded anymore, e.g. because
+ * its space is unknown (like for a resource in a received share) or it isn't accessible anymore.
+ */
+async function updateMovedResourceInFlatList({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService
+}: Pick<SSEEventOptions, 'sseData' | 'resourcesStore' | 'spacesStore' | 'clientService'>) {
+  const resource = resourcesStore.resources.find((r) => r.id === sseData.itemid)
+  if (!resource) {
+    return
+  }
+
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return resourcesStore.removeResources([resource])
+  }
+
+  let movedResource: Resource
+  try {
+    movedResource = await loadEventResource(
+      { clientService, resourcesStore },
+      space,
+      sseData.itemid
+    )
+  } catch {
+    return resourcesStore.removeResources([resource])
+  }
+
+  // check again in case the user has navigated away in the meantime
+  if (!resourcesStore.resources.some((r) => r.id === sseData.itemid)) {
+    return
+  }
+
+  resourcesStore.upsertResource(movedResource)
+}
+
+export const onSSEItemMovedEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  if (!resourcesStore.currentFolder) {
+    return updateMovedResourceInFlatList({ sseData, resourcesStore, spacesStore, clientService })
+  }
+
+  // the new location might not be accessible anymore (e.g. moved out of a share), hence don't load the resource
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: sseData.parentitemid })) {
+    const resource = resourcesStore.resources.find((r) => r.id === sseData.itemid)
+    if (!resource) {
+      return
+    }
+
+    return resourcesStore.removeResources([resource])
+  }
+
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return
+  }
+
+  const resource = await loadEventResource({ clientService, resourcesStore }, space, sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+
+  // check again for the current folder in case the user has navigated away in the meantime
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: resource.parentFolderId })) {
+    return false
+  }
+
+  resourcesStore.upsertResource(resource)
+}
+
+/**
+ * The FileTouched event is triggered when a new empty file, such as a new text file,
+ * is about to be created on the server. This event is necessary because the
+ * post-processing event won't be triggered in this case.
+ */
+export const onSSEFileTouchedEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return
+  }
+
+  const resource = await loadEventResource({ clientService, resourcesStore }, space, sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: resource.parentFolderId })) {
+    return false
+  }
+
+  resourcesStore.upsertResource(resource)
+}
+
+export const onSSEFolderCreatedEvent = async ({
+  sseData,
+  resourcesStore,
+  spacesStore,
+  clientService
+}: SSEEventOptions) => {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  const space = getEventSpace({ spacesStore, resourcesStore }, sseData.spaceid)
+  if (!space) {
+    return
+  }
+
+  const resource = await loadEventResource({ clientService, resourcesStore }, space, sseData.itemid)
+
+  if (!resource) {
+    return
+  }
+
+  if (!isItemInCurrentFolder({ resourcesStore, parentFolderId: resource.parentFolderId })) {
+    return false
+  }
+
+  resourcesStore.upsertResource(resource)
+}
+
+/**
+ * Favorites are user specific, hence the favorite state of the resources currently
+ * loaded only ever needs to be updated for the user receiving the event. While on the
+ * favorites view the resource additionally needs to be added to or removed from the list.
+ */
+async function applyFavoriteState(
+  { sseData, resourcesStore, spacesStore, clientService, router }: SSEEventOptions,
+  starred: boolean
+) {
+  if (sseData.initiatorid === clientService.initiatorId) {
+    // If initiated by current client (browser tab), action unnecessary. Web manages its own logic, return early.
+    return
+  }
+
+  await waitForResourcesLoad(resourcesStore)
+
+  if (isLocationCommonActive(router, 'files-common-favorites')) {
+    if (!starred) {
+      const resource = resourcesStore.resources.find((r) => r.id === sseData.itemid)
+
+      if (!resource) {
+        return
+      }
+
+      return resourcesStore.removeResources([resource])
+    }
+
+    const space = spacesStore.spaces.find((space) => space.id === sseData.spaceid)
+    if (!space) {
+      return
+    }
+
+    const resource = await clientService.webdav.getFileInfo(space, {
+      path: '',
+      fileId: sseData.itemid
+    })
+
+    if (!resource) {
+      return
+    }
+
+    return resourcesStore.upsertResource(resource)
+  }
+
+  const currentFolder = resourcesStore.currentFolder
+  if (currentFolder?.id === sseData.itemid) {
+    resourcesStore.setCurrentFolder({ ...currentFolder, starred })
+  }
+
+  resourcesStore.updateResourceField({ id: sseData.itemid, field: 'starred', value: starred })
+}
+
+export const onSSEItemFavoriteAddedEvent = (options: SSEEventOptions) => {
+  return applyFavoriteState(options, true)
+}
+
+export const onSSEItemFavoriteRemovedEvent = (options: SSEEventOptions) => {
+  return applyFavoriteState(options, false)
+}

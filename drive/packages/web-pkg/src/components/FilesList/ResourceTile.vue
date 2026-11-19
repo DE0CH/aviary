@@ -1,0 +1,295 @@
+<template>
+  <oc-card
+    ref="observerTarget"
+    body-class="p-0 flex flex-col"
+    class="oc-tile-card flex flex-col h-full shadow-none [&.item-accentuated]:bg-role-secondary-container"
+    :data-item-id="resource.id"
+    :class="{
+      'oc-tile-card-selected bg-role-secondary-container outline-2 outline-role-outline':
+        isResourceSelected,
+      'bg-role-surface-container hover:bg-role-surface-container-highest outline outline-role-surface-container-highest':
+        !isResourceSelected,
+      'oc-tile-card-disabled opacity-70 grayscale-60 pointer-events-none': isResourceDisabled,
+      'state-trashed [&_.tile-preview]:opacity-80 [&_.tile-default-image_svg]:opacity-80 [&_.tile-preview]:grayscale [&_.tile-default-image_svg]:grayscale':
+        isProjectSpaceResource(resource) && resource.disabled
+    }"
+    @contextmenu="$emit('contextmenu', $event)"
+  >
+    <div
+      v-if="isHidden"
+      class="oc-tile-card-lazy-shimmer overflow-hidden relative after:absolute after:inset-0 after:transform-[translateX(-100%)] opacity-20 after:motion-safe:animate-shimmer"
+    >
+      <div class="w-full aspect-[16/9]" />
+      <div class="p-2">
+        <div class="h-7" />
+      </div>
+    </div>
+    <template v-else>
+      <div class="relative flex w-full" @mouseenter="onMediaEnter" @mouseleave="onMediaLeave">
+        <!-- a sibling of the link, interactive elements must not be nested inside it -->
+        <div
+          class="z-10 absolute top-0 left-0 [&_input]:not-[.oc-checkbox-checked]:bg-role-surface"
+        >
+          <div v-if="isLoading" class="oc-tile-card-loading-spinner z-990 m-2">
+            <oc-spinner :aria-label="$gettext('File is being processed')" />
+          </div>
+          <slot v-else name="selection" :item="resource" :selected="isResourceSelected" />
+        </div>
+        <resource-link
+          class="oc-card-media-top flex justify-center items-center m-0 w-full relative aspect-[16/9]"
+          :resource="resource"
+          :link="resourceRoute"
+          :is-resource-clickable="isResourceClickable"
+          :aria-label="isResourceClickable ? resource.name : undefined"
+          tabindex="-1"
+          @click="$emit('fileNameClicked', $event)"
+        >
+          <oc-tag
+            v-if="isProjectSpaceResource(resource) && resource.disabled"
+            class="z-10 absolute text-role-on-surface"
+            type="span"
+          >
+            <span v-text="$gettext('Disabled')" />
+          </oc-tag>
+          <div
+            v-oc-tooltip="tooltipLabelIcon"
+            class="oc-tile-card-preview flex items-center justify-center text-center size-full absolute"
+            :class="{ 'p-2 oc-tile-card-preview-inset': motionInset }"
+            :aria-label="tooltipLabelIcon"
+          >
+            <slot name="imageField" :item="resource">
+              <oc-image
+                v-if="resource.thumbnail"
+                class="tile-preview rounded-t-sm size-full object-cover aspect-[16/9] pointer-events-none"
+                :class="{
+                  'rounded-sm': isResourceSelected
+                }"
+                :src="resource.thumbnail"
+                :data-test-thumbnail-resource-name="resource.name"
+                decoding="async"
+                @click.stop="$emit('tileClicked', [resource, $event])"
+              />
+              <resource-icon
+                v-else
+                :resource="resource"
+                :size-class="isProjectSpaceResource(resource) ? 'size-full' : resourceIconSize"
+                class="tile-default-image relative"
+                :class="[
+                  isProjectSpaceResource(resource) ? 'rounded-t-sm' : 'pt-1',
+                  { 'rounded-sm': isProjectSpaceResource(resource) && isResourceSelected }
+                ]"
+              >
+                <template v-if="showStatusIcon" #status>
+                  <oc-icon v-bind="statusIconAttrs" size-class="size-3" />
+                </template>
+              </resource-icon>
+            </slot>
+          </div>
+        </resource-link>
+        <motion-photo-player
+          v-if="isMotionOrLivePhoto(resource)"
+          ref="motionPlayer"
+          :resource="resource"
+          :space="space"
+          badge-size-class="size-5"
+          badge-class="top-0 right-0 m-2.5"
+          :video-class="motionVideoClass"
+        />
+      </div>
+      <div class="p-2" @click.stop="$emit('tileClicked', [resource, $event])">
+        <div class="flex justify-between items-center">
+          <div
+            class="flex items-center truncate resource-name-wrapper text-role-on-surface overflow-hidden"
+          >
+            <resource-list-item
+              :resource="resource"
+              :is-icon-displayed="false"
+              :is-extension-displayed="isExtensionDisplayed"
+              :is-resource-clickable="isResourceClickable"
+              :is-path-displayed="isPathDisplayed"
+              :parent-folder-name="getParentFolderName(resource)"
+              :parent-folder-link="getParentFolderLink(resource)"
+              :link="resourceRoute"
+              :term="term"
+              @click.stop="$emit('fileNameClicked', $event)"
+            />
+          </div>
+          <div class="flex items-center">
+            <!-- Slot for indicators !-->
+            <slot name="indicators" :item="resource" class="resource-indicators" />
+            <!-- Slot for individual actions -->
+            <slot name="actions" :item="resource" />
+            <!-- Slot for contextmenu -->
+            <slot name="contextMenu" :item="resource" />
+          </div>
+        </div>
+        <p v-if="resourceDescription" class="text-left my-0 truncate" :title="resourceDescription">
+          <span class="text-sm" v-text="resourceDescription" />
+        </p>
+        <slot name="additionalResourceContent" :item="resource" />
+      </div>
+    </template>
+  </oc-card>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, unref, useTemplateRef } from 'vue'
+import ResourceIcon from './ResourceIcon.vue'
+import ResourceListItem from './ResourceListItem.vue'
+import ResourceLink from './ResourceLink.vue'
+import MotionPhotoPlayer from './MotionPhotoPlayer.vue'
+import { isProjectSpaceResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { useGettext } from 'vue3-gettext'
+import { isSpaceResource } from '@opencloud-eu/web-client'
+import { useIsVisible } from '@opencloud-eu/design-system/composables'
+import { OcCard } from '@opencloud-eu/design-system/components'
+import {
+  isMotionOrLivePhoto,
+  useFilesViewScrollContainer,
+  useFolderLink,
+  useResourceLink,
+  useResourcesStore
+} from '../../composables'
+
+const {
+  resource,
+  space = undefined,
+  isResourceClickable = true,
+  isResourceDisabled = false,
+  isExtensionDisplayed = true,
+  isPathDisplayed = false,
+  resourceIconSize = 'size-12',
+  lazy = false,
+  isLoading = false,
+  term = ''
+} = defineProps<{
+  resource: Resource
+  space?: SpaceResource
+  isResourceClickable?: boolean
+  isResourceDisabled?: boolean
+  isExtensionDisplayed?: boolean
+  isPathDisplayed?: boolean
+  resourceIconSize?: string
+  lazy?: boolean
+  isLoading?: boolean
+  /**
+   * The filter term whose occurrences get highlighted in the resource names.
+   */
+  term?: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'fileNameClicked', event: MouseEvent | KeyboardEvent): void
+  (e: 'contextmenu', event: MouseEvent | KeyboardEvent): void
+  (e: 'itemVisible'): void
+  (e: 'itemHidden'): void
+  (e: 'tileClicked', event: [Resource, MouseEvent | KeyboardEvent]): void
+}>()
+
+defineSlots<{
+  actions?: (props: { item: Resource }) => unknown
+  contextMenu?: (props: { item: Resource }) => unknown
+  imageField?: (props: { item: Resource }) => unknown
+  indicators?: (props: { item: Resource }) => unknown
+  selection?: (props: { item: Resource; selected: boolean }) => unknown
+  additionalResourceContent?: (props: { item: Resource }) => unknown
+}>()
+
+const { $gettext } = useGettext()
+const { getParentFolderName, getParentFolderLink } = useFolderLink({
+  space: ref(space)
+})
+
+// no MotionPhotoOverlay here: the hover has to span the whole media area, so
+// that moving toward the selection checkbox does not stop playback
+const motionPlayer = useTemplateRef<InstanceType<typeof MotionPhotoPlayer>>('motionPlayer')
+const resourcesStore = useResourcesStore()
+const isResourceSelected = computed(() => resourcesStore.selectedIdsSet.has(resource.id))
+// the preview is inset while selected or hovered (the whole media area, badge
+// included, so that hovering the badge does not pop the still back out) and the
+// video follows that inset; the badge keeps the checkbox's fixed edge distance
+const isMediaHovered = ref(false)
+const motionInset = computed(() => isResourceSelected.value || isMediaHovered.value)
+const motionVideoClass = computed(() =>
+  motionInset.value ? 'tile-motion-video inset-2 rounded-sm' : 'tile-motion-video rounded-t-sm'
+)
+const onMediaEnter = () => {
+  isMediaHovered.value = true
+  motionPlayer.value?.hoverPlay?.()
+}
+const onMediaLeave = () => {
+  isMediaHovered.value = false
+  motionPlayer.value?.stop?.()
+}
+
+const observerTarget = useTemplateRef<InstanceType<typeof OcCard>>('observerTarget')
+const observerTargetElement = computed<HTMLElement>(() => unref(observerTarget)?.$el)
+const scrollContainer = useFilesViewScrollContainer()
+
+const showStatusIcon = computed(() => {
+  return resource.locked || resource.processing
+})
+
+const { getResourceLink } = useResourceLink({ space: computed(() => space) })
+const resourceRoute = computed(() => getResourceLink(resource))
+
+const statusIconAttrs = computed(() => {
+  if (resource.locked) {
+    return {
+      name: 'lock',
+      fillType: 'fill' as const
+    }
+  }
+
+  if (resource.processing) {
+    return {
+      name: 'loop-right',
+      fillType: 'line' as const
+    }
+  }
+
+  return {}
+})
+
+const tooltipLabelIcon = computed(() => {
+  if (resource.locked) {
+    return $gettext('This item is locked')
+  }
+  return null
+})
+const resourceDescription = computed(() => {
+  if (isSpaceResource(resource)) {
+    return resource.description
+  }
+  return ''
+})
+
+const { isVisible } = lazy
+  ? useIsVisible({
+      target: observerTargetElement,
+      root: scrollContainer,
+      onVisibleCallback: () => emit('itemVisible'),
+      onHiddenCallback: () => emit('itemHidden')
+    })
+  : { isVisible: ref(true) }
+
+const isHidden = computed(() => !unref(isVisible))
+
+if (!lazy) {
+  emit('itemVisible')
+}
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer utilities {
+  .oc-tile-card-preview-inset img,
+  .oc-tile-card-preview-inset .oc-icon {
+    @apply rounded-sm;
+  }
+
+  .oc-tile-card-lazy-shimmer::after {
+    background-image: linear-gradient(90deg, #4c5f7900 0, #4c5f7933 20%, #4c5f7980 60%, #4c5f7900);
+  }
+}
+</style>

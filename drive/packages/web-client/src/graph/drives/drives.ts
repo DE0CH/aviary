@@ -1,0 +1,71 @@
+import { AxiosHeaders } from 'axios'
+import { buildSpace } from '../../helpers'
+import { Drive, DrivesApiFactory, DrivesGetDrivesApi, MeDrivesApi } from './../generated'
+import type { GraphFactoryOptions } from './../types'
+import type { GraphDrives } from './types'
+
+const getServerUrlFromDrive = (drive: Drive) => new URL(drive.webUrl).origin
+
+export const DrivesFactory = ({ axiosClient, config }: GraphFactoryOptions): GraphDrives => {
+  const drivesApiFactory = DrivesApiFactory(config, config.basePath, axiosClient)
+  const meDrivesApi = new MeDrivesApi(config, config.basePath, axiosClient)
+  const allDrivesApi = new DrivesGetDrivesApi(config, config.basePath, axiosClient)
+
+  return {
+    async getDrive(id, options, requestOptions) {
+      const { data: drive } = await drivesApiFactory.getDrive(
+        id,
+        options?.select ? new Set([...options.select]) : null,
+        requestOptions
+      )
+      return buildSpace({ ...drive, serverUrl: getServerUrlFromDrive(drive) })
+    },
+
+    async createDrive(data, requestOptions) {
+      const { data: drive } = await drivesApiFactory.createDrive(data, requestOptions)
+      return buildSpace({ ...drive, serverUrl: getServerUrlFromDrive(drive) })
+    },
+
+    async updateDrive(id, data, requestOptions) {
+      const { data: drive } = await drivesApiFactory.updateDrive(id, data, requestOptions)
+      return buildSpace({ ...drive, serverUrl: getServerUrlFromDrive(drive) })
+    },
+
+    async disableDrive(id, ifMatch, requestOptions) {
+      await drivesApiFactory.deleteDrive(id, ifMatch, requestOptions)
+    },
+
+    async deleteDrive(id, ifMatch, requestOptions) {
+      await drivesApiFactory.deleteDrive(id, ifMatch, {
+        ...requestOptions,
+        headers: { ...requestOptions?.headers, common: new AxiosHeaders({ Purge: 'T' }) }
+      })
+    },
+
+    async listMyDrives(options, requestOptions) {
+      const {
+        data: { value }
+      } = await meDrivesApi.listMyDrivesBeta(
+        options?.orderBy,
+        options?.filter,
+        options?.expand,
+        options?.select ? new Set([...options.select]) : null,
+        requestOptions
+      )
+      return value.map((d) => buildSpace({ ...d, serverUrl: getServerUrlFromDrive(d) }))
+    },
+
+    async listAllDrives(options, requestOptions) {
+      const {
+        data: { value }
+      } = await allDrivesApi.listAllDrivesBeta(
+        options?.orderBy,
+        options?.filter,
+        options?.expand,
+        options?.select ? new Set([...options.select]) : null,
+        requestOptions
+      )
+      return value.map((d) => buildSpace({ ...d, serverUrl: getServerUrlFromDrive(d) }))
+    }
+  }
+}

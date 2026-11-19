@@ -1,0 +1,25 @@
+import { Action, useSideBar } from '@opencloud-eu/web-pkg'
+import { computed } from 'vue'
+import { useGettext } from 'vue3-gettext'
+
+export function useActionsShowDetails() {
+  const { $gettext } = useGettext()
+  const { openSideBar } = useSideBar()
+
+  const actions = computed((): Action[] => [
+    {
+      name: 'show-details',
+      icon: 'information',
+      label: () => $gettext('Details'),
+      handler: () => openSideBar(),
+      isVisible: ({ resources }) => {
+        return (resources as unknown[]).length > 0
+      },
+      class: 'oc-admin-settings-show-details-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

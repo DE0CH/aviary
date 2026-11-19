@@ -1,0 +1,274 @@
+import { markRaw, watch } from 'vue'
+import { escapeRegExp } from 'lodash-es'
+import { Language } from 'vue3-gettext'
+import { Resource } from '@opencloud-eu/web-client'
+import { extractExtensionFromFile } from '@opencloud-eu/web-client'
+import {
+  ConflictDialog,
+  OcUppyFile,
+  ResolveConflict,
+  resolveFileNameDuplicate,
+  ResolveStrategy,
+  ResourceConflictModal,
+  ResourcesStore,
+  useModals
+} from '@opencloud-eu/web-pkg'
+
+interface ConflictedResource {
+  name: string
+  type: string
+  existingIsFolder?: boolean
+}
+
+// a file uploaded onto an existing folder or vice versa, which can neither be replaced nor merged
+function isTypeMismatch({ type, existingIsFolder }: ConflictedResource) {
+  return existingIsFolder !== undefined && existingIsFolder !== (type === 'folder')
+}
+
+// renames the first of the relative segments the endpoint ends with, leaving the current folder path untouched
+function renameUploadFolderInEndpoint(endpoint: string, segments: string[], newFolderName: string) {
+  const encodedTail = `/${segments.map(encodeURIComponent).join('/')}`
+  if (!segments.length || !endpoint.endsWith(encodedTail)) {
+    return endpoint
+  }
+  const newTail = [newFolderName, ...segments.slice(1)].map(encodeURIComponent).join('/')
+  return `${endpoint.slice(0, -encodedTail.length)}/${newTail}`
+}
+
+export class UploadResourceConflict extends ConflictDialog {
+  resourcesStore: ResourcesStore
+
+  constructor(resourcesStore: ResourcesStore, language: Language) {
+    const { $gettext, $ngettext } = language
+    super($gettext, $ngettext)
+
+    this.resourcesStore = resourcesStore
+  }
+
+  resolveFileExists(
+    resource: Resource,
+    conflictCount: number,
+    suggestMerge = false,
+    separateSkipHandling = false, // separate skip-handling between files and folders
+    existingIsFolder = resource.isFolder
+  ): Promise<ResolveConflict> {
+    const modalStore = useModals()
+
+    return new Promise<ResolveConflict>((resolve) => {
+      const modal = modalStore.dispatchModal({
+        title: existingIsFolder
+          ? this.$gettext('Folder already exists')
+          : this.$gettext('File already exists'),
+        hideConfirmButton: true,
+        customComponent: markRaw(ResourceConflictModal),
+        customComponentAttrs: () => ({
+          confirmSecondaryTextOverwrite: resource.isFolder
+            ? this.$gettext('Merge')
+            : this.$gettext('Replace'),
+          resource,
+          conflictCount,
+          suggestMerge,
+          separateSkipHandling,
+          existingIsFolder,
+          hideSecondaryAction: existingIsFolder !== resource.isFolder,
+          callbackFn: (conflict: ResolveConflict) => {
+            stop()
+            resolve(conflict)
+          }
+        })
+      })
+
+      const stop = watch(
+        () => modalStore.modals.some(({ id }) => id === modal.id),
+        (isOpen) => {
+          if (isOpen) {
+            return
+          }
+          // removed without an answer, e.g. on route change
+          stop()
+          resolve({ strategy: ResolveStrategy.CANCEL, doForAllConflicts: false })
+        }
+      )
+    })
+  }
+
+  getConflicts(files: OcUppyFile[]): ConflictedResource[] {
+    const conflicts: ConflictedResource[] = []
+    for (const file of files) {
+      const relativeFilePath = file.meta.relativePath
+      if (relativeFilePath) {
+        // Logic for folders, applies to all files inside folder and subfolders
+        const rootFolder = relativeFilePath.replace(/^\/+/, '').split('/')[0]
+        const exists = this.resourcesStore.resources.find((f) => f.name === rootFolder)
+        if (exists) {
+          if (conflicts.some((conflict) => conflict.name === rootFolder)) {
+            continue
+          }
+          conflicts.push({ name: rootFolder, type: 'folder', existingIsFolder: exists.isFolder })
+          continue
+        }
+      }
+      // Logic for files
+      const exists = this.resourcesStore.resources.find(
+        (f) => f.name === file.name && !file.meta.relativeFolder
+      )
+      if (exists) {
+        conflicts.push({ name: file.name, type: 'file', existingIsFolder: exists.isFolder })
+      }
+    }
+    return conflicts
+  }
+
+  async displayOverwriteDialog(
+    files: OcUppyFile[],
+    conflicts: ConflictedResource[]
+  ): Promise<{ files: OcUppyFile[]; mergedFolders: string[]; dismissed?: boolean }> {
+    const resolvedFileConflicts: { name: string; strategy: ResolveStrategy }[] = []
+    const resolvedFolderConflicts: { name: string; strategy: ResolveStrategy }[] = []
+    const allStrategies: Record<
+      'file' | 'folder',
+      { regular?: ResolveStrategy; typeMismatch?: ResolveStrategy }
+    > = { file: {}, folder: {} }
+
+    for (const [index, conflict] of conflicts.entries()) {
+      const isFolder = conflict.type === 'folder'
+      const conflictArray = isFolder ? resolvedFolderConflicts : resolvedFileConflicts
+      const strategies = allStrategies[isFolder ? 'folder' : 'file']
+      const typeMismatch = isTypeMismatch(conflict)
+      const allStrategy =
+        typeMismatch && strategies.typeMismatch !== undefined
+          ? strategies.typeMismatch
+          : strategies.regular
+      const canApplyAllStrategy =
+        allStrategy !== undefined &&
+        (!typeMismatch || [ResolveStrategy.SKIP, ResolveStrategy.KEEP_BOTH].includes(allStrategy))
+
+      if (canApplyAllStrategy) {
+        conflictArray.push({
+          name: conflict.name,
+          strategy: allStrategy
+        })
+        continue
+      }
+
+      const conflictsLeft = conflicts.slice(index).filter((remaining) => {
+        if (remaining.type !== conflict.type) {
+          return false
+        }
+        if (typeMismatch) {
+          return isTypeMismatch(remaining)
+        }
+        return !isTypeMismatch(remaining) || strategies.typeMismatch === undefined
+      }).length
+
+      const resolvedConflict: ResolveConflict = await this.resolveFileExists(
+        { name: conflict.name, isFolder } as Resource,
+        conflictsLeft,
+        isFolder,
+        true,
+        conflict.existingIsFolder
+      )
+      if (resolvedConflict.strategy === ResolveStrategy.CANCEL) {
+        return { files: [], mergedFolders: [], dismissed: true }
+      }
+      if (resolvedConflict.doForAllConflicts) {
+        strategies[typeMismatch ? 'typeMismatch' : 'regular'] = resolvedConflict.strategy
+      }
+
+      conflictArray.push({
+        name: conflict.name,
+        strategy: resolvedConflict.strategy
+      })
+    }
+    const mergedFolders = resolvedFolderConflicts
+      .filter((e) => e.strategy === ResolveStrategy.MERGE)
+      .map((e) => e.name)
+
+    const filesToSkip = resolvedFileConflicts
+      .filter((e) => e.strategy === ResolveStrategy.SKIP)
+      .map((e) => e.name)
+    const foldersToSkip = resolvedFolderConflicts
+      .filter((e) => e.strategy === ResolveStrategy.SKIP)
+      .map((e) => e.name)
+
+    files = files.filter((e) => e.meta.relativeFolder || !filesToSkip.includes(e.name))
+    files = files.filter(
+      (file) =>
+        !foldersToSkip.some((folderName) => file.meta.relativeFolder.split('/')[1] === folderName)
+    )
+
+    const filesToKeepBoth = resolvedFileConflicts
+      .filter((e) => e.strategy === ResolveStrategy.KEEP_BOTH)
+      .map((e) => e.name)
+    const foldersToKeepBoth = resolvedFolderConflicts
+      .filter((e) => e.strategy === ResolveStrategy.KEEP_BOTH)
+      .map((e) => e.name)
+
+    if (!filesToKeepBoth.length && !foldersToKeepBoth.length) {
+      return { files, mergedFolders }
+    }
+
+    // Reserve all top-level batch names before assigning replacements.
+    const occupiedResources = [
+      ...this.resourcesStore.resources,
+      ...files.map((file) => ({
+        name: file.meta.relativeFolder?.split('/').filter(Boolean)[0] || file.name
+      }))
+    ]
+
+    for (const fileName of filesToKeepBoth) {
+      const file = files.find((e) => e.name === fileName && !e.meta.relativeFolder)
+      const extension = extractExtensionFromFile({ name: fileName } as Resource)
+      file.name = resolveFileNameDuplicate(fileName, extension, occupiedResources)
+      occupiedResources.push({ name: file.name })
+      file.meta.name = file.name
+      if (file.xhrUpload?.endpoint) {
+        file.xhrUpload.endpoint = file.xhrUpload.endpoint
+          .toString()
+          .replace(
+            new RegExp(`/${escapeRegExp(encodeURIComponent(fileName))}$`),
+            () => `/${encodeURIComponent(file.name)}`
+          )
+      }
+    }
+    for (const folder of foldersToKeepBoth) {
+      const filesInFolder = files.filter((e) => e.meta.relativeFolder.split('/')[1] === folder)
+      const newFolderName = resolveFileNameDuplicate(folder, '', occupiedResources)
+      occupiedResources.push({ name: newFolderName })
+      for (const file of filesInFolder) {
+        const folderSegments = file.meta.relativeFolder.split('/').filter(Boolean)
+        // a directory entry's relative folder includes its own name, its tus endpoint doesn't
+        const tusSegments = file.type === 'directory' ? folderSegments.slice(0, -1) : folderSegments
+        const xhrSegments = [...tusSegments, file.name]
+        file.meta.relativeFolder = file.meta.relativeFolder.replace(
+          new RegExp(`/${escapeRegExp(folder)}`),
+          () => `/${newFolderName}`
+        )
+        file.meta.relativePath = file.meta.relativePath.replace(
+          new RegExp(`/${escapeRegExp(folder)}/`),
+          () => `/${newFolderName}/`
+        )
+        file.meta.tusEndpoint = renameUploadFolderInEndpoint(
+          file.meta.tusEndpoint,
+          file.xhrUpload?.endpoint ? xhrSegments : tusSegments,
+          newFolderName
+        )
+        if (file.xhrUpload?.endpoint) {
+          file.xhrUpload.endpoint = renameUploadFolderInEndpoint(
+            file.xhrUpload.endpoint.toString(),
+            xhrSegments,
+            newFolderName
+          )
+        }
+        if (file.tus?.endpoint) {
+          file.tus.endpoint = renameUploadFolderInEndpoint(
+            file.tus.endpoint,
+            tusSegments,
+            newFolderName
+          )
+        }
+      }
+    }
+    return { files, mergedFolders }
+  }
+}

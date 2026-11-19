@@ -1,0 +1,217 @@
+<template>
+  <div class="h-full" tabindex="0">
+    <app-loading-spinner v-if="isLoading" />
+    <iframe
+      v-show="!isLoading"
+      ref="iframeRef"
+      class="size-full"
+      :title="iframeTitle"
+      :src="iframeUrl.href"
+      tabindex="0"
+      @load="onLoad"
+    ></iframe>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, unref } from 'vue'
+import {
+  embedModeLocationPickMessageData,
+  Modal,
+  useClientService,
+  useExtensionRegistry,
+  useFileActions,
+  useGetMatchingSpace,
+  useMessages,
+  useModals,
+  useRouter,
+  useThemeStore
+} from '../../composables'
+import { LocationQuery, RouteLocationRaw } from 'vue-router'
+import AppLoadingSpinner from '../AppLoadingSpinner.vue'
+import {
+  extractExtensionFromFile,
+  isShareSpaceResource,
+  Resource,
+  SpaceResource,
+  urlJoin
+} from '@opencloud-eu/web-client'
+import {
+  buildUrl,
+  getTextByteSize,
+  isMessageFromIframe,
+  getVaultNameMaxBytes,
+  resolveFileNameDuplicate
+} from '../../helpers'
+import { useGettext } from 'vue3-gettext'
+import { DavProperty } from '@opencloud-eu/web-client/webdav'
+
+const { modal, parentFolderLink, originalResource, content } = defineProps<{
+  modal: Modal
+  parentFolderLink: RouteLocationRaw
+  originalResource: Resource
+  content: string
+}>()
+
+const iframeRef = ref<HTMLIFrameElement>()
+const isLoading = ref(true)
+const themeStore = useThemeStore()
+const { $gettext } = useGettext()
+const router = useRouter()
+const clientService = useClientService()
+const { removeModal } = useModals()
+const { showMessage, showErrorMessage } = useMessages()
+const { getMatchingSpace } = useGetMatchingSpace()
+const { getEditorRouteOpts } = useFileActions()
+const extensionRegistry = useExtensionRegistry()
+
+const iframeTitle = themeStore.currentTheme.name
+const iframeUrl = new URL(buildUrl(router, parentFolderLink))
+iframeUrl.searchParams.append('hide-logo', 'true')
+iframeUrl.searchParams.append('embed', 'true')
+iframeUrl.searchParams.append('embed-target', 'location')
+iframeUrl.searchParams.append('embed-choose-file-name', 'true')
+iframeUrl.searchParams.append('embed-delegate-authentication', 'false')
+iframeUrl.searchParams.append('embed-choose-file-name-suggestion', originalResource.name)
+
+const onLoad = () => {
+  isLoading.value = false
+  unref(iframeRef).contentWindow.focus()
+}
+
+const onLocationPick = async (event: MessageEvent) => {
+  const { data } = event
+  if (
+    !isMessageFromIframe(event, unref(iframeRef), iframeUrl.origin) ||
+    data?.name !== 'opencloud-embed:select'
+  ) {
+    return
+  }
+
+  const { resources, fileName, locationQuery }: embedModeLocationPickMessageData = data.data
+
+  const destinationFolder: Resource = resources[0]
+  const space = getMatchingSpace(destinationFolder)
+
+  try {
+    const resource = await saveFile({ destinationFolder, fileName, space })
+    if (resource) {
+      showMessage({
+        title: $gettext('»%{fileName}« was saved successfully', { fileName: resource.name })
+      })
+      openFile({ resource, space, locationQuery })
+    }
+  } catch (e) {
+    console.error(e)
+    showErrorMessage({
+      title: $gettext('Unable to save »%{fileName}«', { fileName }),
+      errors: [e]
+    })
+    console.error(e)
+  }
+
+  removeModal(modal.id)
+}
+
+const saveFile = async ({
+  destinationFolder,
+  fileName,
+  space
+}: {
+  destinationFolder: Resource
+  fileName: string
+  space: SpaceResource
+}) => {
+  const { children: existingResources } = await clientService.webdav.listFiles(
+    space,
+    { fileId: destinationFolder.fileId },
+    { davProperties: [DavProperty.Name] }
+  )
+  const resourceAlreadyExists = existingResources.find(
+    (existingResource) => existingResource.name === fileName
+  )
+  if (resourceAlreadyExists) {
+    // the chosen name may have a different extension than the original file
+    const extension = extractExtensionFromFile({ name: fileName } as Resource)
+    const resolvedName = resolveFileNameDuplicate(fileName, extension, existingResources)
+    const maxNameBytes = getVaultNameMaxBytes(extensionRegistry, space, destinationFolder.path)
+    if (maxNameBytes && getTextByteSize(resolvedName) > maxNameBytes) {
+      showErrorMessage({
+        title: $gettext('Unable to save »%{fileName}«', { fileName }),
+        desc: $gettext(
+          'The name is already taken and the name for a copy is too long for an encrypted folder.'
+        )
+      })
+      return null
+    }
+    fileName = resolvedName
+  }
+
+  return clientService.webdav.putFileContents(space, {
+    fileName,
+    parentFolderId: destinationFolder.id,
+    content: content,
+    path: urlJoin(destinationFolder.path, fileName)
+  })
+}
+
+const openFile = ({
+  locationQuery,
+  resource,
+  space
+}: {
+  locationQuery: LocationQuery
+  resource: Resource
+  space: SpaceResource
+}) => {
+  const remoteItemId = isShareSpaceResource(space) ? space.id : undefined
+  const routeOpts = getEditorRouteOpts(
+    unref(router.currentRoute).name,
+    space,
+    resource,
+    remoteItemId
+  )
+  routeOpts.query = { ...routeOpts.query, ...locationQuery }
+
+  window.open(buildUrl(router, routeOpts), '_blank')
+}
+
+const onCancel = (event: MessageEvent) => {
+  const { data } = event
+  if (
+    !isMessageFromIframe(event, unref(iframeRef), iframeUrl.origin) ||
+    data?.name !== 'opencloud-embed:cancel'
+  ) {
+    return
+  }
+
+  removeModal(modal.id)
+}
+
+onMounted(() => {
+  window.addEventListener('message', onLocationPick)
+  window.addEventListener('message', onCancel)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onLocationPick)
+  window.removeEventListener('message', onCancel)
+})
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer utilities {
+  /* full screen on phones, the embedded files UI needs all the space it can get */
+  .oc-modal.save-as-modal {
+    @apply overflow-hidden max-w-[90vw] max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none max-sm:border-0;
+  }
+  .oc-modal.save-as-modal .oc-modal-body {
+    @apply p-0;
+  }
+
+  .oc-modal.save-as-modal .oc-modal-body-message {
+    @apply m-0 h-[70vh] max-sm:h-full;
+  }
+}
+</style>

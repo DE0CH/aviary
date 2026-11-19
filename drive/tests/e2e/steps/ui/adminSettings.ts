@@ -1,0 +1,681 @@
+import { Then, When } from '../../environment/fixtures'
+import { DataTable } from 'playwright-bdd'
+import { World } from '../../environment/world'
+import { objects } from '../../support'
+import { expect } from '@playwright/test'
+import { shareRoles } from '../../support/api/share/share'
+import { pageObjectFor } from '../../environment/pageObject'
+
+Then(
+  /^"([^"]*)" (should|should not) see the following space(?:s)?$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    actionType: string,
+    stepTable: DataTable
+  ) => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const actualList = await spacesObject.getDisplayedSpaces()
+
+    for (const info of stepTable.hashes()) {
+      const space = spacesObject.getSpace({ key: info.name })
+      expect(actualList.includes(space.id)).toBe(actionType === 'should')
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" (disables|deletes|enables) the space "([^"]*)" using the context-menu$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    action: string,
+    key: string
+  ): Promise<void> => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const spaceId = spacesObject.getUUID({ key })
+    switch (action) {
+      case 'disables':
+        await spacesObject.disable({ spaceIds: [spaceId], context: 'context-menu' })
+        break
+      case 'deletes':
+        await spacesObject.delete({ spaceIds: [spaceId], context: 'context-menu' })
+        break
+      case 'enables':
+        await spacesObject.enable({ spaceIds: [spaceId], context: 'context-menu' })
+        break
+      default:
+        throw new Error(`${action} not implemented`)
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" (?:changes|updates) the space "([^"]*)" (name|subtitle|quota) to "([^"]*)" using the context-menu$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    key: string,
+    attribute: string,
+    value: string
+  ): Promise<void> => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const spaceId = spacesObject.getUUID({ key })
+    switch (attribute) {
+      case 'name':
+        await spacesObject.rename({ key, value })
+        break
+      case 'subtitle':
+        await spacesObject.changeSubtitle({ key, value })
+        break
+      case 'quota':
+        await spacesObject.changeQuota({ spaceIds: [spaceId], value, context: 'context-menu' })
+        break
+      default:
+        throw new Error(`'${attribute}' not implemented`)
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" (?:changes|updates) quota of the following space(?:s)? to "([^"]*)" using the batch-actions$/,
+  async ({ world }: { world: World }, stepUser: string, value: string, stepTable: DataTable) => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const spaceIds = []
+    for (const { name: space } of stepTable.hashes()) {
+      spaceIds.push(spacesObject.getUUID({ key: space }))
+      await spacesObject.select({ key: space })
+    }
+    await spacesObject.changeQuota({
+      spaceIds,
+      value,
+      context: 'batch-actions'
+    })
+  }
+)
+
+When(
+  /^"([^"]*)" (disables|enables|deletes) the following space(?:s)? using the batch-actions$/,
+  async ({ world }: { world: World }, stepUser: string, action: string, stepTable: DataTable) => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const spaceIds = []
+    for (const { name: space } of stepTable.hashes()) {
+      spaceIds.push(spacesObject.getUUID({ key: space }))
+      await spacesObject.select({ key: space })
+    }
+    switch (action) {
+      case 'disables':
+        await spacesObject.disable({ spaceIds, context: 'batch-actions' })
+        break
+      case 'deletes':
+        await spacesObject.delete({ spaceIds, context: 'batch-actions' })
+        break
+      case 'enables':
+        await spacesObject.enable({ spaceIds, context: 'batch-actions' })
+        break
+      default:
+        throw new Error(`'${action}' not implemented`)
+    }
+  }
+)
+
+When(
+  '{string} navigates to the users management page',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const pageObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.page.Users)
+    await pageObject.navigate()
+  }
+)
+
+When(
+  /^"([^"]*)" (allows|forbids) the login for the following user "([^"]*)" using the sidebar panel$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    action: string,
+    key: string
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+
+    switch (action) {
+      case 'allows':
+        await usersObject.allowLogin({ key, action: 'context-menu' })
+        break
+      case 'forbids':
+        await usersObject.forbidLogin({ key, action: 'context-menu' })
+        break
+      default:
+        throw new Error(`${action} not implemented`)
+    }
+  }
+)
+
+When(
+  '{string} changes the quota of the user {string} to {string} using the sidebar panel',
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    key: string,
+    value: string
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    await usersObject.changeQuota({ key, value, action: 'context-menu' })
+  }
+)
+
+When(
+  '{string} changes the quota to {string} for users using the batch action',
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    value: string,
+    stepTable: DataTable
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const users = []
+    for (const { id: user } of stepTable.hashes()) {
+      users.push(user)
+      await usersObject.selectUser({ key: user })
+    }
+    await usersObject.changeQuotaUsingBatchAction({ value, users })
+  }
+)
+
+Then(
+  /^"([^"]*)" (should|should not) see the following user(?:s)?$/,
+  async ({ world }: { world: World }, stepUser: string, action: string, stepTable: DataTable) => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const users = await usersObject.getDisplayedUsers()
+    for (const { user } of stepTable.hashes()) {
+      switch (action) {
+        case 'should':
+          expect(users).toContain(usersObject.getUUID({ key: user }))
+          break
+        case 'should not':
+          expect(users).not.toContain(usersObject.getUUID({ key: user }))
+          break
+        default:
+          throw new Error(`'${action}' not implemented`)
+      }
+    }
+  }
+)
+
+When(
+  '{string} sets the following filter(s)',
+  async ({ world }: { world: World }, stepUser: string, stepTable: DataTable): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+
+    for (const { filter, values } of stepTable.hashes()) {
+      let cleanedValues: string[]
+
+      if (filter === 'groups') {
+        cleanedValues = values
+          .split(',')
+          .map(
+            (groupKey) =>
+              world.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+          )
+      } else {
+        cleanedValues = values.split(',').map((val) => val.trim())
+      }
+      await usersObject.filter({ filter, values: cleanedValues })
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" (adds|removes) the following users (?:to|from) the groups "([^"]*)" using the batch actions$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    action: string,
+    groups: string,
+    stepTable: DataTable
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const userIds = []
+
+    for (const { user } of stepTable.hashes()) {
+      userIds.push(usersObject.getUUID({ key: user }))
+      await usersObject.select({ key: user })
+    }
+
+    const formattedGroups = groups
+      .split(',')
+      .map(
+        (groupKey) => world.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+      )
+
+    switch (action) {
+      case 'adds':
+        await usersObject.addToGroupsBatchAtion({ userIds, groups: formattedGroups })
+        break
+      case 'removes':
+        await usersObject.removeFromGroupsBatchAtion({ userIds, groups: formattedGroups })
+        break
+      default:
+        throw new Error(`'${action}' not implemented`)
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" clears the selection$/,
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    await usersObject.clearSelection()
+  }
+)
+
+When(
+  /^"([^"]*)" changes (userName|displayName|email|password|role) to "([^"]*)" for user "([^"]*)" using the sidebar panel$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    attribute: string,
+    value: string,
+    user: string
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+
+    await usersObject.changeUser({
+      key: user,
+      attribute: attribute,
+      value: value,
+      action: 'context-menu'
+    })
+  }
+)
+
+When(
+  /^"([^"]*)" (adds|removes) the user "([^"]*)" (?:to|from) the group(?:s)? "([^"]*)" using the sidebar panel$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    action: string,
+    user: string,
+    groups: string
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const formattedGroups = groups
+      .split(',')
+      .map(
+        (groupKey) => world.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+      )
+
+    switch (action) {
+      case 'adds':
+        await usersObject.addToGroups({
+          key: user,
+          groups: formattedGroups,
+          action: 'context-menu'
+        })
+        break
+      case 'removes':
+        await usersObject.removeFromGroups({
+          key: user,
+          groups: formattedGroups,
+          action: 'context-menu'
+        })
+        break
+      default:
+        throw new Error(`'${action}' not implemented`)
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" deletes the following (?:user|users) using the (batch actions|context menu)$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    actionType: string,
+    stepTable: DataTable
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const userIds = []
+    switch (actionType) {
+      case 'batch actions':
+        for (const { id: user } of stepTable.hashes()) {
+          userIds.push(usersObject.getUUID({ key: user }))
+          await usersObject.selectUser({ key: user })
+        }
+        await usersObject.deleteUserUsingBatchAction({ userIds })
+        break
+      case 'context menu':
+        for (const { user } of stepTable.hashes()) {
+          await usersObject.deleteUserUsingContextMenu({ key: user })
+        }
+        break
+      default:
+        throw new Error(`'${actionType}' not implemented`)
+    }
+  }
+)
+
+When(
+  '{string} navigates to the groups management page',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const groupsObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.Groups
+    )
+    await groupsObject.navigate()
+  }
+)
+
+When(
+  '{string} creates the following group(s)',
+  async ({ world }: { world: World }, stepUser: string, stepTable: DataTable): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+
+    for (const info of stepTable.hashes()) {
+      await groupsObject.createGroup({ key: info.id })
+    }
+  }
+)
+
+When(
+  '{string} changes {word} to {string} for group {string} using the sidebar panel',
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    attribute: string,
+    value: string,
+    user: string
+  ): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+
+    await groupsObject.changeGroup({
+      key: user,
+      attribute: attribute,
+      value: value,
+      action: 'context-menu'
+    })
+  }
+)
+
+Then(
+  /^"([^"]*)" (should|should not) see the following group(?:s)?$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    action: string,
+    stepTable: DataTable
+  ): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+    const groups = await groupsObject.getDisplayedGroups()
+
+    for (const { group } of stepTable.hashes()) {
+      switch (action) {
+        case 'should':
+          expect(groups).toContain(groupsObject.getUUID({ key: group }))
+          break
+        case 'should not':
+          expect(groups).not.toContain(groupsObject.getUUID({ key: group }))
+          break
+        default:
+          throw new Error(`${action} not implemented`)
+      }
+    }
+  }
+)
+
+When(
+  '{string} creates the following user(s)',
+  async ({ world }: { world: World }, stepUser: string, stepTable: DataTable): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    for (const info of stepTable.hashes()) {
+      await usersObject.createUser({
+        name: info.name,
+        displayname: info.displayname,
+        email: info.email,
+        password: info.password
+      })
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" deletes the following group(?:s)? using the (batch actions|context menu)$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    actionType: string,
+    stepTable: DataTable
+  ): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+    const groupIds = []
+
+    switch (actionType) {
+      case 'batch actions':
+        for (const { group } of stepTable.hashes()) {
+          groupIds.push(groupsObject.getUUID({ key: group }))
+          await groupsObject.selectGroup({ key: group })
+        }
+        await groupsObject.deleteGroupUsingBatchAction({ groupIds })
+        break
+      case 'context menu':
+        for (const { group } of stepTable.hashes()) {
+          await groupsObject.deleteGroupUsingContextMenu({ key: group })
+        }
+        break
+      default:
+        throw new Error(`'${actionType}' not implemented`)
+    }
+  }
+)
+
+When(
+  /^"([^"]*)" opens the edit panel of user "([^"]*)" using the (quick action|context menu)$/,
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    actionUser: string,
+    action: string
+  ): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    await usersObject.openEditPanel({ key: actionUser, action: action.replace(' ', '-') })
+  }
+)
+
+When(
+  '{string} opens the edit panel of group {string} using the context menu',
+  async ({ world }: { world: World }, stepUser: string, group: string): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+    await groupsObject.openEditPanel({ key: group, action: 'context-menu' })
+  }
+)
+
+Then(
+  '{string} should see the edit panel',
+  async ({ world }: { world: World }, stepUser: string) => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    await usersObject.waitForEditPanelToBeVisible()
+  }
+)
+
+When(
+  '{string} lists the members of project space {string} using a sidebar panel',
+  async ({ world }: { world: World }, stepUser: string, key: string): Promise<void> => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    await spacesObject.openPanel({ key })
+    await spacesObject.openActionSideBarPanel({ action: 'space-share' })
+  }
+)
+
+Then(
+  '{string} should see the following users in the sidebar panel of spaces admin settings',
+  async ({ world }: { world: World }, stepUser: string, stepTable: DataTable): Promise<void> => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    const actualMemberList = {
+      manager: await spacesObject.listMembers({ filter: 'Can manage' }),
+      viewer: await spacesObject.listMembers({ filter: 'Can view' }),
+      editor: await spacesObject.listMembers({ filter: 'Can edit' })
+    }
+    for (const info of stepTable.hashes()) {
+      const shareRole = shareRoles[info.role as keyof typeof shareRoles]
+      expect(actualMemberList[shareRole as keyof typeof actualMemberList]).toContain(info.user)
+    }
+  }
+)
+
+When(
+  '{string} selects the user {string}',
+  async ({ world }: { world: World }, stepUser: string, value: string): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    await usersObject.selectUser({ key: value })
+  }
+)
+
+When(
+  '{string} selects the group {string}',
+  async ({ world }: { world: World }, stepUser: string, value: string): Promise<void> => {
+    const groupsObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Groups)
+    await groupsObject.selectGroup({ key: value })
+  }
+)
+
+When(
+  '{string} selects the space {string}',
+  async ({ world }: { world: World }, stepUser: string, value: string): Promise<void> => {
+    const spacesObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Spaces)
+    await spacesObject.select({ key: value })
+  }
+)
+
+Then(
+  '{string} sees profile photo of the user {string}',
+  async ({ world }: { world: World }, stepUser: string, key: string): Promise<void> => {
+    const usersObject = pageObjectFor(world, stepUser, objects.applicationAdminSettings.Users)
+    const userProfilePicture = usersObject.getUserProfilePicture({ key })
+    await expect(userProfilePicture).toHaveAttribute('src', /.+/)
+  }
+)
+
+When(
+  '{string} navigates to the general management page',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.navigate()
+  }
+)
+
+When(
+  '{string} saves an announcement banner with text {string} and details {string}',
+  async (
+    { world }: { world: World },
+    stepUser: string,
+    bannerText: string,
+    details: string
+  ): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.saveAnnouncementBanner({ bannerText, details })
+  }
+)
+
+When(
+  '{string} enables the announcement banner',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.setShowBanner({ enabled: true })
+  }
+)
+
+When(
+  '{string} disables the announcement banner',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.setShowBanner({ enabled: false })
+  }
+)
+
+Then(
+  '{string} should see the announcement banner {string}',
+  async ({ world }: { world: World }, stepUser: string, text: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await expect(generalObject.getAnnouncementBanner()).toContainText(text)
+  }
+)
+
+Then(
+  '{string} should not see the announcement banner',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await expect(generalObject.getAnnouncementBanner()).toBeHidden()
+  }
+)
+
+When(
+  '{string} opens the announcement banner details',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.openAnnouncementBannerDetails()
+  }
+)
+
+Then(
+  '{string} should see {string} in the announcement details',
+  async ({ world }: { world: World }, stepUser: string, text: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.expectAnnouncementBannerDetails({ text })
+  }
+)
+
+When(
+  '{string} closes the announcement banner details',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.closeAnnouncementBannerDetails()
+  }
+)
+
+When(
+  '{string} dismisses the announcement banner',
+  async ({ world }: { world: World }, stepUser: string): Promise<void> => {
+    const generalObject = pageObjectFor(
+      world,
+      stepUser,
+      objects.applicationAdminSettings.page.General
+    )
+    await generalObject.dismissAnnouncementBanner()
+  }
+)

@@ -1,0 +1,208 @@
+import { computed } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { Drive } from '@opencloud-eu/web-client/graph/generated'
+import { SpaceResource, isProjectSpaceResource } from '@opencloud-eu/web-client'
+import {
+  SpaceAction,
+  SpaceActionOptions,
+  isLocationSpacesActive,
+  isPromiseRejected,
+  resolveFileNameDuplicate,
+  useAbility,
+  useClientService,
+  useConfigStore,
+  useLoadingService,
+  useMessages,
+  useResourcesStore,
+  useRouter,
+  useSharesStore,
+  useSpacesStore
+} from '@opencloud-eu/web-pkg'
+import PQueue from 'p-queue'
+
+export const useSpaceActionsDuplicate = () => {
+  const configStore = useConfigStore()
+  const spacesStore = useSpacesStore()
+  const sharesStore = useSharesStore()
+  const { showMessage, showErrorMessage } = useMessages()
+  const router = useRouter()
+  const { $gettext, $ngettext } = useGettext()
+  const ability = useAbility()
+  const clientService = useClientService()
+  const loadingService = useLoadingService()
+  const { upsertResource } = useResourcesStore()
+
+  const duplicateSpace = async (existingSpace: SpaceResource) => {
+    const projectSpaces = spacesStore.spaces.filter(isProjectSpaceResource)
+    const duplicatedSpaceName = resolveFileNameDuplicate(existingSpace.name, '', projectSpaces)
+    let duplicatedSpace: SpaceResource
+    const errors: Error[] = []
+
+    try {
+      const existingSpaceFiles = await clientService.webdav.listFiles(existingSpace)
+
+      duplicatedSpace = await clientService.graphAuthenticated.drives.createDrive({
+        name: duplicatedSpaceName,
+        description: existingSpace.description,
+        quota: { total: existingSpace.spaceQuota.total }
+      })
+
+      if (existingSpaceFiles.children.length) {
+        const queue = new PQueue({
+          concurrency: configStore.options.concurrentRequests.resourceBatchActions
+        })
+        const copyOps = []
+
+        for (const file of existingSpaceFiles.children) {
+          copyOps.push(
+            queue.add(() =>
+              clientService.webdav.copyFiles(existingSpace, file, duplicatedSpace, {
+                path: file.name
+              })
+            )
+          )
+        }
+        const results = await Promise.allSettled(copyOps)
+        errors.push(...results.filter(isPromiseRejected).map(({ reason }) => reason))
+      }
+
+      if (existingSpace.spaceReadmeData || existingSpace.spaceImageData) {
+        const specialRequestData = {
+          special: []
+        } as Drive
+
+        if (existingSpace.spaceReadmeData) {
+          const newSpaceReadmeFile = await clientService.webdav.getFileInfo(duplicatedSpace, {
+            path: `.space/${existingSpace.spaceReadmeData.name}`
+          })
+          specialRequestData.special.push({
+            specialFolder: {
+              name: 'readme'
+            },
+            id: newSpaceReadmeFile.id
+          })
+        }
+
+        if (existingSpace.spaceImageData) {
+          const newSpaceImageFile = await clientService.webdav.getFileInfo(duplicatedSpace, {
+            path: `.space/${existingSpace.spaceImageData.name}`
+          })
+          specialRequestData.special.push({
+            specialFolder: {
+              name: 'image'
+            },
+            id: newSpaceImageFile.id
+          })
+        }
+
+        duplicatedSpace = await clientService.graphAuthenticated.drives.updateDrive(
+          duplicatedSpace.id,
+          specialRequestData,
+          sharesStore.graphRoles
+        )
+      }
+    } catch (error) {
+      console.error(error)
+      errors.push(error)
+    }
+
+    if (duplicatedSpace) {
+      spacesStore.upsertSpace(duplicatedSpace)
+      if (isLocationSpacesActive(router, 'files-spaces-projects')) {
+        upsertResource(duplicatedSpace)
+      }
+    }
+
+    if (!errors.length) {
+      showMessage({
+        title: $gettext('Space »%{space}« was duplicated successfully', {
+          space: existingSpace.name
+        })
+      })
+      return
+    }
+
+    if (!duplicatedSpace) {
+      showErrorMessage({
+        title: $gettext('Failed to duplicate space »%{space}«', { space: existingSpace.name }),
+        errors
+      })
+      return
+    }
+
+    showErrorMessage({
+      title: $gettext('Space »%{space}« was created, but could not be duplicated completely', {
+        space: duplicatedSpace.name
+      }),
+      errors
+    })
+  }
+
+  // the files of a space can only be copied if the user is a member of it
+  function isMemberSpace(space: SpaceResource) {
+    return spacesStore.spaces.some(({ id }) => id === space.id)
+  }
+
+  const handler = async ({ resources }: SpaceActionOptions) => {
+    const skippedSpaces: SpaceResource[] = []
+    for (const resource of resources) {
+      if (resource.disabled || !isProjectSpaceResource(resource)) {
+        continue
+      }
+      if (!isMemberSpace(resource)) {
+        skippedSpaces.push(resource)
+        continue
+      }
+      await duplicateSpace(resource)
+    }
+
+    if (skippedSpaces.length) {
+      showErrorMessage({
+        title: $ngettext(
+          'Space »%{space}« could not be duplicated because you are not a member',
+          '%{count} spaces could not be duplicated because you are not a member',
+          skippedSpaces.length,
+          { space: skippedSpaces[0].name, count: skippedSpaces.length.toString() }
+        )
+      })
+    }
+  }
+
+  const actions = computed((): SpaceAction[] => [
+    {
+      name: 'duplicate',
+      icon: 'folders',
+      label: () => $gettext('Duplicate'),
+      handler: (args) => loadingService.addTask(() => handler(args)),
+      isVisible: ({ resources }) => {
+        if (!resources?.length) {
+          return false
+        }
+
+        if (resources.every((resource) => resource.disabled)) {
+          return false
+        }
+
+        if (resources.some((resource) => !isProjectSpaceResource(resource))) {
+          return false
+        }
+
+        if (resources.some((resource) => resource.isInVault)) {
+          return false
+        }
+
+        if (!resources.some(isMemberSpace)) {
+          return false
+        }
+
+        return ability.can('create-all', 'Drive')
+      },
+      class: 'oc-files-actions-duplicate-trigger'
+    }
+  ])
+
+  return {
+    actions,
+    duplicateSpace
+  }
+}

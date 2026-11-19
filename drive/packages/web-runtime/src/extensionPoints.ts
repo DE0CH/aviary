@@ -1,0 +1,70 @@
+import {
+  AccountExtension,
+  AppMenuItemExtension,
+  CustomComponentExtension,
+  Extension,
+  ExtensionPoint,
+  $gettext
+} from '@opencloud-eu/web-pkg'
+import { computed } from 'vue'
+
+export const appMenuExtensionPoint: ExtensionPoint<AppMenuItemExtension> = {
+  id: 'app.runtime.header.app-menu',
+  extensionType: 'appMenuItem',
+  multiple: true
+}
+
+export const preferencesPanelExtensionPoint: ExtensionPoint<AccountExtension> = {
+  id: 'app.runtime.preferences.panels',
+  extensionType: 'accountExtension',
+  multiple: true
+}
+
+export const progressBarExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.global-progress-bar',
+  extensionType: 'customComponent',
+  multiple: false,
+  defaultExtensionId: 'com.github.opencloud-eu.web.runtime.default-progress-bar',
+  userPreference: {
+    label: $gettext('Global progress bar'),
+    description: $gettext('Customize your progress bar')
+  }
+}
+
+export const snackbarExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.snackbars',
+  extensionType: 'customComponent',
+  multiple: true
+}
+
+export const topBarCenterExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.header.center',
+  extensionType: 'customComponent',
+  multiple: true
+}
+
+export const topBarLeftExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.header.left',
+  extensionType: 'customComponent',
+  multiple: true
+}
+
+export const topBarRightExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.header.right',
+  extensionType: 'customComponent',
+  multiple: true
+}
+
+export const extensionPoints = () => {
+  return computed<ExtensionPoint<Extension>[]>(() => {
+    return [
+      appMenuExtensionPoint,
+      preferencesPanelExtensionPoint,
+      progressBarExtensionPoint,
+      snackbarExtensionPoint,
+      topBarCenterExtensionPoint,
+      topBarLeftExtensionPoint,
+      topBarRightExtensionPoint
+    ]
+  })
+}

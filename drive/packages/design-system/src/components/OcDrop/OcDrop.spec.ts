@@ -1,0 +1,258 @@
+import { defaultPlugins, mount, shallowMount } from '@opencloud-eu/web-test-helpers'
+import Drop from './OcDrop.vue'
+import { computed, nextTick } from 'vue'
+import { useIsMobile } from '../../composables'
+import { computePosition, ComputePositionReturn } from '@floating-ui/dom'
+import { flushPromises } from '@vue/test-utils'
+
+vi.mock('../../composables/useIsMobile')
+vi.mock('@floating-ui/dom', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  computePosition: vi.fn(() => ({}))
+}))
+
+const dom = ({
+  position = 'auto',
+  mode = 'click',
+  paddingSize = 'medium',
+  enforceDropOnMobile = false,
+  popupType = undefined
+} = {}) => {
+  document.body.innerHTML = ''
+  const wrapper = mount(
+    {
+      template:
+        '<div><p id="trigger">trigger</p><oc-drop :position="position" :mode="mode" :padding-size="paddingSize" :enforce-drop-on-mobile="enforceDropOnMobile" :popup-type="popupType" toggle="#trigger">show</oc-drop></div>',
+      components: { 'oc-drop': Drop }
+    },
+    {
+      global: { plugins: defaultPlugins(), stubs: { OcMobileDrop: true } },
+      attachTo: document.body,
+      data: () => ({ position, mode, paddingSize, enforceDropOnMobile, popupType })
+    }
+  )
+
+  return { wrapper }
+}
+
+describe('OcDrop', () => {
+  beforeEach(() => {
+    vi.mocked(useIsMobile).mockImplementation(() => ({
+      isMobile: computed(() => false),
+      isTablet: computed(() => false)
+    }))
+  })
+
+  it('handles dropId prop', async () => {
+    for (let i = 0; i < 5; i++) {
+      const wrapper = shallowMount(Drop, { global: { stubs: { teleport: false } } })
+      wrapper.vm.show()
+      await nextTick()
+      expect(wrapper.find('div').attributes().id).toBe(`oc-drop-${i + 1}`)
+    }
+
+    for (let i = 0; i < 5; i++) {
+      const id = `custom-drop-id-${i}`
+      const wrapper = shallowMount(Drop, {
+        props: { dropId: id },
+        global: { stubs: { teleport: false } }
+      })
+      wrapper.vm.show()
+      await nextTick()
+      expect(wrapper.find('div').attributes().id).toBe(id)
+    }
+  })
+
+  it.each([
+    [undefined, 'true'],
+    ['listbox', 'listbox']
+  ])('sets aria-haspopup on the toggle for popup type %s', async (popupType, expected) => {
+    const { wrapper } = dom({ popupType })
+    await nextTick()
+    expect(wrapper.find('#trigger').attributes('aria-haspopup')).toBe(expected)
+  })
+
+  describe('floating UI', () => {
+    it('applies the calculated position values for the drop', async () => {
+      vi.useFakeTimers()
+      vi.mocked(computePosition).mockResolvedValue({ x: 2, y: 3 } as ComputePositionReturn)
+      const { wrapper } = dom()
+      const drop = wrapper.findComponent({ name: 'oc-drop' })
+      drop.vm.show()
+      await nextTick()
+      expect(wrapper.find('.oc-card').exists()).toBeTruthy()
+      vi.runAllTimers()
+      await flushPromises()
+      expect(wrapper.find('.oc-drop').attributes('style')).toContain('left: 2px;')
+      expect(wrapper.find('.oc-drop').attributes('style')).toContain('top: 3px;')
+    })
+    describe('mode', () => {
+      it('registers a click handler on the anchor in click mode', async () => {
+        vi.useFakeTimers()
+        vi.mocked(computePosition).mockResolvedValue({ x: 0, y: 0 } as ComputePositionReturn)
+        const { wrapper } = dom({ mode: 'click' })
+        await wrapper.find('#trigger').trigger('click')
+        vi.runAllTimers()
+        await flushPromises()
+        expect(wrapper.find('.oc-drop').exists()).toBeTruthy()
+      })
+      it('registers a mouseenter and /-leave handlers on the anchor in hover mode', async () => {
+        vi.useFakeTimers()
+        vi.mocked(computePosition).mockResolvedValue({ x: 0, y: 0 } as ComputePositionReturn)
+        const { wrapper } = dom({ mode: 'hover' })
+        const trigger = wrapper.find('#trigger')
+
+        await trigger.trigger('mouseenter')
+        vi.runAllTimers()
+        await flushPromises()
+        expect(wrapper.find('.oc-drop').exists()).toBeTruthy()
+
+        await trigger.trigger('mouseleave')
+        vi.runAllTimers()
+        await flushPromises()
+        expect(wrapper.find('.oc-drop').exists()).toBeFalsy()
+      })
+      it('does not register any event handler on the anchor in manual mode', async () => {
+        vi.useFakeTimers()
+        vi.mocked(computePosition).mockResolvedValue({ x: 0, y: 0 } as ComputePositionReturn)
+        const { wrapper } = dom({ mode: 'manual' })
+        await wrapper.find('#trigger').trigger('click')
+        vi.runAllTimers()
+        await flushPromises()
+        expect(wrapper.find('.oc-drop').exists()).toBeFalsy()
+      })
+    })
+
+    it('does not throw when the drop gets hidden while updating its position', async () => {
+      vi.useFakeTimers()
+      vi.mocked(computePosition).mockResolvedValue({ x: 0, y: 0 } as ComputePositionReturn)
+      const wrapper = mount(Drop, {
+        props: { mode: 'manual' },
+        global: { plugins: defaultPlugins(), stubs: { teleport: false } },
+        attachTo: document.body
+      })
+      const anchorElement = document.createElement('div')
+      wrapper.vm.show({ anchorElement, noFocus: true })
+      vi.runAllTimers()
+      await flushPromises()
+
+      let resolvePosition: (value: ComputePositionReturn) => void
+      vi.mocked(computePosition).mockReturnValueOnce(
+        new Promise((resolve) => (resolvePosition = resolve))
+      )
+      const update = wrapper.vm.update({ anchorElement })
+      wrapper.vm.hide()
+      vi.runAllTimers()
+      await flushPromises()
+      resolvePosition({ x: 1, y: 1 } as ComputePositionReturn)
+
+      await expect(update).resolves.toBeUndefined()
+
+      wrapper.unmount()
+      vi.useRealTimers()
+    })
+
+    it('does not close when clicking the context of a virtual anchor', async () => {
+      vi.useFakeTimers()
+      vi.mocked(computePosition).mockResolvedValue({ x: 0, y: 0 } as ComputePositionReturn)
+      const onHideDrop = vi.fn()
+      const anchorContext = document.createElement('div')
+      const outside = document.createElement('div')
+      document.body.append(anchorContext, outside)
+      const wrapper = mount(Drop, {
+        props: { mode: 'manual', onHideDrop },
+        global: { plugins: defaultPlugins(), stubs: { teleport: false } },
+        attachTo: document.body
+      })
+
+      wrapper.vm.show({
+        anchorElement: {
+          getBoundingClientRect: () => new DOMRect(),
+          contextElement: anchorContext
+        },
+        noFocus: true
+      })
+      vi.runAllTimers()
+      await flushPromises()
+
+      anchorContext.click()
+      vi.runAllTimers()
+      await flushPromises()
+      expect(onHideDrop).not.toHaveBeenCalled()
+
+      outside.click()
+      vi.runAllTimers()
+      await flushPromises()
+      expect(onHideDrop).toHaveBeenCalledTimes(1)
+
+      wrapper.unmount()
+      anchorContext.remove()
+      outside.remove()
+      vi.useRealTimers()
+    })
+  })
+
+  it('hands focus back to the toggle when the drop closes', async () => {
+    document.body.innerHTML = ''
+    const wrapper = mount(
+      {
+        template:
+          '<div><button id="trigger">trigger</button><oc-drop toggle="#trigger" mode="click" close-on-click><button id="item">item</button></oc-drop></div>',
+        components: { 'oc-drop': Drop }
+      },
+      {
+        global: { plugins: defaultPlugins(), stubs: { OcMobileDrop: true } },
+        attachTo: document.body
+      }
+    )
+
+    const trigger = document.querySelector<HTMLElement>('#trigger')
+    trigger.click()
+    await flushPromises()
+
+    const item = document.querySelector<HTMLElement>('#item')
+    item.focus()
+    item.click()
+    await flushPromises()
+
+    expect(document.activeElement).toBe(trigger)
+
+    wrapper.unmount()
+  })
+
+  describe('Component "OcMobileDrop"', () => {
+    it('renders on mobile device', async () => {
+      vi.mocked(useIsMobile).mockImplementation(() => ({
+        isMobile: computed(() => true),
+        isTablet: computed(() => false)
+      }))
+
+      const { wrapper } = dom()
+      await nextTick()
+      expect(wrapper.find('oc-mobile-drop-stub').exists()).toBeTruthy()
+    })
+    it('does not render on mobile device when "enforceDropOnMobile" is true', async () => {
+      vi.mocked(useIsMobile).mockImplementation(() => ({
+        isMobile: computed(() => true),
+        isTablet: computed(() => false)
+      }))
+
+      const { wrapper } = dom({ enforceDropOnMobile: true })
+      await nextTick()
+      expect(wrapper.find('oc-mobile-drop-stub').exists()).toBeFalsy()
+    })
+    it('renders on mobile device without a toggle selector', async () => {
+      vi.mocked(useIsMobile).mockImplementation(() => ({
+        isMobile: computed(() => true),
+        isTablet: computed(() => false)
+      }))
+
+      const wrapper = shallowMount(Drop, {
+        props: { mode: 'manual' },
+        global: { plugins: defaultPlugins(), stubs: { OcMobileDrop: true } }
+      })
+      await nextTick()
+      expect(wrapper.find('oc-mobile-drop-stub').exists()).toBeTruthy()
+    })
+  })
+})

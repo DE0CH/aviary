@@ -1,0 +1,45 @@
+Feature: Mobile device test
+
+  Scenario: create and view resources on mobile devices
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+    And "Admin" creates following group using API
+      | id    |
+      | sales |
+    And "Admin" assigns following role to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+
+    When "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" uploads the following resources
+      | resource       | type   |
+      | PARENT         | folder |
+      | simple.pdf     | file   |
+      | testavatar.png | file   |
+    And "Alice" creates the following resources
+      | resource        | type     | content   |
+      | my-folder       | folder   |           |
+      | textFile.ocnote | noteFile | some text |
+    When "Alice" opens the following file in pdfviewer
+      | resource   |
+      | simple.pdf |
+    Then "Alice" is in a pdf-viewer
+    And "Alice" downloads the following resource using the preview topbar
+      | resource   | type |
+      | simple.pdf | file |
+    And "Alice" closes the file viewer
+    When "Alice" opens the following file in mediaviewer
+      | resource       |
+      | testavatar.png |
+    Then "Alice" is in a media-viewer
+    And "Alice" downloads the following resource using the preview topbar
+      | resource       | type |
+      | testavatar.png | file |
+    And "Alice" closes the file viewer
+    And "Alice" sees the resources displayed as "tiles"
+    And "Alice" switches to the "table" view
+    And "Alice" sees the resources displayed as "table"
+    And "Alice" logs out

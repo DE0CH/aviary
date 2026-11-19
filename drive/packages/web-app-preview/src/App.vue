@@ -1,0 +1,561 @@
+<template>
+  <div v-if="isFolderLoading" class="w-full">
+    <div class="absolute top-[50%] left-[50%]">
+      <oc-spinner :aria-label="$gettext('Loading media file')" size="xlarge" />
+    </div>
+  </div>
+  <div v-else-if="isFileNotFound" class="size-full flex flex-col items-center justify-center">
+    <oc-icon name="file-damage" size-class="size-12" color="var(--oc-role-error)" />
+    <p>{{ $gettext('Failed to load "%{filename}"', { filename: requestedFileName }) }}</p>
+  </div>
+  <div
+    v-else
+    ref="preview"
+    class="!flex size-full"
+    tabindex="-1"
+    @keydown.left="onArrowKey($event, goToPrev)"
+    @keydown.right="onArrowKey($event, goToNext)"
+    @keydown.down="onArrowKey($event, goToNext)"
+    @keydown.up="onArrowKey($event, goToPrev)"
+  >
+    <photo-roll
+      v-if="photoRollEnabled"
+      class="bg-role-surface-container w-1/5 hidden md:block"
+      :items="mediaFiles"
+      :active-index="activeIndex"
+      @select="onSelectPhotoRollItem"
+    />
+    <div
+      class="stage size-full flex flex-col text-center"
+      :class="{ lightbox: isFullScreenModeActivated }"
+    >
+      <div
+        ref="stageMedia"
+        class="stage_media @container-size size-full flex justify-center items-center grow overflow-hidden"
+      >
+        <div v-if="!activeMediaFile || activeMediaFile.isLoading" class="w-full">
+          <div class="absolute top-[50%] left-[50%]">
+            <oc-spinner :aria-label="$gettext('Loading media file')" size="xlarge" />
+          </div>
+        </div>
+        <div
+          v-else-if="activeMediaFile.isError"
+          class="w-full flex flex-col items-center justify-center"
+        >
+          <oc-icon name="file-damage" size-class="size-12" color="var(--oc-role-error)" />
+          <p v-if="activeMediaFile.isUnsupported" data-testid="media-unsupported-message">
+            {{
+              $gettext('"%{filename}" cannot be displayed in this browser', {
+                filename: activeMediaFile.name
+              })
+            }}
+          </p>
+          <p v-else>
+            {{ $gettext('Failed to load "%{filename}"', { filename: activeMediaFile.name }) }}
+          </p>
+        </div>
+        <media-motion-photo
+          v-else-if="activeMediaFile.isMotionOrLivePhoto"
+          ref="motionPlayer"
+          :key="activeMediaFile.id"
+          :file="activeMediaFile"
+          :current-image-rotation="currentImageRotation"
+          @error="onMediaError(activeMediaFile)"
+        />
+        <media-image
+          v-else-if="activeMediaFile.isImage"
+          ref="imageViewer"
+          :file="activeMediaFile"
+          :current-image-rotation="currentImageRotation"
+          @error="onMediaError(activeMediaFile)"
+        />
+        <media-video
+          v-else-if="activeMediaFile.isVideo"
+          :file="activeMediaFile"
+          :is-auto-play-enabled="isAutoPlayEnabled"
+          @reload-url="reloadMediaFileUrl(activeMediaFile)"
+          @error="onMediaError(activeMediaFile)"
+        />
+        <media-audio
+          v-else-if="activeMediaFile.isAudio"
+          :file="activeMediaFile"
+          :is-auto-play-enabled="isAutoPlayEnabled"
+          @ended="onAudioEnded"
+          @error="onMediaError(activeMediaFile)"
+        />
+      </div>
+      <media-controls
+        class="stage_controls mx-auto my-4 h-auto"
+        :files="mediaFiles"
+        :active-index="activeIndex"
+        :is-full-screen-mode-activated="isFullScreenModeActivated"
+        :is-folder-loading="isFolderLoading"
+        :show-image-controls="activeMediaFile?.isImage && !activeMediaFile?.isError"
+        :show-motion-control="activeMediaFile?.isMotionOrLivePhoto && !activeMediaFile?.isError"
+        :is-motion-playing="motionPlayer?.isPlaying"
+        :current-image-rotation="currentImageRotation"
+        :photo-roll-enabled="photoRollEnabled"
+        @toggle-motion="motionPlayer?.toggle()"
+        @set-rotation-right="imageRotateRight"
+        @set-rotation-left="imageRotateLeft"
+        @set-zoom="imageZoom"
+        @set-shrink="imageShrink"
+        @reset-image="resetImage"
+        @toggle-full-screen="toggleFullScreenMode"
+        @toggle-previous="goToPrev"
+        @toggle-next="goToNext"
+        @delete-resource="$emit('delete:resource')"
+        @toggle-photo-roll="photoRollEnabled = !photoRollEnabled"
+      />
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  Ref,
+  unref,
+  useTemplateRef,
+  watch
+} from 'vue'
+import { IncomingShareResource, Resource } from '@opencloud-eu/web-client'
+import {
+  createFileRouteOptions,
+  determineResourceTableSortFields,
+  FolderViewerSlotProps,
+  isLocationSharesActive,
+  isMotionOrLivePhoto,
+  Key,
+  Modifier,
+  queryItemAsString,
+  sortHelper,
+  useAppNavigation,
+  useFullScreenMode,
+  useGetMatchingSpace,
+  useKeyboardActions,
+  useRoute,
+  useRouteQuery,
+  useRouter
+} from '@opencloud-eu/web-pkg'
+import MediaControls from './components/MediaControls.vue'
+import MediaAudio from './components/Sources/MediaAudio.vue'
+import MediaImage from './components/Sources/MediaImage.vue'
+import MediaMotionPhoto from './components/Sources/MediaMotionPhoto.vue'
+import MediaVideo from './components/Sources/MediaVideo.vue'
+import PhotoRoll from './components/PhotoRoll.vue'
+import { MediaFile } from './helpers/types'
+import { canOpen } from './helpers/canOpen'
+import { useFileTypes, useImageControls, useMediaFileLoader } from './composables'
+import { SortDir } from '@opencloud-eu/design-system/helpers'
+import { useSwipe } from '@vueuse/core'
+
+const {
+  activeFiles,
+  currentFileContext,
+  loadFolderForFileContext,
+  getUrlForResource,
+  revokeUrl,
+  isFolderLoading
+} = defineProps<FolderViewerSlotProps>()
+
+const emit = defineEmits<{
+  (e: 'update:resource', resource: Resource): void
+  (e: 'delete:resource'): void
+  (e: 'register:onDeleteResourceCallback', callback: () => Promise<void>): void
+}>()
+
+const router = useRouter()
+const route = useRoute()
+const contextRouteQuery = useRouteQuery('contextRouteQuery') as unknown as Ref<
+  Record<string, string>
+>
+
+const { isFileTypeAudio, isFileTypeImage, isFileTypeVideo } = useFileTypes()
+const { getMatchingSpace } = useGetMatchingSpace()
+const { closeApp } = useAppNavigation({ router, currentFileContext })
+const { bindKeyAction, removeKeyAction } = useKeyboardActions()
+const {
+  currentImageRotation,
+  imageShrink,
+  imageZoom,
+  imageRotateLeft,
+  imageRotateRight,
+  resetImage
+} = useImageControls()
+const { isFullScreenModeActivated, toggleFullScreenMode } = useFullScreenMode()
+
+const activeIndex = ref<number>()
+const mediaFiles = ref<MediaFile[]>([])
+const folderLoaded = ref(false)
+const isFileNotFound = ref(false)
+const isAutoPlayEnabled = ref(true)
+const isAutoAdvancing = ref(false)
+const photoRollEnabled = ref(true)
+const preview = useTemplateRef<HTMLElement>('preview')
+const motionPlayer = useTemplateRef<{
+  isPlaying: boolean
+  toggle: () => void
+  isZoomed: () => boolean
+}>('motionPlayer')
+const imageViewer = useTemplateRef<{ isZoomed: () => boolean }>('imageViewer')
+const stageMedia = useTemplateRef<HTMLElement>('stageMedia')
+const keyBindings: string[] = []
+let reloadUrlController: AbortController = null
+
+const { loadPreviewImage, cancelStaleLoads, preloadNeighbors } = useMediaFileLoader({
+  mediaFiles,
+  activeIndex,
+  getUrlForResource
+})
+
+const space = computed(() => {
+  if (!unref(activeMediaFile)) {
+    return null
+  }
+  return getMatchingSpace(unref(activeMediaFile).resource)
+})
+
+const sortBy = computed(() => {
+  if (!unref(contextRouteQuery)) {
+    return 'name'
+  }
+  return unref(contextRouteQuery)['sort-by'] ?? 'name'
+})
+const sortDir = computed<SortDir>(() => {
+  if (!unref(contextRouteQuery)) {
+    return SortDir.Asc
+  }
+  return (unref(contextRouteQuery)['sort-dir'] as SortDir) ?? SortDir.Asc
+})
+
+const fileIdQuery = useRouteQuery('fileId')
+const fileId = computed(() => queryItemAsString(unref(fileIdQuery)))
+const requestedFileName = computed(() => unref(currentFileContext?.fileName))
+
+const buildMediaFiles = () => {
+  if (!activeFiles) {
+    return
+  }
+
+  const filteredFiles = activeFiles.filter((file) => {
+    if (
+      unref(currentFileContext.routeQuery)?.['q_share-visibility'] === 'hidden' &&
+      !(file as IncomingShareResource).hidden
+    ) {
+      return false
+    }
+
+    if (
+      unref(currentFileContext.routeQuery)?.['q_share-visibility'] !== 'hidden' &&
+      (file as IncomingShareResource).hidden
+    ) {
+      return false
+    }
+
+    return canOpen(file) && file.canDownload()
+  })
+
+  const sortFields = determineResourceTableSortFields(filteredFiles[0])
+  const sortedFiles = sortHelper(filteredFiles, sortFields, unref(sortBy), unref(sortDir))
+
+  mediaFiles.value = sortedFiles.map((file) => {
+    return {
+      id: file.id,
+      name: file.name,
+      ext: file.extension,
+      mimeType: file.mimeType,
+      isVideo: isFileTypeVideo(file),
+      isImage: isFileTypeImage(file),
+      isAudio: isFileTypeAudio(file),
+      isMotionOrLivePhoto: isMotionOrLivePhoto(file),
+      isLoading: true,
+      isError: false,
+      isUnsupported: false,
+      resource: file
+    }
+  })
+}
+
+const activeMediaFile = computed(() => {
+  return unref(mediaFiles)[unref(activeIndex)]
+})
+
+const loading = computed(() => {
+  if (isFolderLoading) {
+    return true
+  }
+  const file = unref(activeMediaFile)
+  if (!file) {
+    return true
+  }
+  return unref(file.isLoading)
+})
+
+/** Signed URLs expire, so fetch a fresh one on demand. */
+async function reloadMediaFileUrl(mediaFile: MediaFile) {
+  reloadUrlController?.abort()
+  reloadUrlController = new AbortController()
+  const { signal } = reloadUrlController
+
+  try {
+    const url = await getUrlForResource(
+      getMatchingSpace(mediaFile.resource),
+      // don't pass the cached download URL to force a new signature
+      { ...mediaFile.resource, downloadURL: undefined },
+      { signal }
+    )
+
+    if (signal.aborted) {
+      revokeUrl(url)
+      return
+    }
+
+    // the same url can't load what just failed, and the player wouldn't reload it anyway
+    if (url === mediaFile.url) {
+      onMediaError(mediaFile)
+      return
+    }
+
+    revokeUrl(mediaFile.url)
+    mediaFile.url = url
+  } catch (e) {
+    if (e.name === 'CanceledError') {
+      return
+    }
+
+    console.error(e)
+    mediaFile.isError = true
+  } finally {
+    if (reloadUrlController?.signal === signal) {
+      reloadUrlController = null
+    }
+  }
+}
+
+function onMediaError(mediaFile: MediaFile) {
+  mediaFile.isError = true
+}
+
+const goToNext = () => {
+  if (unref(activeIndex) + 1 >= unref(mediaFiles).length) {
+    activeIndex.value = 0
+    updateLocalHistory()
+    return
+  }
+  activeIndex.value = unref(activeIndex) + 1
+  updateLocalHistory()
+}
+
+const goToPrev = () => {
+  if (unref(activeIndex) === 0) {
+    activeIndex.value = unref(mediaFiles).length - 1
+    updateLocalHistory()
+    return
+  }
+  activeIndex.value = unref(activeIndex) - 1
+  updateLocalHistory()
+}
+
+// the native video and audio controls and form fields need the arrow keys to seek or change values
+function onArrowKey(event: KeyboardEvent, navigate: () => void) {
+  if ((event.target as Element).closest('video[controls], audio, input, select, textarea')) {
+    return
+  }
+  navigate()
+}
+
+// a swipe goes to the next or previous file. it is ignored on the native video and audio
+// controls (their seek bars are dragged) and on zoomed images, which are panned instead
+let isSwipeIgnored = false
+useSwipe(stageMedia, {
+  onSwipeStart(event) {
+    isSwipeIgnored = !!(event.target as HTMLElement).closest('video[controls], audio')
+  },
+  onSwipeEnd(_, direction) {
+    if (isSwipeIgnored || unref(imageViewer)?.isZoomed() || unref(motionPlayer)?.isZoomed()) {
+      return
+    }
+    if (direction === 'left') {
+      goToNext()
+    }
+    if (direction === 'right') {
+      goToPrev()
+    }
+  }
+})
+
+const onAudioEnded = () => {
+  if (unref(activeIndex) + 1 >= unref(mediaFiles).length) {
+    return
+  }
+  isAutoAdvancing.value = true
+  isAutoPlayEnabled.value = true
+  goToNext()
+}
+
+// the activeFiles watcher handles deletes, registering keeps AppWrapper from closing the app
+const onDeleteResourceCallback = async () => {}
+
+const updateLocalHistory = () => {
+  // this is a rare edge case when browsing quickly through a lot of files
+  // we workaround context being null, when useDriveResolver is in loading state
+  if (!currentFileContext) {
+    return
+  }
+
+  const { params, query } = createFileRouteOptions(unref(space), unref(activeMediaFile).resource)
+  router.replace({
+    name: unref(route).name,
+    params: { ...unref(route).params, ...params },
+    query: { ...unref(route).query, ...query }
+  })
+}
+
+const setActiveFile = () => {
+  const filterAttr = isLocationSharesActive(router, 'files-shares-with-me')
+    ? 'remoteItemId'
+    : 'fileId'
+
+  // match the given file id with the filtered files to get the current index
+  const index = unref(mediaFiles).findIndex(
+    ({ resource }) => resource[filterAttr] === unref(fileId)
+  )
+  if (index !== -1 || !unref(fileId)) {
+    isFileNotFound.value = false
+    activeIndex.value = Math.max(index, 0)
+    return
+  }
+
+  // the requested file is no media file (or gone), don't show another file instead
+  activeIndex.value = undefined
+  isFileNotFound.value = true
+
+  // still show the top bar with the file name and a close button
+  const requestedFile = activeFiles?.find((file) => file[filterAttr] === unref(fileId))
+  if (requestedFile) {
+    emit('update:resource', requestedFile)
+  }
+}
+
+const onSelectPhotoRollItem = (index: number) => {
+  activeIndex.value = index
+  updateLocalHistory()
+}
+
+watch(
+  () => currentFileContext,
+  async () => {
+    if (!currentFileContext) {
+      return
+    }
+
+    if (!unref(folderLoaded)) {
+      await loadFolderForFileContext(currentFileContext)
+      folderLoaded.value = true
+    }
+
+    setActiveFile()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => activeFiles,
+  () => {
+    const activeFileId = unref(activeMediaFile)?.id
+    buildMediaFiles()
+
+    if (activeFileId === undefined) {
+      return
+    }
+
+    if (!unref(mediaFiles).length) {
+      return closeApp()
+    }
+
+    // files may have been added, removed or re-sorted, keep showing the same file
+    const index = unref(mediaFiles).findIndex(({ id }) => id === activeFileId)
+    if (index !== -1) {
+      activeIndex.value = index
+      return
+    }
+
+    // the active file is gone, show the file now at its index or wrap to the first one
+    if (unref(activeIndex) >= unref(mediaFiles).length) {
+      activeIndex.value = 0
+    }
+    updateLocalHistory()
+  },
+  { immediate: true }
+)
+
+watch(activeMediaFile, async (newValue, oldValue) => {
+  if (!newValue) {
+    return
+  }
+
+  // drop loads that are neither the active file nor one of its neighbors
+  cancelStaleLoads()
+  const load = loadPreviewImage(newValue)
+  currentImageRotation.value = 0
+
+  if (oldValue !== null) {
+    if (unref(isAutoAdvancing)) {
+      isAutoAdvancing.value = false
+    } else {
+      isAutoPlayEnabled.value = false
+    }
+  }
+
+  emit('update:resource', newValue.resource)
+
+  // preload the neighbors only once this file is in, and only if the user
+  // hasn't navigated on in the meantime
+  await load
+  if (newValue !== unref(activeMediaFile)) {
+    return
+  }
+
+  preloadNeighbors()
+})
+
+watch(
+  loading,
+  async (loading) => {
+    if (!loading) {
+      await nextTick()
+      unref(preview).focus()
+    }
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  // keep a local history for this component
+  window.addEventListener('popstate', setActiveFile)
+  emit('register:onDeleteResourceCallback', onDeleteResourceCallback)
+  keyBindings.push(
+    bindKeyAction({ modifier: Modifier.Ctrl, primary: Key.Backspace }, () =>
+      emit('delete:resource')
+    )
+  )
+  keyBindings.push(bindKeyAction({ primary: Key.Delete }, () => emit('delete:resource')))
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', setActiveFile)
+  keyBindings.forEach((keyBindingId) => {
+    removeKeyAction(keyBindingId)
+  })
+
+  reloadUrlController?.abort()
+
+  Object.values(unref(mediaFiles)).forEach((cachedFile) => {
+    revokeUrl(unref(cachedFile.url))
+  })
+})
+</script>

@@ -1,0 +1,246 @@
+import { computed, nextTick } from 'vue'
+import SpaceHeader from '../../../../src/components/Spaces/SpaceHeader.vue'
+import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
+import { SpaceResource, Resource, buildSpaceImageResource } from '@opencloud-eu/web-client'
+import { defaultPlugins, mount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
+import { mock } from 'vitest-mock-extended'
+import { GetFileContentsResponse } from '@opencloud-eu/web-client/webdav'
+import { flushPromises } from '@vue/test-utils'
+import { useLoadPreview, useSideBar, useSpacesStore } from '@opencloud-eu/web-pkg'
+import { useIsMobile } from '@opencloud-eu/design-system/composables'
+
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useFileActions: vi.fn().mockReturnValue({
+    getDefaultAction: vi.fn().mockReturnValue({ handler: vi.fn() })
+  }),
+  useLoadPreview: vi.fn(),
+  preloadTextEditor: vi.fn().mockResolvedValue(undefined),
+  TextEditorViewer: { name: 'TextEditorViewer', template: '<div />' }
+}))
+
+vi.mock('@opencloud-eu/web-client', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  buildSpaceImageResource: vi.fn()
+}))
+
+vi.mock('@opencloud-eu/design-system/composables', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@opencloud-eu/design-system/composables')>()
+  return {
+    ...actual,
+    useIsMobile: vi.fn()
+  }
+})
+
+const getSpaceMock = (spaceImageData: DriveItem = undefined) =>
+  mock<SpaceResource>({
+    id: '1',
+    name: 'space',
+    type: 'space',
+    driveType: 'project',
+    description: '',
+    spaceReadmeData: undefined,
+    canEditReadme: () => true,
+    spaceImageData
+  })
+
+describe('SpaceHeader', () => {
+  it('should add the "squashed"-class when the sidebar is opened', async () => {
+    const wrapper = getWrapper({ space: getSpaceMock(), isSideBarOpen: true })
+    await flushPromises()
+    expect(wrapper.find('.space-header-squashed').exists()).toBeTruthy()
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+  describe('space image', () => {
+    it('should show the set image', async () => {
+      const wrapper = getWrapper({ space: getSpaceMock({ webDavUrl: '/' }), imgBlob: 'blob:image' })
+      await flushPromises()
+      expect(wrapper.find('.space-header-image img').exists()).toBeTruthy()
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+    it('enlarges and shrinks the image via a named button', async () => {
+      const wrapper = getWrapper({ space: getSpaceMock({ webDavUrl: '/' }), imgBlob: 'blob:image' })
+      await flushPromises()
+      const toggle = wrapper.find('.space-header-image button')
+      expect(toggle.attributes('aria-label')).toBe('Enlarge space image')
+
+      await toggle.trigger('click')
+
+      expect(wrapper.find('.space-header-image-expanded').exists()).toBe(true)
+      expect(toggle.attributes('aria-label')).toBe('Shrink space image')
+    })
+    it('shows the image without a toggle on mobile, where it is always expanded', async () => {
+      const wrapper = getWrapper({
+        space: getSpaceMock({ webDavUrl: '/' }),
+        imgBlob: 'blob:image',
+        isMobile: true
+      })
+      await flushPromises()
+      expect(wrapper.find('.space-header-image img').exists()).toBe(true)
+      expect(wrapper.find('.space-header-image button').exists()).toBe(false)
+      expect(wrapper.find('.space-header-image [aria-label]').exists()).toBe(false)
+    })
+    it('should take full width in mobile view', () => {
+      const wrapper = getWrapper({
+        space: getSpaceMock({ webDavUrl: '/' }),
+        isMobile: true
+      })
+      expect(wrapper.find('.space-header').attributes('class')).not.toContain('flex')
+      expect(wrapper.find('.space-header-image').attributes('class')).toContain(
+        'space-header-image-expanded'
+      )
+    })
+    it('does not render the replaced image url when the image changes', async () => {
+      const space = getSpaceMock({ webDavUrl: '/', eTag: 'old' })
+      const imageSourcesAfterLoading: string[] = []
+      const loadPreview = vi.fn().mockResolvedValueOnce('blob:old')
+      const wrapper = getWrapper({ space, loadPreview })
+      await flushPromises()
+      expect(wrapper.find('.space-header-image img').attributes('src')).toBe('blob:old')
+
+      // like useLoadPreview: the loading flag is cleared before the new url is returned,
+      // while the old url has already been revoked by the preview cache
+      loadPreview.mockImplementationOnce(async () => {
+        const spacesStore = useSpacesStore()
+        spacesStore.addToImagesLoading(space.id)
+        await nextTick()
+        spacesStore.removeFromImagesLoading(space.id)
+        await nextTick()
+        const img = wrapper.find('.space-header-image img')
+        if (img.exists()) {
+          imageSourcesAfterLoading.push(img.attributes('src'))
+        }
+        return 'blob:new'
+      })
+      await wrapper.setProps({ space: getSpaceMock({ webDavUrl: '/', eTag: 'new' }) })
+      await flushPromises()
+
+      expect(loadPreview).toHaveBeenCalledTimes(2)
+      expect(imageSourcesAfterLoading).not.toContain('blob:old')
+      expect(wrapper.find('.space-header-image img').attributes('src')).toBe('blob:new')
+    })
+    it('shows a loading spinner when the image is loading', () => {
+      const space = getSpaceMock()
+      const wrapper = getWrapper({ space, imagesLoading: [space.id] })
+      expect(wrapper.find('.space-header-image .oc-spinner').exists()).toBeTruthy()
+    })
+  })
+  describe('vault space', () => {
+    it('shows the vault icon for a vault space', async () => {
+      const space = getSpaceMock()
+      space.type = 'space'
+      space.driveType = 'project'
+      space.isInVault = true
+      const wrapper = getWrapper({ space, imgBlob: null })
+      await flushPromises()
+      expect(
+        wrapper.find('svg[src="icons/resource-type-space-vault-fill.svg"]').exists()
+      ).toBeTruthy()
+    })
+    it('does not show the vault icon for a regular space', async () => {
+      const space = getSpaceMock()
+      space.type = 'space'
+      space.isInVault = false
+      const wrapper = getWrapper({ space })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="space-vault-icon"]').exists()).toBeFalsy()
+    })
+  })
+  describe('space description', () => {
+    it('should show the description', async () => {
+      const space = getSpaceMock()
+      space.spaceReadmeData = {}
+      const wrapper = getWrapper({ space })
+      await flushPromises()
+      expect(wrapper.find('.markdown-container').exists()).toBeTruthy()
+      expect(wrapper.html()).toMatchSnapshot()
+    })
+    it('gives the description viewer an accessible name', async () => {
+      const space = getSpaceMock()
+      space.spaceReadmeData = {}
+      const wrapper = getWrapper({ space })
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'TextEditorViewer' }).attributes('aria-label')).toBe(
+        'Space description'
+      )
+    })
+    it('shows a loading spinner when the description is loading', () => {
+      const space = getSpaceMock()
+      space.spaceReadmeData = {}
+      const wrapper = getWrapper({ space, readmesLoading: [space.id] })
+      expect(wrapper.find('.space-header-readme-loading').exists()).toBeTruthy()
+    })
+  })
+  describe('space member count', () => {
+    it('should show the correct amount of space members', async () => {
+      const space = getSpaceMock()
+      space.spaceReadmeData = {}
+      const wrapper = getWrapper({ space, memberCount: 5 })
+      await flushPromises()
+      expect(wrapper.find('.space-header-people-count').text()).toContain('5')
+    })
+  })
+})
+
+function getWrapper({
+  space = {} as SpaceResource,
+  isSideBarOpen = false,
+  isMobile = false,
+  imagesLoading = [],
+  readmesLoading = [],
+  memberCount = 0,
+  imgBlob,
+  loadPreview = vi.fn().mockResolvedValue(imgBlob)
+}: {
+  space?: SpaceResource
+  isSideBarOpen?: boolean
+  isMobile?: boolean
+  imagesLoading?: string[]
+  readmesLoading?: string[]
+  memberCount?: number
+  imgBlob?: string
+  loadPreview?: ReturnType<typeof useLoadPreview>['loadPreview']
+}) {
+  const mocks = defaultComponentMocks()
+  vi.mocked(useLoadPreview).mockReturnValue(
+    mock<ReturnType<typeof useLoadPreview>>({ loadPreview })
+  )
+  vi.mocked(buildSpaceImageResource).mockReturnValue(mock<Resource>())
+
+  mocks.$clientService.webdav.getFileContents.mockResolvedValue(
+    mock<GetFileContentsResponse>({ body: 'body' })
+  )
+  mocks.$clientService.webdav.getFileInfo.mockResolvedValue(mock<Resource>())
+  mocks.$clientService.graphAuthenticated.permissions.listPermissions.mockResolvedValue({
+    shares: [],
+    allowedActions: [],
+    allowedRoles: [],
+    count: memberCount
+  })
+
+  const plugins = [
+    ...defaultPlugins({ piniaOptions: { spacesState: { imagesLoading, readmesLoading } } })
+  ]
+
+  vi.mocked(useIsMobile).mockReturnValue({
+    isMobile: computed(() => isMobile),
+    isTablet: computed(() => false)
+  })
+
+  const sideBarStore = useSideBar()
+  sideBarStore.isSideBarOpen = isSideBarOpen
+
+  return mount(SpaceHeader, {
+    props: {
+      space
+    },
+    global: {
+      mocks,
+      plugins,
+      provide: { ...mocks },
+      stubs: {
+        'context-actions': true
+      }
+    }
+  })
+}

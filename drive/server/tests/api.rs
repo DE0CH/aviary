@@ -1,0 +1,425 @@
+//! The server as the page uses it: a real `yyc-drive` on a temporary folder, spoken to over HTTP.
+
+use std::{
+    fs,
+    net::TcpListener,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
+
+use reqwest::{
+    blocking::{Client, RequestBuilder, Response},
+    redirect::Policy,
+    Method, StatusCode,
+};
+
+const DRIVE: &str = "00000000-0000-4000-8000-000000000001$00000000-0000-4000-8000-000000000001";
+
+struct Server {
+    child: Child,
+    base: String,
+    root: PathBuf,
+    _dir: tempfile::TempDir,
+    http: Client,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Server {
+    /// `dev_user`: the person assumed when no header names one (None: a request without the header is refused).
+    fn start(dev_user: Option<&str>) -> Server {
+        Server::start_with(dev_user, false)
+    }
+
+    /// `flags`: the settings go on the command line instead of the environment (how the deployment starts it).
+    fn start_with(dev_user: Option<&str>, flags: bool) -> Server {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_yyc-drive"));
+        for k in ["DRIVE_ROOT", "DRIVE_NAME", "DRIVE_LISTEN", "DRIVE_DEV_USER", "DRIVE_URL", "DRIVE_USER_HEADER"] {
+            cmd.env_remove(k);
+        }
+        cmd.stderr(Stdio::null());
+        let listen = format!("127.0.0.1:{port}");
+        if flags {
+            cmd.args(["--root", root.to_str().unwrap(), "--name", "Test Drive", "--listen", &listen]);
+            if let Some(u) = dev_user {
+                cmd.args(["--dev-user", u]);
+            }
+        } else {
+            cmd.env("DRIVE_ROOT", &root).env("DRIVE_NAME", "Test Drive").env("DRIVE_LISTEN", &listen);
+            if let Some(u) = dev_user {
+                cmd.env("DRIVE_DEV_USER", u);
+            }
+        }
+        let mut child = cmd.spawn().unwrap();
+        let http = Client::builder().redirect(Policy::none()).timeout(Duration::from_secs(20)).build().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+        for _ in 0..100 {
+            if http.get(format!("{base}/healthz")).send().is_ok() {
+                return Server { child, base, root: root.canonicalize().unwrap(), _dir: dir, http };
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("the server did not start");
+    }
+
+    fn req(&self, method: &str, path: &str) -> RequestBuilder {
+        self.http.request(Method::from_bytes(method.as_bytes()).unwrap(), format!("{}{}", self.base, path))
+    }
+
+    fn dav(&self, method: &str, path: &str) -> RequestBuilder {
+        self.req(method, &format!("/dav/spaces/{DRIVE}/{path}"))
+    }
+
+    fn dest(&self, path: &str) -> String {
+        format!("{}/dav/spaces/{DRIVE}/{path}", self.base)
+    }
+}
+
+fn text(r: Response) -> String {
+    r.text().unwrap()
+}
+
+#[test]
+fn only_the_folder_is_answered_here() {
+    // the page, its settings and its sign-in are the edge's (edge/): here only the folder, for a person named
+    let s = Server::start(Some("amy@example.com"));
+    for (method, path) in [("GET", "/"), ("GET", "/index.html"), ("GET", "/config.json"), ("GET", "/.well-known/openid-configuration"),
+        ("POST", "/oidc/token"), ("GET", "/graph/v1.0/me"), ("GET", "/ocs/v1.php/cloud/capabilities")] {
+        assert_eq!(s.req(method, path).send().unwrap().status(), StatusCode::NOT_FOUND, "{method} {path}");
+    }
+    let none = Server::start(None);
+    assert_eq!(none.dav("PROPFIND", "").send().unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(none.req("POST", "/data/tus/x").send().unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn listing_shows_the_folder_and_hides_dot_names() {
+    let s = Server::start(Some("amy@example.com"));
+    fs::create_dir(s.root.join("影片 素材")).unwrap();
+    fs::write(s.root.join("影片 素材/a&b.mp4"), b"0123456789").unwrap();
+    fs::write(s.root.join(".hidden"), b"x").unwrap();
+    let r = s.dav("PROPFIND", "").header("depth", "1").send().unwrap();
+    assert_eq!(r.status(), StatusCode::MULTI_STATUS);
+    let xml = text(r);
+    assert!(xml.contains("<oc:name>Test Drive</oc:name>"));
+    assert!(xml.contains("<oc:name>影片 素材</oc:name>") && xml.contains("<d:collection/>"));
+    assert!(!xml.contains(".hidden") && !xml.contains(".drive-uploads"), "{xml}");
+    let xml = text(s.dav("PROPFIND", "%E5%BD%B1%E7%89%87%20%E7%B4%A0%E6%9D%90").header("depth", "1").send().unwrap());
+    assert!(xml.contains("<oc:name>a&amp;b.mp4</oc:name>"), "{xml}");
+    assert!(xml.contains("<d:getcontentlength>10</d:getcontentlength>") && xml.contains("<d:getcontenttype>video/mp4</d:getcontenttype>"));
+    // The page takes a file's address from this property; without it the viewer cannot load the file.
+    assert!(xml.contains(&format!("<oc:downloadURL>{}/dav/spaces/{DRIVE}/%E5%BD%B1%E7%89%87%20%E7%B4%A0%E6%9D%90/a%26b.mp4</oc:downloadURL>", s.base)), "{xml}");
+    // depth 0: the folder alone.
+    let xml = text(s.dav("PROPFIND", "").header("depth", "0").send().unwrap());
+    assert_eq!(xml.matches("<d:response>").count(), 1);
+    assert_eq!(s.dav("PROPFIND", "nope").send().unwrap().status(), StatusCode::NOT_FOUND);
+    assert_eq!(s.dav("PROPFIND", ".hidden").send().unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn a_file_is_read_whole_or_by_byte_range() {
+    let s = Server::start(Some("amy@example.com"));
+    fs::write(s.root.join("v.mp4"), b"0123456789").unwrap();
+    let r = s.dav("GET", "v.mp4").send().unwrap();
+    assert_eq!(r.headers()["accept-ranges"], "bytes");
+    assert_eq!(text(r), "0123456789");
+    let r = s.dav("GET", "v.mp4").header("range", "bytes=2-5").send().unwrap();
+    assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(r.headers()["content-range"], "bytes 2-5/10");
+    assert_eq!(text(r), "2345");
+    assert_eq!(text(s.dav("GET", "v.mp4").header("range", "bytes=7-").send().unwrap()), "789");
+    assert_eq!(text(s.dav("GET", "v.mp4").header("range", "bytes=-3").send().unwrap()), "789");
+    assert_eq!(s.dav("GET", "v.mp4").header("range", "bytes=10-").send().unwrap().status(), StatusCode::RANGE_NOT_SATISFIABLE);
+}
+
+#[test]
+fn write_rename_copy_delete() {
+    let s = Server::start(Some("amy@example.com"));
+    assert_eq!(s.dav("PUT", "a.txt").body("one").send().unwrap().status(), StatusCode::CREATED);
+    assert_eq!(s.dav("PUT", "a.txt").body("two").send().unwrap().status(), StatusCode::NO_CONTENT);
+    assert_eq!(fs::read(s.root.join("a.txt")).unwrap(), b"two");
+    assert_eq!(s.dav("MKCOL", "d").send().unwrap().status(), StatusCode::CREATED);
+    assert_eq!(s.dav("MKCOL", "d").send().unwrap().status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(s.dav("MOVE", "a.txt").header("destination", s.dest("d/b.txt")).send().unwrap().status(), StatusCode::CREATED);
+    assert!(!s.root.join("a.txt").exists() && s.root.join("d/b.txt").exists());
+    assert_eq!(s.dav("COPY", "d").header("destination", s.dest("d%20copy")).send().unwrap().status(), StatusCode::CREATED);
+    assert_eq!(fs::read(s.root.join("d copy/b.txt")).unwrap(), b"two");
+    // An existing target is kept unless the request says to replace it.
+    assert_eq!(s.dav("MOVE", "d").header("destination", s.dest("d%20copy")).send().unwrap().status(), StatusCode::PRECONDITION_FAILED);
+    assert!(s.root.join("d").exists());
+    assert_eq!(s.dav("MOVE", "d").header("destination", s.dest("d%20copy")).header("overwrite", "T").send().unwrap().status(), StatusCode::NO_CONTENT);
+    assert!(!s.root.join("d").exists());
+    // A folder cannot move into itself, and the drive itself cannot be moved or deleted.
+    assert_eq!(s.dav("MOVE", "d%20copy").header("destination", s.dest("d%20copy/in")).send().unwrap().status(), StatusCode::CONFLICT);
+    assert_eq!(s.dav("DELETE", "").send().unwrap().status(), StatusCode::FORBIDDEN);
+    assert_eq!(s.dav("DELETE", "d%20copy").send().unwrap().status(), StatusCode::NO_CONTENT);
+    assert!(!s.root.join("d copy").exists());
+    assert_eq!(s.dav("DELETE", "d%20copy").send().unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn a_path_cannot_leave_the_folder() {
+    let s = Server::start(Some("amy@example.com"));
+    let outside = s.root.parent().unwrap().join("secret.txt");
+    fs::write(&outside, b"secret").unwrap();
+    for p in ["..%2Fsecret.txt", "%2e%2e/secret.txt", "a/..%2F..%2Fsecret.txt", ".drive-uploads/x"] {
+        assert_eq!(s.dav("GET", p).send().unwrap().status(), StatusCode::NOT_FOUND, "{p}");
+        assert_eq!(s.dav("PUT", p).body("x").send().unwrap().status(), StatusCode::NOT_FOUND, "{p}");
+        assert_eq!(s.dav("DELETE", p).send().unwrap().status(), StatusCode::NOT_FOUND, "{p}");
+    }
+    fs::write(s.root.join("a.txt"), b"a").unwrap();
+    let r = s.dav("MOVE", "a.txt").header("destination", s.dest("..%2Fmoved.txt")).send().unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(fs::read(&outside).unwrap(), b"secret");
+    assert!(s.root.join("a.txt").exists());
+    // Another drive's id is not this drive.
+    assert_eq!(s.req("PROPFIND", "/dav/spaces/other$drive/").send().unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+fn meta(name: &str) -> String {
+    use base64::Engine;
+    format!("filename {}", base64::engine::general_purpose::STANDARD.encode(name))
+}
+
+#[test]
+fn an_upload_arrives_in_pieces_and_can_resume() {
+    let s = Server::start(Some("amy@example.com"));
+    fs::create_dir(s.root.join("in")).unwrap();
+    // The first piece rides on the request that starts the upload.
+    let r = s.dav("POST", "in").header("upload-length", "10").header("upload-metadata", meta("片 1.bin")).header("tus-resumable", "1.0.0").body("0123").send().unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert_eq!(r.headers()["upload-offset"], "4");
+    let at = r.headers()["location"].to_str().unwrap().to_string();
+    assert!(at.starts_with(&format!("{}/data/tus/", s.base)), "{at}");
+    let at = at[s.base.len()..].to_string();
+    // Not in the folder until the last byte is in, and not in a listing meanwhile.
+    assert!(!s.root.join("in/片 1.bin").exists());
+    assert!(!text(s.dav("PROPFIND", "").header("depth", "1").send().unwrap()).contains("drive-uploads"));
+    // A piece at the wrong place is refused and the server says where it is.
+    let r = s.req("PATCH", &at).header("upload-offset", "7").body("789").send().unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(r.headers()["upload-offset"], "4");
+    let r = s.req("PATCH", &at).header("upload-offset", "4").body("456").send().unwrap();
+    assert_eq!((r.status(), r.headers()["upload-offset"].to_str().unwrap()), (StatusCode::NO_CONTENT, "7"));
+    // After a break the page asks how far the upload got.
+    let r = s.req("HEAD", &at).send().unwrap();
+    assert_eq!((r.headers()["upload-offset"].to_str().unwrap(), r.headers()["upload-length"].to_str().unwrap()), ("7", "10"));
+    // More than was announced is refused.
+    assert_eq!(s.req("PATCH", &at).header("upload-offset", "7").body("789AB").send().unwrap().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let r = s.req("HEAD", &at).send().unwrap();
+    let got: u64 = r.headers()["upload-offset"].to_str().unwrap().parse().unwrap();
+    let rest = &b"0123456789"[got as usize..];
+    let r = s.req("PATCH", &at).header("upload-offset", got.to_string()).body(rest.to_vec()).send().unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    assert!(r.headers().contains_key("oc-fileid"));
+    assert_eq!(fs::read(s.root.join("in/片 1.bin")).unwrap(), b"0123456789");
+    assert_eq!(fs::read_dir(s.root.join(".drive-uploads")).unwrap().count(), 0);
+    assert_eq!(s.req("HEAD", &at).send().unwrap().status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn an_upload_names_a_file_inside_the_folder_only() {
+    let s = Server::start(Some("amy@example.com"));
+    // A dropped folder arrives as names with their path below it.
+    let r = s.dav("POST", "").header("upload-length", "2").header("upload-metadata", meta("new/deep/f.txt")).body("ok").send().unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert_eq!(fs::read(s.root.join("new/deep/f.txt")).unwrap(), b"ok");
+    for bad in ["../out.txt", "/etc/x", ".hidden", "a/../../x"] {
+        let r = s.dav("POST", "").header("upload-length", "2").header("upload-metadata", meta(bad)).body("no").send().unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert!(!s.root.parent().unwrap().join("out.txt").exists());
+    // An empty file is complete at once.
+    let r = s.dav("POST", "").header("upload-length", "0").header("upload-metadata", meta("empty.txt")).send().unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert_eq!(fs::read(s.root.join("empty.txt")).unwrap(), b"");
+}
+
+#[test]
+fn search_finds_names_anywhere_in_the_folder() {
+    let s = Server::start(Some("amy@example.com"));
+    fs::create_dir_all(s.root.join("a/b")).unwrap();
+    fs::write(s.root.join("a/b/主舞台 A.mp4"), b"x").unwrap();
+    fs::write(s.root.join("a/Stage notes.txt"), b"x").unwrap();
+    fs::write(s.root.join(".主舞台 hidden"), b"x").unwrap();
+    let ask = |word: &str| {
+        let body = format!("<oc:search-files xmlns:d=\"DAV:\" xmlns:oc=\"http://owncloud.org/ns\"><oc:search><oc:pattern>(name:&quot;*{word}*&quot; OR tag:&quot;*{word}*&quot;)</oc:pattern><oc:limit>200</oc:limit></oc:search></oc:search-files>");
+        let r = s.req("REPORT", "/dav/spaces").body(body).send().unwrap();
+        assert_eq!(r.status(), StatusCode::MULTI_STATUS);
+        text(r)
+    };
+    let xml = ask("主舞台");
+    assert_eq!(xml.matches("<d:response>").count(), 1, "{xml}");
+    assert!(xml.contains("<oc:name>主舞台 A.mp4</oc:name>"));
+    // Any letter case.
+    assert!(ask("STAGE").contains("<oc:name>Stage notes.txt</oc:name>"));
+    assert_eq!(ask("nothing-like-this").matches("<d:response>").count(), 0);
+}
+
+#[test]
+fn settings_can_come_from_the_command_line() {
+    let s = Server::start_with(Some("amy@example.com"), true);
+    let top = text(s.dav("PROPFIND", "").header("depth", "0").send().unwrap());
+    assert!(top.contains("Test Drive"), "{top}");
+    fs::write(s.root.join("a.txt"), b"a").unwrap();
+    assert_eq!(text(s.dav("GET", "a.txt").send().unwrap()), "a");
+}
+
+#[test]
+fn it_says_when_it_is_ready_and_stops_being_ready_without_its_folder() {
+    let s = Server::start(None);
+    // no person needed: the cluster asks, not a browser
+    assert_eq!(s.req("GET", "/healthz").send().unwrap().status(), StatusCode::OK);
+    assert_eq!(s.req("GET", "/readyz").send().unwrap().status(), StatusCode::OK);
+    // the folder gone (a lost mount): alive, not ready
+    fs::remove_dir_all(&s.root).unwrap();
+    assert_eq!(s.req("GET", "/healthz").send().unwrap().status(), StatusCode::OK);
+    assert_eq!(s.req("GET", "/readyz").send().unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn asked_to_stop_it_finishes_the_transfer_in_flight_and_exits_cleanly() {
+    use std::io::Read;
+    let mut s = Server::start(Some("amy@example.com"));
+    let big = vec![7u8; 64 * 1024 * 1024];
+    fs::write(s.root.join("big.bin"), &big).unwrap();
+    let mut r = s.dav("GET", "big.bin").send().unwrap();
+    let mut first = [0u8; 4096];
+    r.read_exact(&mut first).unwrap();
+    // SIGTERM while the download is under way (a rolling update)
+    assert!(Command::new("kill").args(["-TERM", &s.child.id().to_string()]).status().unwrap().success());
+    std::thread::sleep(Duration::from_millis(300));
+    let mut rest = Vec::new();
+    r.read_to_end(&mut rest).unwrap();
+    assert_eq!(first.len() + rest.len(), big.len());
+    // then it is gone, with exit status 0
+    let mut code = None;
+    for _ in 0..100 {
+        if let Some(st) = s.child.try_wait().unwrap() {
+            code = st.code();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(code, Some(0));
+}
+
+/// Runs ffmpeg (the image carries it; CI installs it).
+fn ffmpeg(args: &[&str]) {
+    let ok = Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).status().unwrap().success();
+    assert!(ok, "ffmpeg {args:?}");
+}
+
+/// Width and height of an image's bytes, by ffprobe.
+fn size_of(bytes: &[u8]) -> (u32, u32) {
+    let f = tempfile::NamedTempFile::new().unwrap();
+    fs::write(f.path(), bytes).unwrap();
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0"])
+        .arg(f.path())
+        .output()
+        .unwrap();
+    let t = String::from_utf8(out.stdout).unwrap();
+    let (w, h) = t.trim().split_once(',').unwrap();
+    (w.parse().unwrap(), h.parse().unwrap())
+}
+
+#[test]
+fn a_video_or_a_picture_shows_a_preview() {
+    let s = Server::start(Some("amy@example.com"));
+    let root = s.root.to_str().unwrap().to_string();
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=10:duration=3", "-pix_fmt", "yuv420p", &format!("{root}/v.mp4")]);
+    // shorter than the second the preview is taken at
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=0.5", "-pix_fmt", "yuv420p", &format!("{root}/short.mov")]);
+    ffmpeg(&["-f", "lavfi", "-i", "color=c=red:s=300x200", "-frames:v", "1", &format!("{root}/p.png")]);
+    fs::write(s.root.join("notes.txt"), b"words").unwrap();
+    fs::write(s.root.join("broken.mp4"), b"not a video").unwrap();
+
+    // the page asks for a preview only of what says it has one
+    let xml = text(s.dav("PROPFIND", "").header("depth", "1").send().unwrap());
+    let has = |name: &str| {
+        let at = xml.find(&format!("<oc:name>{name}</oc:name>")).unwrap();
+        let end = xml[at..].find("</d:response>").unwrap();
+        xml[at..at + end].contains("<oc:has-preview>1</oc:has-preview>")
+    };
+    assert!(has("v.mp4") && has("short.mov") && has("p.png"), "{xml}");
+    assert!(!has("notes.txt"));
+
+    // the page's own request: /dav/spaces/…?scalingup=0&preview=1&c=<etag>&x=…&y=…
+    for (name, x, y, want) in [("v.mp4", 128, 128, (128, 72)), ("short.mov", 96, 96, (96, 72)), ("p.png", 150, 150, (150, 100))] {
+        let r = s.dav("GET", &format!("{name}?scalingup=0&preview=1&c=abc&x={x}&y={y}")).send().unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{name}");
+        assert_eq!(r.headers()["content-type"], "image/jpeg");
+        // the address carries the file's etag, so a preview never goes stale in the browser's cache
+        assert!(r.headers()["cache-control"].to_str().unwrap().contains("immutable"));
+        let b = r.bytes().unwrap();
+        assert_eq!(&b[..2], &[0xff, 0xd8], "{name}: a JPEG");
+        assert_eq!(size_of(&b), want, "{name}: fits in x by y, the shape kept");
+    }
+    // no preview: the page shows the file's icon
+    assert_eq!(s.dav("GET", "notes.txt?preview=1&x=64&y=64").send().unwrap().status(), StatusCode::NOT_FOUND);
+    assert_eq!(s.dav("GET", "broken.mp4?preview=1&x=64&y=64").send().unwrap().status(), StatusCode::NOT_FOUND);
+    // and the file itself is still the file
+    assert_eq!(text(s.dav("GET", "broken.mp4").send().unwrap()), "not a video");
+}
+
+/// Sends `head` and, `delay` later, `body` on one connection, then a second request on the same connection; the
+/// second answer's status line ("" when the connection was closed under it).
+fn answered_then_reused(base: &str, head: &str, body: &[u8], delay: Duration) -> String {
+    use std::io::{Read, Write};
+    let addr = base.trim_start_matches("http://");
+    let mut s = std::net::TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    s.write_all(head.as_bytes()).unwrap();
+    std::thread::sleep(delay);
+    let _ = s.write_all(body);
+    // the first answer
+    let mut buf = [0u8; 4096];
+    let n = s.read(&mut buf).unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 2"), "{}", String::from_utf8_lossy(&buf[..n]));
+    std::thread::sleep(Duration::from_millis(200));
+    if s.write_all(b"GET /healthz HTTP/1.1\r\nHost: x\r\n\r\n").is_err() {
+        return String::new();
+    }
+    let n = s.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string()
+}
+
+#[test]
+fn a_connection_stays_usable_when_a_body_arrives_after_its_headers() {
+    // cloudflared sends the next request on a kept connection; one the server closed because it answered before the
+    // body had arrived fails that request (a 502 on the page's POSTs: "access denied" after sign-in)
+    let s = Server::start(Some("amy@example.com"));
+    let body = br#"{"account_uuid":"me"}"#;
+    for (method, path) in [
+        ("REPORT", "/dav/spaces"),
+        ("PROPFIND", &*format!("/dav/spaces/{DRIVE}/")),
+    ] {
+        let head = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nDepth: 1\r\n\r\n", body.len());
+        let second = answered_then_reused(&s.base, &head, body, Duration::from_millis(300));
+        assert_eq!(second, "HTTP/1.1 200 OK", "{method} {path}: the connection was closed under the next request");
+    }
+}
+
+#[test]
+fn an_upload_s_first_piece_is_a_whole_piece() {
+    // the page sends up to 10 MB on the request that starts an upload: it is streamed, not held to a small body
+    let s = Server::start(Some("amy@example.com"));
+    let piece = vec![7u8; 10_000_000];
+    let r = s.dav("POST", "").header("upload-length", "10000000").header("upload-metadata", meta("big.bin")).header("tus-resumable", "1.0.0").body(piece).send().unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert_eq!(r.headers()["upload-offset"], "10000000");
+    assert_eq!(fs::metadata(s.root.join("big.bin")).unwrap().len(), 10_000_000);
+}

@@ -1,0 +1,538 @@
+<template>
+  <no-content-message
+    v-if="!items.length"
+    id="admin-settings-spaces-empty"
+    img-src="images/illustrations/spaces.svg"
+  >
+    <template #message>
+      <span v-text="$gettext('No spaces found')" />
+    </template>
+    <template #callToAction>
+      <span v-text="$gettext('Try refining the search term or filters to get results')" />
+    </template>
+  </no-content-message>
+  <oc-table
+    v-else
+    class="settings-spaces-table [&_tbody_tr]:select-none"
+    :sort-by="sortBy"
+    :sort-dir="sortDir"
+    :fields="fields"
+    :data="paginatedItems"
+    :highlighted="highlighted"
+    :sticky="isSticky"
+    :header-position="fileListHeaderY"
+    :hover="true"
+    padding-x="medium"
+    @sort="handleSort"
+    @contextmenu-clicked="(el, event, item) => showContextMenuOnRightClick(event, item)"
+    @highlight="fileClicked"
+  >
+    <template #selectHeader>
+      <span class="sr-only">{{ $gettext('Select spaces') }}</span>
+      <oc-checkbox
+        size="large"
+        :label="$gettext('Select all spaces')"
+        :model-value="allSpacesSelected"
+        :label-hidden="true"
+        @update:model-value="allSpacesSelected ? unselectAllSpaces() : selectSpaces(paginatedItems)"
+      />
+    </template>
+    <template #select="{ item }">
+      <oc-checkbox
+        size="large"
+        :model-value="isSpaceSelected(item)"
+        :option="item"
+        :label="getSelectSpaceLabel(item)"
+        :label-hidden="true"
+        @click.stop="fileClicked([item, $event])"
+      />
+    </template>
+    <template #name="{ item }">
+      <div class="flex items-center">
+        <space-image class="shrink-0" :space="item" />
+        <span class="pl-2 wrap-anywhere" :data-test-space-name="item.name">
+          <oc-filter-highlight :text="item.name" :term="filterTerm" />
+        </span>
+      </div>
+    </template>
+    <template #manager="{ item }">
+      <span
+        class="line-clamp-1 break-all max-w-sm"
+        :title="getManagerNames(item)"
+        v-text="getManagerNames(item)"
+      />
+    </template>
+    <template #members="{ item }">
+      {{ getMemberCount(item) }}
+    </template>
+    <template #totalQuota="{ item }"> {{ getTotalQuota(item) }}</template>
+    <template #usedQuota="{ item }"> {{ getUsedQuota(item) }}</template>
+    <template #remainingQuota="{ item }"> {{ getRemainingQuota(item) }}</template>
+    <template #indicators="{ item }">
+      <resource-status-indicators :space="item" :resource="item" />
+    </template>
+    <template #mdate="{ item }">
+      <span v-oc-tooltip="formatDate(item.mdate)" v-text="formatDateRelative(item.mdate)" />
+      <span class="sr-only" v-text="`(${formatDate(item.mdate)})`" />
+    </template>
+    <template #actions="{ item }">
+      <div class="spaces-list-actions">
+        <oc-button
+          v-oc-tooltip="spaceDetailsLabel"
+          :aria-label="spaceDetailsLabel"
+          appearance="raw"
+          class="ml-1 quick-action-button p-1 spaces-table-btn-details"
+          @click.stop.prevent="showDetailsForSpace(item)"
+        >
+          <oc-icon name="information" fill-type="line" />
+        </oc-button>
+        <context-menu-quick-action
+          :ref="(el: any) => (contextMenuDrops[item.id] = el?.drop)"
+          :item="item"
+          :title="item.name"
+          class="spaces-table-btn-action-dropdown"
+          @quick-action-clicked="showContextMenuOnBtnClick($event, item)"
+        >
+          <template #contextMenu>
+            <slot name="contextMenu" :space="item" />
+          </template>
+        </context-menu-quick-action>
+      </div>
+    </template>
+    <template #footer>
+      <pagination :pages="totalPages" :current-page="currentPage" />
+      <div class="text-center w-full my-2">
+        <p class="text-role-on-surface-variant">{{ footerTextTotal }}</p>
+        <p v-if="filterTerm" class="text-role-on-surface-variant">{{ footerTextFilter }}</p>
+      </div>
+    </template>
+  </oc-table>
+</template>
+
+<script setup lang="ts">
+import {
+  formatDateFromJSDate,
+  formatRelativeDateFromJSDate,
+  formatFileSize,
+  defaultFuseOptions,
+  escapeFuseQuery,
+  useKeyboardActions,
+  useIsTopBarSticky,
+  useSharesStore,
+  useSpacesStore,
+  useSideBar,
+  NoContentMessage,
+  createVirtualCursorElement,
+  ProcessorType,
+  ResourceStatusIndicators,
+  SpaceImage,
+  useLoadPreview
+} from '@opencloud-eu/web-pkg'
+import { OcDrop, OcFilterHighlight } from '@opencloud-eu/design-system/components'
+import { ComponentPublicInstance, computed, onBeforeUnmount, ref, unref, watch } from 'vue'
+import { getSpaceManagers, SpaceResource } from '@opencloud-eu/web-client'
+import Fuse from 'fuse.js'
+import { useGettext } from 'vue3-gettext'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { ContextMenuQuickAction } from '@opencloud-eu/web-pkg'
+import {
+  useFileListHeaderPosition,
+  useRoute,
+  useRouter,
+  usePagination,
+  useSort,
+  spaceTilesSortFields,
+  translateSortFields
+} from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
+import { perPageDefault, perPageStoragePrefix } from '../../defaults'
+import {
+  useKeyboardTableMouseActions,
+  useKeyboardTableNavigation
+} from '../../composables/keyboardActions'
+import { useSpaceSettingsStore } from '../../composables/stores/spaceSettings'
+import { storeToRefs } from 'pinia'
+import { FieldType, SortDir } from '@opencloud-eu/design-system/helpers'
+
+const router = useRouter()
+const route = useRoute()
+const language = useGettext()
+const { $gettext, $ngettext } = language
+const { isSticky } = useIsTopBarSticky()
+const sharesStore = useSharesStore()
+const { openSideBar } = useSideBar()
+
+const { filterTerm = '' } = defineProps<{ filterTerm?: string }>()
+
+const { y: fileListHeaderY } = useFileListHeaderPosition('#admin-settings-app-bar')
+const contextMenuDrops = ref<Record<string, ComponentPublicInstance<typeof OcDrop>>>({})
+
+const lastSelectedSpaceId = ref<string>()
+
+const spaceSettingsStore = useSpaceSettingsStore()
+const { selectedSpaces } = storeToRefs(spaceSettingsStore)
+const spacesStore = useSpacesStore()
+const { allProjectSpaces } = storeToRefs(spacesStore)
+const spaces = computed(() => unref(allProjectSpaces) || [])
+
+function filter(spaces: SpaceResource[], filterTerm: string) {
+  if (!(filterTerm || '').trim()) {
+    return spaces
+  }
+  const searchEngine = new Fuse(spaces, { ...defaultFuseOptions, keys: ['name'] })
+  return searchEngine.search(escapeFuseQuery(filterTerm)).map((r) => r.item)
+}
+
+const filteredSpaces = computed(() => filter(unref(spaces), filterTerm))
+
+const sortFields = translateSortFields(spaceTilesSortFields, language)
+const { sortBy, sortDir, items, handleSort } = useSort<SpaceResource>({
+  items: filteredSpaces,
+  fields: sortFields
+})
+
+const highlighted = computed(() => unref(selectedSpaces).map((s) => s.id))
+const footerTextTotal = computed(() => {
+  const disabledSpaces = unref(spaces).filter((space) => space.disabled === true)
+
+  if (!disabledSpaces.length) {
+    return $ngettext(
+      '%{spaceCount} space in total',
+      '%{spaceCount} spaces in total',
+      unref(spaces).length,
+      {
+        spaceCount: unref(spaces).length.toString()
+      }
+    )
+  }
+
+  return $ngettext(
+    '%{spaceCount} space in total (including %{disabledSpaceCount} disabled)',
+    '%{spaceCount} spaces in total (including %{disabledSpaceCount} disabled)',
+    unref(spaces).length,
+    {
+      spaceCount: unref(spaces).length.toString(),
+      disabledSpaceCount: disabledSpaces.length.toString()
+    }
+  )
+})
+const footerTextFilter = computed(() => {
+  return $gettext('%{spaceCount} matching spaces', {
+    spaceCount: unref(items).length.toString()
+  })
+})
+const {
+  items: paginatedItems,
+  page: currentPage,
+  total: totalPages
+} = usePagination({ items, perPageDefault, perPageStoragePrefix })
+
+const keyActions = useKeyboardActions()
+useKeyboardTableNavigation(keyActions, paginatedItems, selectedSpaces, lastSelectedSpaceId)
+const { setSelectionStart } = useKeyboardTableMouseActions(
+  keyActions,
+  paginatedItems,
+  selectedSpaces,
+  lastSelectedSpaceId
+)
+
+const { loadPreview } = useLoadPreview()
+
+async function loadSpaceImage(space: SpaceResource) {
+  // spaces aren't resources of the resources store, the preview is stored on the space instead
+  const thumbnail = await loadPreview({
+    space,
+    resource: space,
+    processor: ProcessorType.enum.fit,
+    updateStore: false
+  })
+  if (thumbnail) {
+    spacesStore.updateSpaceField({ id: space.id, field: 'thumbnail', value: thumbnail })
+  }
+}
+
+watch(
+  () => unref(paginatedItems).map(({ id }) => id),
+  (spaceIds, previousSpaceIds = []) => {
+    unref(paginatedItems)
+      .filter(({ id }) => !previousSpaceIds.includes(id))
+      .forEach(loadSpaceImage)
+  },
+  { immediate: true }
+)
+
+const uploadedImageToken = eventBus.subscribe(
+  'app.files.spaces.uploaded-image',
+  (space: SpaceResource) => loadSpaceImage(space)
+)
+onBeforeUnmount(() => {
+  eventBus.unsubscribe('app.files.spaces.uploaded-image', uploadedImageToken)
+})
+
+// the selection is kept across pages, so only the spaces of the current page count
+const allSpacesSelected = computed(
+  () => unref(paginatedItems).length > 0 && unref(paginatedItems).every(isSpaceSelected)
+)
+function isSpaceSelected(space: SpaceResource) {
+  return unref(selectedSpaces).some((s) => s.id === space.id)
+}
+
+const fields = computed<FieldType[]>(() => [
+  {
+    name: 'select',
+    title: '',
+    type: 'slot',
+    width: 'shrink',
+    headerType: 'slot'
+  },
+  {
+    name: 'name',
+    title: $gettext('Name'),
+    type: 'slot',
+    sortable: true,
+    width: 'expand',
+    wrap: 'truncate'
+  },
+  {
+    name: 'manager',
+    title: $gettext('Manager'),
+    type: 'slot'
+  },
+  {
+    name: 'members',
+    title: $gettext('Members'),
+    type: 'slot',
+    sortable: true
+  },
+  {
+    name: 'totalQuota',
+    title: $gettext('Total quota'),
+    type: 'slot',
+    sortable: true
+  },
+  {
+    name: 'usedQuota',
+    title: $gettext('Used quota'),
+    type: 'slot',
+    sortable: true
+  },
+  {
+    name: 'remainingQuota',
+    title: $gettext('Remaining quota'),
+    type: 'slot',
+    sortable: true
+  },
+  {
+    name: 'indicators',
+    title: $gettext('Status'),
+    type: 'slot',
+    alignH: 'right',
+    wrap: 'nowrap',
+    width: 'shrink',
+    sortable: true,
+    sortDir: SortDir.Asc
+  },
+  {
+    name: 'mdate',
+    title: $gettext('Modified'),
+    type: 'slot',
+    sortable: true
+  },
+
+  {
+    name: 'actions',
+    title: $gettext('Actions'),
+    sortable: false,
+    type: 'slot',
+    alignH: 'right',
+    width: 'shrink',
+    wrap: 'nowrap'
+  }
+])
+
+function getManagerNames(space: SpaceResource) {
+  const allManagers = getSpaceManagers(space, sharesStore.graphRoles)
+  if (!allManagers?.length) {
+    return '-'
+  }
+  const managers = allManagers.length > 2 ? allManagers.slice(0, 2) : allManagers
+  let managerStr = managers
+    .map(({ grantedToV2 }) => (grantedToV2.user || grantedToV2.group).displayName)
+    .join(', ')
+  if (allManagers.length > 2) {
+    managerStr += `... +${allManagers.length - 2}`
+  }
+  return managerStr
+}
+function formatDate(date: string) {
+  return formatDateFromJSDate(new Date(date), language.current)
+}
+function formatDateRelative(date: string) {
+  return formatRelativeDateFromJSDate(new Date(date), language.current)
+}
+function getTotalQuota(space: SpaceResource) {
+  if (space.spaceQuota.total === 0) {
+    return $gettext('Unrestricted')
+  }
+
+  return formatFileSize(space.spaceQuota.total, language.current)
+}
+function getUsedQuota(space: SpaceResource) {
+  if (space.spaceQuota.used === undefined) {
+    return '-'
+  }
+  return formatFileSize(space.spaceQuota.used, language.current)
+}
+function getRemainingQuota(space: SpaceResource) {
+  if (space.spaceQuota.total === 0) {
+    return $gettext('Unrestricted')
+  }
+  if (space.spaceQuota.remaining === undefined) {
+    return '-'
+  }
+  return formatFileSize(space.spaceQuota.remaining, language.current)
+}
+function getMemberCount(space: SpaceResource) {
+  return space.root.permissions?.length || 1
+}
+
+function getSelectSpaceLabel(space: SpaceResource) {
+  return $gettext('Select %{ space }', { space: space.name })
+}
+
+watch(
+  () => filterTerm,
+  async () => {
+    await unref(router).push({ ...unref(route), query: { ...unref(route).query, page: '1' } })
+  }
+)
+
+function fileClicked([resource, eventData]: [SpaceResource, MouseEvent | KeyboardEvent]) {
+  const target = eventData?.target as HTMLInputElement
+  const isCheckboxClicked = target?.getAttribute('type') === 'checkbox'
+  const contextActionClicked = target?.closest('div')?.id === 'oc-files-context-menu'
+  if (contextActionClicked) {
+    return
+  }
+  if (isCheckboxClicked && (eventData?.metaKey || eventData?.shiftKey)) {
+    // revert the native toggle, the modifier click handles the selection
+    target.checked = isSpaceSelected(resource)
+  }
+
+  if (eventData?.metaKey) {
+    return eventBus.publish('app.admin-settings.list.clicked.meta', resource)
+  }
+  if (eventData?.shiftKey) {
+    return eventBus.publish('app.admin-settings.list.clicked.shift', {
+      resource
+    })
+  }
+  if (isCheckboxClicked) {
+    return selectSpace(resource)
+  }
+
+  unselectAllSpaces()
+  selectSpace(resource)
+}
+
+function showContextMenuOnBtnClick(event: MouseEvent | KeyboardEvent, space: SpaceResource) {
+  unref(contextMenuDrops)[space.id]?.show({ event })
+}
+function showContextMenuOnRightClick(event: MouseEvent, space: SpaceResource) {
+  event.preventDefault()
+  if (!isSpaceSelected(space)) {
+    spaceSettingsStore.setSelectedSpaces([space])
+    setSelectionStart(space)
+  }
+  const anchorElement = createVirtualCursorElement(event as MouseEvent)
+  unref(contextMenuDrops)[space.id]?.show({ anchorElement })
+}
+
+const spaceDetailsLabel = computed(() => {
+  return $gettext('Show details')
+})
+function showDetailsForSpace(space: SpaceResource) {
+  unselectAllSpaces()
+  selectSpace(space)
+  openSideBar()
+}
+
+function selectSpace(selectedSpace: SpaceResource) {
+  setSelectionStart(selectedSpace)
+
+  const isSpaceSelected = unref(selectedSpaces).find((space) => space.id === selectedSpace.id)
+  if (!isSpaceSelected) {
+    return spaceSettingsStore.addSelectedSpace(selectedSpace)
+  }
+
+  spaceSettingsStore.setSelectedSpaces(
+    unref(selectedSpaces).filter((space) => space.id !== selectedSpace.id)
+  )
+}
+
+function unselectAllSpaces() {
+  spaceSettingsStore.setSelectedSpaces([])
+}
+
+function selectSpaces(spaces: SpaceResource[]) {
+  spaceSettingsStore.setSelectedSpaces(spaces)
+}
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer utilities {
+  .settings-spaces-table .oc-table-header-cell-actions,
+  .settings-spaces-table .oc-table-data-cell-actions {
+    @apply whitespace-nowrap;
+  }
+
+  /* Indicators, Members, Mdate: hidden by default, visible from md */
+  .oc-table-header-cell-indicators,
+  .oc-table-data-cell-indicators,
+  .oc-table-header-cell-members,
+  .oc-table-data-cell-members,
+  .oc-table-header-cell-mdate,
+  .oc-table-data-cell-mdate {
+    @apply hidden md:table-cell;
+  }
+
+  /* Manager, TotalQuota, UsedQuota, RemainingQuota: hidden by default, visible from lg */
+  .settings-spaces-table .oc-table-header-cell-manager,
+  .settings-spaces-table .oc-table-data-cell-manager,
+  .settings-spaces-table .oc-table-header-cell-totalQuota,
+  .settings-spaces-table .oc-table-data-cell-totalQuota,
+  .settings-spaces-table .oc-table-header-cell-usedQuota,
+  .settings-spaces-table .oc-table-data-cell-usedQuota,
+  .settings-spaces-table .oc-table-header-cell-remainingQuota,
+  .settings-spaces-table .oc-table-data-cell-remainingQuota {
+    @apply hidden lg:table-cell;
+  }
+
+  /* Squashed variant */
+  .settings-spaces-table-squashed .oc-table-header-cell-manager,
+  .settings-spaces-table-squashed .oc-table-data-cell-manager,
+  .settings-spaces-table-squashed .oc-table-header-cell-indicators,
+  .settings-spaces-table-squashed .oc-table-data-cell-indicators,
+  .settings-spaces-table-squashed .oc-table-header-cell-members,
+  .settings-spaces-table-squashed .oc-table-data-cell-members,
+  .settings-spaces-table-squashed .oc-table-header-cell-totalQuota,
+  .settings-spaces-table-squashed .oc-table-data-cell-totalQuota,
+  .settings-spaces-table-squashed .oc-table-header-cell-usedQuota,
+  .settings-spaces-table-squashed .oc-table-data-cell-usedQuota {
+    @apply hidden;
+  }
+
+  /* RemainingQuota, Indicators, Members, Mdate visible from xl */
+  .settings-spaces-table-squashed .oc-table-header-cell-remainingQuota,
+  .settings-spaces-table-squashed .oc-table-data-cell-remainingQuota,
+  .settings-spaces-table-squashed .oc-table-header-cell-indicators,
+  .settings-spaces-table-squashed .oc-table-data-cell-indicators,
+  .settings-spaces-table-squashed .oc-table-header-cell-members,
+  .settings-spaces-table-squashed .oc-table-data-cell-members,
+  .settings-spaces-table-squashed .oc-table-header-cell-mdate,
+  .settings-spaces-table-squashed .oc-table-data-cell-mdate {
+    @apply hidden xl:table-cell;
+  }
+}
+</style>

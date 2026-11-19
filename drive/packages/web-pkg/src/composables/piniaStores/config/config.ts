@@ -1,0 +1,101 @@
+import { defineStore } from 'pinia'
+import { computed, ref, unref } from 'vue'
+import merge from 'lodash-es/merge'
+import { OptionsConfig, RawConfig } from './types'
+import { urlJoin } from '@opencloud-eu/web-client'
+import { useAppsStore } from '../apps'
+
+const defaultOptions = {
+  openFilesInNewTab: false,
+  concurrentRequests: {
+    resourceBatchActions: 4,
+    shares: {
+      create: 4,
+      list: 2
+    },
+    sse: 4,
+    avatars: 4
+  },
+  contextHelpers: true,
+  contextHelpersReadMore: true,
+  defaultAppId: 'files',
+  disabledExtensions: [] as string[],
+  disableFeedbackLink: false,
+  editor: {
+    autosaveEnabled: true,
+    autosaveInterval: 120
+  },
+  embed: {
+    enabled: false,
+    target: 'resources'
+  },
+  tokenStorageLocal: true,
+  userListRequiresFilter: false,
+  hideLogo: false,
+  oxAppSuite: {
+    enabled: false,
+    apiUrl: ''
+  }
+} satisfies Partial<OptionsConfig>
+
+export const useConfigStore = defineStore('config', () => {
+  const appsStore = useAppsStore()
+
+  const server = ref<RawConfig['server']>('')
+  const theme = ref<RawConfig['theme']>('')
+  const options = ref<RawConfig['options']>({ ...defaultOptions })
+
+  const apps = ref<RawConfig['apps']>([])
+  const externalApps = ref<RawConfig['external_apps']>([])
+  const customTranslations = ref<RawConfig['customTranslations']>([])
+  const openIdConnect = ref<RawConfig['openIdConnect']>()
+  const scripts = ref<RawConfig['scripts']>([])
+  const styles = ref<RawConfig['styles']>([])
+
+  const serverUrl = computed(() =>
+    urlJoin(unref(server) || window.location.origin, { trailingSlash: true })
+  )
+  const groupwareUrl = computed(() =>
+    urlJoin(unref(serverUrl), 'groupware', { trailingSlash: true })
+  )
+
+  const loadConfig = (data: RawConfig) => {
+    if (data.server) {
+      server.value = data.server?.endsWith('/') ? data.server : data.server + '/'
+    }
+
+    apps.value = data.apps || []
+    customTranslations.value = data.customTranslations || []
+    openIdConnect.value = data.openIdConnect
+    scripts.value = data.scripts || []
+    styles.value = data.styles || []
+    theme.value = data.theme
+
+    if (data.options) {
+      options.value = merge({ ...defaultOptions }, data.options)
+    }
+
+    if (data.external_apps) {
+      externalApps.value = data.external_apps
+      data.external_apps.filter(Boolean).forEach((externalApp) => {
+        appsStore.loadExternalAppConfig({ appId: externalApp.id, config: externalApp.config })
+      })
+    }
+  }
+
+  return {
+    options,
+    openIdConnect,
+    customTranslations,
+    apps,
+    externalApps,
+    theme,
+    scripts,
+    styles,
+    serverUrl,
+    groupwareUrl,
+    loadConfig
+  }
+})
+
+export type ConfigStore = ReturnType<typeof useConfigStore>

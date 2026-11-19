@@ -1,0 +1,114 @@
+<template>
+  <div>
+    <div v-if="!loadReadmeContentTask.lastSuccessful" class="flex justify-center">
+      <oc-spinner size="large" class="my-4" :aria-label="$gettext('Loading README content')" />
+    </div>
+    <div
+      v-else
+      ref="markdownContainerRef"
+      class="markdown-container flex min-h-0 [&.collapsed]:max-h-[300px] [&.collapsed]:overflow-hidden"
+      :class="{
+        collapsed: markdownCollapsed,
+        'mask-linear-[180deg,black,80%,transparent]': markdownCollapsed && showMarkdownCollapse
+      }"
+    >
+      <TextEditorViewer
+        class="w-full"
+        :content="markdownContent"
+        :aria-label="$gettext('README')"
+      />
+    </div>
+    <div v-if="showMarkdownCollapse && markdownContent" class="markdown-collapse text-center mt-2">
+      <oc-button appearance="raw" no-hover @click="toggleMarkdownCollapsed">
+        <span>{{ toggleMarkdownCollapsedText }}</span>
+      </oc-button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, unref, useTemplateRef, watch } from 'vue'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { preloadTextEditor, TextEditorViewer, useClientService } from '@opencloud-eu/web-pkg'
+import { useTask } from 'vue-concurrency'
+import { useGettext } from 'vue3-gettext'
+
+const { space, readmeFile } = defineProps<{
+  space: SpaceResource
+  readmeFile: Resource
+}>()
+
+const { $gettext } = useGettext()
+const clientService = useClientService()
+const { getFileContents } = clientService.webdav
+
+const markdownContent = ref('')
+
+const markdownContainerRef = useTemplateRef('markdownContainerRef')
+const markdownCollapsed = ref(true)
+const showMarkdownCollapse = ref(false)
+
+const toggleMarkdownCollapsedText = computed(() => {
+  return unref(markdownCollapsed) ? $gettext('Show more') : $gettext('Show less')
+})
+const toggleMarkdownCollapsed = () => {
+  markdownCollapsed.value = !unref(markdownCollapsed)
+}
+
+const onMarkdownResize = () => {
+  if (!unref(markdownContainerRef)) {
+    return
+  }
+
+  unref(markdownContainerRef).classList.remove('collapsed')
+  const markdownContainerHeight = unref(markdownContainerRef).offsetHeight
+  if (markdownContainerHeight < 300) {
+    showMarkdownCollapse.value = false
+    return
+  }
+  showMarkdownCollapse.value = true
+
+  if (unref(markdownCollapsed)) {
+    unref(markdownContainerRef).classList.add('collapsed')
+  }
+}
+const markdownResizeObserver = new ResizeObserver(onMarkdownResize)
+
+const loadReadmeContentTask = useTask(function* (signal) {
+  try {
+    const [{ body }] = yield Promise.all([
+      getFileContents(
+        space,
+        { fileId: unref(readmeFile).id, path: unref(readmeFile).path },
+        { signal }
+      ),
+      preloadTextEditor()
+    ])
+    markdownContent.value = body || ''
+  } catch (e) {
+    console.error('failed to load README.md content', e)
+  }
+}).restartable()
+
+watch(
+  markdownContainerRef,
+  (container) => {
+    if (container) {
+      markdownResizeObserver.observe(container)
+    }
+  },
+  { flush: 'post' }
+)
+
+watch([() => readmeFile.id, () => readmeFile.etag, () => readmeFile.mdate], () => {
+  loadReadmeContentTask.perform()
+})
+
+onMounted(() => {
+  loadReadmeContentTask.perform()
+})
+
+onBeforeUnmount(() => {
+  markdownResizeObserver.disconnect()
+})
+</script>

@@ -1,0 +1,195 @@
+<template>
+  <img
+    v-if="isSvgImage"
+    ref="img"
+    :key="`media-svg-${file.id}`"
+    :src="file.url"
+    :alt="file.name"
+    :data-id="file.id"
+    class="object-contain"
+    :class="isQuarterTurn ? 'w-[100cqh] h-[100cqw] shrink-0' : 'size-full'"
+    @error="emit('error')"
+  />
+  <div
+    v-else-if="$slots.overlay"
+    ref="img"
+    :key="`media-image-wrapper-${file.id}`"
+    class="relative grid grid-cols-[100%] grid-rows-[100%] place-items-center pt-4 [&>*]:[grid-area:1/1]"
+    :class="isQuarterTurn ? 'w-[100cqh] h-[100cqw] shrink-0' : 'size-full'"
+    :data-id="file.id"
+  >
+    <img :src="file.url" :alt="file.name" class="max-w-full max-h-full" @error="emit('error')" />
+    <slot name="overlay" />
+  </div>
+  <img
+    v-else
+    ref="img"
+    :key="`media-image-${file.id}`"
+    :src="file.url"
+    :alt="file.name"
+    :data-id="file.id"
+    class="pt-4"
+    :class="isQuarterTurn ? 'max-w-[100cqh] max-h-[100cqw]' : 'max-w-full max-h-full'"
+    @error="emit('error')"
+  />
+</template>
+<script setup lang="ts">
+import { MediaFile } from '../../helpers/types'
+import {
+  computed,
+  ref,
+  watch,
+  unref,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  useTemplateRef
+} from 'vue'
+import type { PanzoomObject, PanzoomOptions } from '@panzoom/panzoom'
+import Panzoom from '@panzoom/panzoom'
+import { useEventBus } from '@opencloud-eu/web-pkg'
+
+const { file, currentImageRotation } = defineProps<{
+  file: MediaFile
+  currentImageRotation: number
+}>()
+
+const emit = defineEmits<{
+  (e: 'error'): void
+}>()
+
+const eventBus = useEventBus()
+
+// with an overlay slot this is a stage-filling wrapper around the still: a
+// content-sized wrapper would void the percentage max-w/max-h of its children
+const img = useTemplateRef<HTMLElement>('img')
+const panzoom = ref<PanzoomObject>()
+// an svg is rendered as an image and never inlined into the page: the browser then
+// runs no scripts, loads no external resources and keeps its styles scoped to the
+// image. Its url is a data url (see useMediaFileLoader), so opening the image in a
+// new tab doesn't run it on the app's origin either. It fills the stage and gets
+// scaled to fit, svgs without an intrinsic size (viewBox only) would otherwise
+// render at the browser's default of 300x150.
+const isSvgImage = computed(() => file.mimeType === 'image/svg+xml')
+// a quarter turn swaps the width and height of the image, so its size limits are
+// swapped as well: the rotated image then fits the stage (a size container)
+const isQuarterTurn = computed(() => currentImageRotation % 180 !== 0)
+
+const onWheelEvent = (e: WheelEvent) => {
+  e.preventDefault()
+  if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    return false
+  }
+
+  if (e.deltaY < 0) {
+    unref(panzoom).zoomIn({ step: 0.1 })
+  } else if (e.deltaY > 0) {
+    unref(panzoom).zoomOut({ step: 0.1 })
+  }
+}
+
+const setTransform = ({ scale, x, y }: { scale: number; x: number; y: number }) => {
+  // panzoom calls this deferred, possibly after it got destroyed on unmount
+  if (!unref(panzoom)) {
+    return
+  }
+
+  let h: number
+  let v: number
+
+  switch (currentImageRotation) {
+    case -270:
+    case 90:
+      h = y
+      v = 0 - x
+      break
+    case -180:
+    case 180:
+      h = 0 - x
+      v = 0 - y
+      break
+    case -90:
+    case 270:
+      h = 0 - y
+      v = x
+      break
+    default:
+      h = x
+      v = y
+  }
+
+  unref(panzoom).setStyle(
+    'transform',
+    `rotate(${currentImageRotation}deg) scale(${scale}) translate(${h}px, ${v}px)`
+  )
+}
+
+const destroyPanzoom = () => {
+  unref(img)?.removeEventListener('wheel', onWheelEvent)
+  unref(panzoom)?.destroy()
+  panzoom.value = undefined
+}
+
+const initPanzoom = async () => {
+  destroyPanzoom()
+
+  // wait for next tick until image is rendered
+  await nextTick()
+
+  panzoom.value = Panzoom(unref(img), {
+    animate: false,
+    duration: 300,
+    // an unzoomed image can't be dragged out of view, a swipe switches the file instead
+    panOnlyWhenZoomed: true,
+    minScale: 0.5,
+    maxScale: 10,
+    setTransform: (_, { scale, x, y }) => setTransform({ scale, x, y })
+  } as PanzoomOptions)
+  unref(img).addEventListener('wheel', onWheelEvent, { passive: false })
+}
+
+function isZoomed() {
+  return !!unref(panzoom) && unref(panzoom).getScale() !== 1
+}
+
+defineExpose({ isZoomed })
+
+watch(() => file, initPanzoom, { immediate: true, deep: true })
+
+watch(
+  () => currentImageRotation,
+  () => {
+    if (!unref(panzoom)) {
+      return
+    }
+
+    setTransform({
+      scale: unref(panzoom).getScale(),
+      x: unref(panzoom).getPan().x,
+      y: unref(panzoom).getPan().y
+    })
+  }
+)
+
+let resetEventToken: string
+let zoomToken: string
+let shrinkToken: string
+
+onMounted(() => {
+  resetEventToken = eventBus.subscribe('app.preview.media.image.reset', () => initPanzoom())
+  zoomToken = eventBus.subscribe('app.preview.media.image.zoom', () =>
+    unref(panzoom)?.zoomIn({ step: 0.1 })
+  )
+  shrinkToken = eventBus.subscribe('app.preview.media.image.shrink', () =>
+    unref(panzoom)?.zoomOut({ step: 0.1 })
+  )
+})
+
+onBeforeUnmount(() => {
+  destroyPanzoom()
+
+  eventBus.unsubscribe('app.preview.media.image.reset', resetEventToken)
+  eventBus.unsubscribe('app.preview.media.image.zoom', zoomToken)
+  eventBus.unsubscribe('app.preview.media.image.shrink', shrinkToken)
+})
+</script>
