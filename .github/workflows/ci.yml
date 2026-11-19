@@ -806,7 +806,10 @@ jobs:
             -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
             "https://ghcr.io/v2/de0ch/hermit-sandbox/manifests/${TAG#aviary-}" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no sandbox image for $TAG"; exit 1; }
-          printf '{\n  "release": "%s",\n  "sandbox": "%s"\n}\n' "$TAG" "ghcr.io/de0ch/hermit-sandbox@$digest" > session-image/aviary.json
+          # the release and the sandbox are this run's; the gateway (jarvis-<sha12>, its sha256) stays jarvis4's: a file
+          # of only the two left the Dockerfile's download without a tag (404 on every branch, 2026-11-19)
+          jq --arg r "$TAG" --arg s "ghcr.io/de0ch/hermit-sandbox@$digest" '.release = $r | .sandbox = $s' \
+            session-image/aviary.json > "$RUNNER_TEMP/aviary.json" && mv "$RUNNER_TEMP/aviary.json" session-image/aviary.json
           cat session-image/aviary.json
       - name: free disk space (the base image is large)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
