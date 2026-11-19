@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use aviary_core::http::ApiError;
-use hermit_api::deployment::{AccessApp, Conversations, Deployment, Product, SignIn};
+use hermit_api::deployment::Deployment;
 use hermit_api::error;
 use hermit_api::people::{ExplicitPerson, People, Person, Role, WarmReply, WarmRequest};
 use hermit_api::sandbox::{
@@ -55,34 +55,35 @@ fn internal(e: impl std::fmt::Display) -> ApiError {
     )
 }
 
+/// The deployment hermit-jarvis answers (`/v1/deployment`). Built as JSON, so this crate builds against an aviary
+/// whose contract has no `features` yet (it drops the member) and one that has (it takes it): the pin moves to a new
+/// aviary only after its replica passed (aviary-pin.yml), and this crate must build on both sides of that.
+fn deployment_of(
+    settings: &crate::settings::Settings,
+    access_team: &str,
+    access_aud: &str,
+) -> Result<Deployment, serde_json::Error> {
+    serde_json::from_value(serde_json::json!({
+        "product": {"name": settings.product.name, "locale": settings.product.locale},
+        "signIn": {"access": [{"teamDomain": access_team, "audience": access_aud}],
+                   "appScheme": settings.sign_in.app_scheme},
+        // a new conversation in the chat proposes its own session (Deyao, 2026-11-18: start one and type at once; its
+        // first message waits for his approval in the Inbox); in a conversation, the composer's menu picks its model
+        // and thinking level from then on (Deyao, 2026-11-12: as on YYC AI); a session ends in the Jarvis 4 app, and
+        // its conversation with it (reconcile.rs)
+        "conversations": {"peopleCreate": true, "peoplePickModel": true, "peopleDelete": false},
+        // the app features the settings file turns on (Deyao, 2026-11-19: the question cards, one deployment first)
+        "features": settings.features,
+    }))
+}
+
 fn ts(t: OffsetDateTime) -> Timestamp {
     Timestamp::from_datetime(t)
 }
 
 impl Server for App {
     async fn deployment(&self, _ctx: Ctx) -> Answer<Deployment> {
-        Ok(Deployment {
-            product: Product {
-                name: self.settings.product.name.clone(),
-                locale: self.settings.product.locale.clone(),
-            },
-            sign_in: SignIn {
-                access: vec![AccessApp {
-                    team_domain: self.access_team.clone(),
-                    audience: self.access_aud.clone(),
-                }],
-                app_scheme: self.settings.sign_in.app_scheme.clone(),
-            },
-            // a new conversation in the chat proposes its own session (Deyao, 2026-11-18: start one and type at
-            // once; its first message waits for his approval in the Inbox); in a conversation, the composer's menu
-            // picks its model and thinking level from then on (Deyao, 2026-11-12: as on YYC AI)
-            conversations: Conversations {
-                people_create: true,
-                people_pick_model: true,
-                // a session ends in the Jarvis 4 app, and its conversation with it (reconcile.rs)
-                people_delete: false,
-            },
-        })
+        deployment_of(&self.settings, &self.access_team, &self.access_aud).map_err(internal)
     }
 
     async fn person(&self, _ctx: Ctx, email: String) -> Answer<Person> {
@@ -580,4 +581,41 @@ pub fn descriptor(app: &App, row: &SandboxRow) -> SandboxSelf {
         etag: String::new(),
     }
     .with_etag()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)] // tests
+mod tests {
+    use super::*;
+
+    /// The deployment as built from the settings: the product, sign-in and conversations; the settings' features
+    /// reach it (pigeon reads `features.personCards`) where the contract has them.
+    #[test]
+    fn the_deployment_comes_from_the_settings() {
+        let mut settings =
+            crate::settings::Settings::parse(include_str!("../tests/settings.json")).unwrap();
+        let v = serde_json::to_value(deployment_of(&settings, "team.example.com", "aud").unwrap())
+            .unwrap();
+        assert_eq!(v["product"]["name"], settings.product.name.as_str());
+        assert_eq!(v["signIn"]["access"][0]["audience"], "aud");
+        assert_eq!(
+            (
+                &v["conversations"]["peopleCreate"],
+                &v["conversations"]["peopleDelete"]
+            ),
+            (&serde_json::json!(true), &serde_json::json!(false))
+        );
+        assert!(
+            v.get("features")
+                .is_none_or(|f| f.get("personCards").is_none()),
+            "off by default: {v}"
+        );
+        settings.features.person_cards = true;
+        let v = serde_json::to_value(deployment_of(&settings, "team.example.com", "aud").unwrap())
+            .unwrap();
+        // an aviary whose contract has `features` keeps it; one without drops the member
+        if let Some(f) = v.get("features") {
+            assert_eq!(f["personCards"], true, "{v}");
+        }
+    }
 }

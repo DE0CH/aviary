@@ -36,6 +36,20 @@ pub struct Settings {
     /// know.
     #[serde(default, skip_serializing)]
     pub embedding: Option<gateway_api::models::Embedding>,
+    /// App features this deployment turns on, answered to pigeon in `/v1/deployment` (hermit's `features`), e.g.
+    /// `{"personCards": true}` (Deyao, 2026-11-19: the question cards, one deployment first). Never serialized: a
+    /// session on an older image refuses a member it does not know.
+    #[serde(default, skip_serializing)]
+    pub features: Features,
+}
+
+/// `features`: each off unless the file turns it on.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Features {
+    /// The question and wait cards in the chat (aviary magpie rule 11; pigeon's `/api/jarvis/me` `personCards`).
+    #[serde(default)]
+    pub person_cards: bool,
 }
 
 /// `signIn`.
@@ -383,6 +397,7 @@ mod tests {
             Settings {
                 sign_in: SignIn::default(),
                 embedding: None,
+                features: Features::default(),
                 ..s.clone()
             }
         );
