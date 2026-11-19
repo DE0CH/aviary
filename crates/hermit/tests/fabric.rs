@@ -2512,8 +2512,17 @@ async fn frozen_sandboxes_are_evicted_only_when_their_slot_is_needed() {
         eventually(|| evicted(&rig, y)).await,
         "y was not evicted from a host holding nothing running"
     );
-    let p = pass(&g, &r).await;
-    assert_eq!(p.terminated, vec![a.clone()]);
+    // a following pass releases it: one may still do nothing (a pass whose gateway heartbeat went unanswered returns
+    // before any release; CI under load, 2026-11-19)
+    let mut terminated = Vec::new();
+    for _ in 0..10 {
+        terminated = pass(&g, &r).await.terminated;
+        if !terminated.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert_eq!(terminated, vec![a.clone()]);
 
     // an evicted image goes with its row's release
     let fy = db::load(&rig.h.pool(), y).await.unwrap().unwrap().frozen.unwrap();
