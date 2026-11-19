@@ -275,7 +275,7 @@ measuring; test on a throttled connection. So:
   the early script and to the live theme's `surface0` by `appearance/system-bars.web.tsx` (a dark theme picked in
   the app on a light phone gets its dark bar that way). Tests: `yyc/web-manifest.test.ts`,
   `appearance/theme-color.test.ts`; the deployed site on an emulator's Chrome: workflow `yyc-web-install`
-  (`scripts/web-install/emulator_test.py`; claude-env `yyc-ai` skill, "Android: installed from Chrome").
+  (`scripts/web-install/emulator_test.py`; claude-env `yyc-ai` skill, "Android app (APK) and the site installed from Chrome").
 - **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
   send button over the frame's message box, typable before any script (font, line height and padding from
   `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
