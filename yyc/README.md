@@ -164,7 +164,7 @@ schedules), but it never acts outside YYC: nothing that sends, posts, pays or re
   yyc-mcp's tools pass only if listed in `deploy/tools/tools.json` `upstreams[0].tools` (default deny). Never list
   anything that sends mail, posts or changes data outside YYC.
 - **Sandbox internet = every site except a deny list** (Deyao, 2026-11-10: fewer false refusals; jarvis3
-  docs/CHAT.md "The sandbox internet rules", `generatedAllowlist`): refused are pastebins, file sharing and object
+  egress/CHAT.md "The sandbox internet rules", `generatedAllowlist`): refused are pastebins, file sharing and object
   storage, webhooks and request catchers, tunnels, anyone-runs-a-server platforms, form builders, webmail, open
   proxies/VPNs/shorteners and the other risky UT1 categories; every destination also against Cloudflare's
   malware-blocking DNS; an 8 MiB upload cap per connection (`maxUploadBytes`). A refused host cannot be enabled from

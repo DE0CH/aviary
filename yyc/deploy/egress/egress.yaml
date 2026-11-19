@@ -1,4 +1,4 @@
-# egress (DE0CH/jarvis3 chat, `args: [egress]`; spec-platform 9.7, 17.2; jarvis3 docs/CHAT.md "egress"): YYC's sandbox
+# egress (egress/, `args: [egress]`; spec-platform 9.7, 17.2; egress/CHAT.md "egress"): YYC's sandbox
 # gateway. The sandboxes' only way out: the proxy on 3128 (reached at the egress VIP 10.202.1.1 through the sandbox gateway,
 # which forwards to the load balancer of Service egress-lb below; a sandbox is known by its token alone), the fixed names model/tools/magpie/hermit, the package
 # mirror; the in-cluster API on 8082 (pigeon's models list, hermit's ops summary); health on 9090. Configuration:

@@ -1,4 +1,4 @@
-# The chat runtime image (docs/CHAT.md): egress (the sandbox gateway) and tools (REST), picked by the first argument
+# The egress image (egress/CHAT.md): egress (the sandbox gateway) and tools (REST), picked by the first argument
 # (Kubernetes `args: [egress]`). Build context: chat/.
 
 FROM node:22-trixie-slim

@@ -11,3 +11,23 @@ description = "fake-access's PEM parser in this commit matched the PEM header li
 condition = "AND"
 commits = ["a07f6b403123f2acae4118a55ee849fef434f50a"]
 paths = ['''^testing/fake-access/src/lib\.rs$''']
+
+[[allowlists]]
+description = "SealedSecrets: encryptedData is ciphertext only YYC's cluster can open (seal.py --check refuses anything else in this folder)"
+paths = ['''^yyc/deploy/sealed/[^/]+\.yaml$''']
+
+[[allowlists]]
+description = "YYC Drive's edge settings: the Access app's audience (ACCESS_AUD) is public, as every Access audience is"
+paths = ['''^yyc/deploy/drive/edge\.json$''']
+
+[[allowlists]]
+description = "the app's relay crypto test: fixed test keys, published with the test"
+paths = ['''^app/packages/relay/src/crypto\.test\.ts$''']
+
+[[allowlists]]
+description = "Qwen Code's upstream (QwenLM/qwen-code, merged into harness/qwen-code): its test fixtures and example tokens. The fork's own changes (de0ch/) stay scanned"
+paths = ['''^harness/qwen-code/(packages|integrations|integration-tests|docs|scripts|\.github|\.qwen)/''']
+
+[[allowlists]]
+description = "YYC Drive's upstream (ownCloud Web, merged into drive/): its fixtures, tests, dev and CI configs and vendored yarn. YYC Drive's own server/ and edge/ stay scanned"
+paths = ['''^drive/(__fixtures__|tests|dev|config|apps|\.yarn)/''', '''^drive/\.(drone|woodpecker)\.star$''', '''^drive/packages/''', '''^drive/src/services/auth\.js$''']

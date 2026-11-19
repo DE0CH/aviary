@@ -1,4 +1,4 @@
-# tools (DE0CH/jarvis3 chat, `args: [tools]`; spec-platform 9.7, 17.2 tools; jarvis3 docs/CHAT.md "tools"): YYC's
+# tools (egress/, `args: [tools]`; spec-platform 9.7, 17.2 tools; egress/CHAT.md "tools"): YYC's
 # read-only tools, called by sandboxes through egress's fixed name `tools` only. Holds the tool keys. Configuration:
 # tools.json (ConfigMap tools-config, hashed: mounted by subPath, a change rolls the pods) and the staff catalogue
 # (Secret catalogue as a directory, updated in place). yyc-mcp and the news stream's capture are on the old cluster

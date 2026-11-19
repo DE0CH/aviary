@@ -1,5 +1,5 @@
 name: egress
-# egress (YYC AI's sandbox gateway: the model and web route) and tools (REST), one image (egress/, docs/CHAT.md):
+# egress (YYC AI's sandbox gateway: the model and web route) and tools (REST), one image (egress/, egress/CHAT.md):
 # typecheck and tests against a real Postgres; egress, the image under test, against aviary's gateway and model
 # conformance suites built from this commit (aviary platform spec 17.3); then ghcr.io/de0ch/egress (linux/amd64 and
 # linux/arm64), smoke-tested, pushed on main as :<sha12> (the last commit that changed egress/, docs/DEPLOY.md) when

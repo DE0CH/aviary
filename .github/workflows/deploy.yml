@@ -5,7 +5,7 @@ name: deploy
 # rolls back a newer one). Then, in order, stopping at the first failure:
 #   1. jarvis: Jarvis chat, Jarvis 4's sessions and its fabric, through DE0CH/jarvis4's git (its cluster takes changes
 #      only from git, jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release,
-#      sandbox and gateway), k8s/cluster/tenants/chat.yaml (the chat's source commit and image tags) and
+#      sandbox and gateway), k8s/cluster/tenants/chat.yaml (the chat's source, this commit's tag deploy-<sha12>, and its image tags) and
 #      k8s/cluster/fabric (hermit and sandboxd), with jarvis4's deploy key; Flux applies the chat and the fabric,
 #      jarvis4's images.yml builds the session image, its fabric-ami.yml bakes the hosts' AMI when sandboxd changed. The site check waits until chat.deyaochen.com serves
 #      this app build and pigeon's API answers (an Access service token; no chat turn, Deyao 2026-11-19).
@@ -85,6 +85,23 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: {name: deploy, path: "${{ runner.temp }}/deploy"}
+      - name: the tag deploy-<sha12> on this commit (the chat tenant's source)
+        # pushed with the release-tag deploy key, as aviary-<sha12> is; a tag is never moved (a new deploy, a new tag)
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          tag=deploy-${SHA::12}
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY" "refs/tags/$tag" >/dev/null; then echo "tag $tag exists"; exit 0; fi
+          git init -q "$RUNNER_TEMP/t" && cd "$RUNNER_TEMP/t"
+          git fetch -q --depth 1 "https://github.com/$GITHUB_REPOSITORY" "$SHA"
+          key=$RUNNER_TEMP/release-tag-key
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
+          git tag "$tag" "$SHA"
+          GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
+          rm -f "$key"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, ssh-key: "${{ secrets.JARVIS4_DEPLOY_KEY }}"}
       - name: the sessions' release and the chat's commit and tags, in jarvis4
@@ -104,8 +121,8 @@ jobs:
           # Jarvis 4's own fabric (k8s/cluster/fabric): hermit's tag and digest, hermit.json's sandboxd release
           "$d/aviary-deploy" fabric k8s/cluster/fabric "$d/tags.json" "$d/digests.json"
           f=k8s/cluster/tenants/chat.yaml
-          sed -i -E "s/^(    commit: \")[0-9a-f]{40}(\".*)$/\1$SHA\2/" "$f"
-          grep -q "commit: \"$SHA\"" "$f" || { echo "::error::$f names no source commit to write"; exit 1; }
+          sed -i -E "s/^(    tag: \"deploy-)[0-9a-f]{12}(\".*)$/\1${SHA::12}\2/" "$f"
+          grep -q "tag: \"deploy-${SHA::12}\"" "$f" || { echo "::error::$f names no source tag to write"; exit 1; }
           "$d/aviary-deploy" set "$f" "$d/tags.json"
           git diff --stat
           if git diff --quiet; then echo "jarvis4 has this deploy already"; exit 0; fi

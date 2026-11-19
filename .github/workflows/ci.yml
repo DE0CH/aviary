@@ -833,6 +833,9 @@ jobs:
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
           (cd jarvis4/rust && (rustup show active-toolchain || rustup toolchain install))
           sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools iproute2 iptables > /dev/null
+      - name: the replica's stand-ins answer as the real services do (jarvis4 e2e/aviary unit tests)
+        working-directory: jarvis4/e2e
+        run: go version && go test ./aviary/
       - name: the replica (rust/e2e-kernel, E2E_HARNESS=aviary) on this release
         working-directory: jarvis4
         env:
