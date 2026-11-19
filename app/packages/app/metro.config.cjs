@@ -1,0 +1,168 @@
+const { getDefaultConfig } = require("expo/metro-config");
+const { resolve } = require("metro-resolver");
+const path = require("path");
+const { resolveLucideFile } = require("./babel/lucide-per-icon.js");
+
+const projectRoot = __dirname;
+const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
+const appSrcRoot = path.resolve(projectRoot, "src");
+const enrichedMarkdownKatexLoader = path.resolve(appSrcRoot, "markdown-runtime/enriched-markdown-katex.ts");
+const zodLocalesShim = path.resolve(appSrcRoot, "loading/zod-locales.ts");
+const normalizeColors = require.resolve("@react-native/normalize-colors", { paths: [projectRoot] });
+const reanimatedWorkletsVersionStub = path.resolve(appSrcRoot, "loading/reanimated-worklets-version.js");
+const gestureHandlerHammerStub = path.resolve(appSrcRoot, "loading/gesture-handler-hammer.js");
+const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
+const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const fdroidModuleOverrides = {
+  "expo-camera": path.resolve(appSrcRoot, "fdroid/expo-camera.tsx"),
+  "expo-notifications": path.resolve(appSrcRoot, "fdroid/expo-notifications.ts"),
+};
+const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
+  .trim()
+  .replace(/^\./, "")
+  .toLowerCase();
+
+const config = getDefaultConfig(projectRoot);
+config.cacheVersion = isWatchdogBuild ? "watchdog" : "standard";
+const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
+
+// Keep app exports deterministic across dev machines and CI. Metro's Watchman
+// crawler behavior depends on the host Watchman build/capabilities, while the
+// node crawler is the path used when Watchman is absent.
+config.resolver.useWatchman = false;
+
+const escapedAppSrcRoot = appSrcRoot
+  .split(path.sep)
+  .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
+  .join("[\\\\/]");
+const pathSeparatorPattern = "[\\\\/]";
+
+config.resolver.extraNodeModules = {
+  ...config.resolver.extraNodeModules,
+  react: path.join(appNodeModulesRoot, "react"),
+  "react-dom": path.join(appNodeModulesRoot, "react-dom"),
+  "react/jsx-runtime": path.join(appNodeModulesRoot, "react/jsx-runtime"),
+  "react/jsx-dev-runtime": path.join(appNodeModulesRoot, "react/jsx-dev-runtime"),
+};
+config.resolver.blockList = new RegExp(
+  `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
+);
+
+function isLocalModuleImport(moduleName) {
+  return (
+    moduleName.startsWith("./") ||
+    moduleName.startsWith("../") ||
+    moduleName.startsWith("@/") ||
+    path.isAbsolute(moduleName)
+  );
+}
+
+function resolveWithCustomWebOverlay(context, moduleName, platform) {
+  const shouldResolveCustomWebVariant =
+    platform === "web" &&
+    customWebPlatform.length > 0 &&
+    customWebPlatform !== "web" &&
+    isLocalModuleImport(moduleName);
+
+  if (shouldResolveCustomWebVariant) {
+    const overlayContext = {
+      ...context,
+      // Resolve only "<custom-platform>.<ext>" variants in overlay mode.
+      sourceExts: context.sourceExts.map((ext) => `${customWebPlatform}.${ext}`),
+      preferNativePlatform: false,
+    };
+
+    try {
+      return defaultResolveRequest(overlayContext, moduleName, null);
+    } catch {
+      // Ignore overlay misses and continue with normal web resolution.
+    }
+  }
+
+  return defaultResolveRequest(context, moduleName, platform);
+}
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // babel/lucide-per-icon.js imports icon files the package's exports map does not list
+  const lucideFile = resolveLucideFile(moduleName);
+  if (lucideFile) return { type: "sourceFile", filePath: lucideFile };
+  // KaTeX as its own chunk instead of the markdown package's synchronous require (docs/paseo-ui.md "Loading")
+  if (
+    platform === "web" &&
+    moduleName === "./katex.js" &&
+    /react-native-enriched-markdown[\\/]lib[\\/]module[\\/]web[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: enrichedMarkdownKatexLoader };
+  }
+  // zod's `locales` namespace (every language's messages) is never read; English alone stays
+  if (
+    platform === "web" &&
+    moduleName === "../locales/index.js" &&
+    /[\\/]zod[\\/]v4[\\/](classic|core)[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: zodLocalesShim };
+  }
+  // react-native-web's own older copy of @react-native/normalize-colors: the app's newer one parses the same colours
+  if (
+    platform === "web" &&
+    moduleName === "@react-native/normalize-colors" &&
+    /[\\/]react-native-web[\\/]dist[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: normalizeColors };
+  }
+  // Reanimated's development-only worklets version check (it brings semver) is a stub on web
+  if (platform === "web" && moduleName === "react-native-reanimated/scripts/validate-worklets-version") {
+    return { type: "sourceFile", filePath: reanimatedWorkletsVersionStub };
+  }
+  // Gesture handler's legacy Hammer.js web implementation (and Hammer.js) is never enabled; a stub stands in
+  if (
+    platform === "web" &&
+    /(^|[\\/])web_hammer[\\/]/.test(moduleName) &&
+    /react-native-gesture-handler[\\/]lib[\\/]module[\\/]/.test(context.originModulePath) &&
+    !/[\\/]web_hammer[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: gestureHandlerHammerStub };
+  }
+  if (
+    isWatchdogBuild &&
+    platform === "android" &&
+    /[/\\]Renderer[/\\]shims[/\\]/.test(context.originModulePath) &&
+    /implementations\/(ReactFabric|ReactNativeRenderer)-prod$/.test(moduleName)
+  ) {
+    return defaultResolveRequest(context, moduleName.replace(/-prod$/, "-profiling"), platform);
+  }
+  if (isFdroidBuild && platform === "android" && fdroidModuleOverrides[moduleName]) {
+    return resolveWithCustomWebOverlay(context, fdroidModuleOverrides[moduleName], platform);
+  }
+
+  return resolveWithCustomWebOverlay(context, moduleName, platform);
+};
+
+if (process.env.PASEO_SERVE_SIM_PREVIEW === "1") {
+  const { simMiddleware } = require("serve-sim/middleware");
+  const originalEnhanceMiddleware = config.server?.enhanceMiddleware;
+  config.server = config.server ?? {};
+  config.server.enhanceMiddleware = (metroMiddleware, server) => {
+    const middleware = originalEnhanceMiddleware
+      ? originalEnhanceMiddleware(metroMiddleware, server)
+      : metroMiddleware;
+    const serveSimulator = simMiddleware({
+      basePath: "/.sim",
+      device: process.env.PASEO_SERVE_SIM_DEVICE_UDID,
+    });
+    return (req, res, next) => {
+      serveSimulator(req, res, (error) => {
+        if (error) {
+          if (next) {
+            next(error);
+            return;
+          }
+          throw error;
+        }
+        middleware(req, res, next);
+      });
+    };
+  };
+}
+
+module.exports = config;
