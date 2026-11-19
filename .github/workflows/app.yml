@@ -1,0 +1,414 @@
+# The Paseo web app (app/) as an image for pigeon (pigeon spec 17.1, DESIGN 9.6): ghcr.io/de0ch/pigeon-app:<sha12>,
+# sha12 = the last commit that changed app/ (docs/DEPLOY.md), files under /app plus a static /cp. pigeon's
+# initContainer copies /app into the emptyDir pigeon serves. deploy.yml deploys it with the rest of main.
+#
+# tests + build (every branch: the gate waits for them): the app's whole test suite (app-tests.yml), the Expo web
+#   export (app/scripts/build-paseo-ui.mjs), the patch assertion, the chunk budgets, the touch-target check
+#   (app/scripts/touch-targets: every control on a phone at least 44 px), and the contract check against pigeon's frames
+#   (tools/check-frames) with its self-test on a seeded incompatible frame. Runs the app's dependencies' code, so it
+#   holds no secrets and a read-only token.
+# image (main, once per app tag): merges in the hashed assets of the pigeon-app builds served within the 720 h Access
+#   session lifetime (restored from their own images if :main lost them, and while the size budget allows the last 5
+#   and any of the last 30 days) and of every yyc-ai-ui image served within it: the builds deployed from aviary come
+#   from the deploy run's records (app/scripts/pigeon-app/deployments.mjs), the earlier ones from DE0CH/yyc-code's pin
+#   history (pins.mjs; their commits are DE0CH/claudecodeui's). It writes .br/.gz siblings, checks the size budget,
+#   pushes the image, checks the pushed image holds every seeded file byte for byte and that /cp works as pigeon's uid,
+#   then lists this build and the seeded ui builds in testing/paseo-contract/clients.txt (clients.yml, started here)
+#   and waits until main lists them all. Runs no dependency code (node built-ins, crane, docker), and trusts no cache
+#   entry it has not checked against the previous image's own record.
+name: app
+
+on:
+  push:
+    branches: ["**"]  # every branch: the gate waits for it
+    paths:
+      - "app/**"
+      - "public/sw.js"
+      - "app/scripts/build-paseo-ui.mjs"
+      - "app/scripts/check-chunks.mjs"
+      - "app/scripts/pigeon-app/**"
+      - "app/scripts/touch-targets/**"
+      - "tools/check-frames/**"
+      - "testing/paseo-contract/**"
+      - ".github/workflows/app.yml"
+      - ".github/workflows/app-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # the staff UI's whole test suite first (YYC AI is test-first, claude-env yyc-ai skill): nothing is built from a red commit
+  tests:
+    uses: ./.github/workflows/app-tests.yml
+
+  build:
+    needs: tests
+    # the standard runner for public repositories (4 vCPU, 16 GiB): the export needs a 6 GiB heap, which
+    # build-paseo-ui.mjs sets itself; a smaller runner fails or is OOM-killed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: tests of the bundle scripts
+        run: node --test app/scripts/pigeon-app/test/*.test.mjs
+      # Metro's file cache (os.tmpdir()/metro-cache): incremental exports well under the cold 20 min
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/metro-cache
+          # the app config is in the prefix: Metro's cache holds the config it embedded, and a cache restored by the
+          # prefix across a config change built an old config into the entry (claudecodeui, 2026-11-19)
+          key: metro-${{ hashFiles('app/package-lock.json') }}-${{ hashFiles('app/packages/app/app.config.js') }}-${{ hashFiles('app/packages/app/**') }}
+          restore-keys: metro-${{ hashFiles('app/package-lock.json') }}-${{ hashFiles('app/packages/app/app.config.js') }}-
+      - name: install (postinstall applies app/patches)
+        run: npm --prefix app ci --no-audit --no-fund
+      # an Expo bump that silently stops the no-__common patch applying would put lazy code back on the first load
+      - name: the @expo/metro-config patch applied
+        run: grep -q 'const commonChunk = undefined' app/node_modules/@expo/metro-config/build/serializer/serializeChunks.js
+      - name: web export
+        run: node app/scripts/build-paseo-ui.mjs
+      # uploaded before the checks, so a red check can be compared with the export it judged (the image job needs this
+      # whole job green, so a red build never ships)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-export
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+      - name: chunk sizes and loading budgets
+        run: node app/scripts/check-chunks.mjs dist --strict
+      # every control of the phone layout is at least a finger's 44 px (docs/paseo-ui.md "Touch targets"): the export,
+      # screen by screen on a 390 px touch phone against a stand-in for pigeon; a failed run's screenshots, the small
+      # controls outlined, are the artifact touch-targets
+      - name: Playwright's Chromium for the touch-target check
+        working-directory: app/packages/app
+        run: npx playwright install --with-deps chromium
+      - name: touch targets on a phone
+        run: node app/scripts/touch-targets/check.mjs dist "$RUNNER_TEMP/touch-targets"
+      - name: a question card pushed live is drawn once, also after scrolling
+        run: node app/scripts/touch-targets/cards.mjs dist "$RUNNER_TEMP/touch-targets"
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: touch-targets
+          path: ${{ runner.temp }}/touch-targets
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: tools/check-frames
+        run: |
+          rustup toolchain install && cargo build --locked --release --manifest-path tools/check-frames/Cargo.toml
+          echo "$PWD/tools/check-frames/target/release" >> "$GITHUB_PATH"
+      - name: contract check against pigeon's frames
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: check-frames "$RUNNER_TEMP/frames"
+      # passes only when the validator ran and rejected the seeded frame itself: exit 1 alone is not enough (a crash of
+      # node, npm or the script under set -e exits 1 too)
+      - name: the contract check fails on a seeded incompatible frame
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: check-frames --self-test "$RUNNER_TEMP/frames" app/scripts/pigeon-app/test/incompatible-frame.ndjson
+
+  part:
+    # the app's tag (docs/DEPLOY.md): the last commit that changed app/ (deploy/images.json "pigeon-app"); main builds
+    # that tag once
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      have: ${{ steps.p.outputs.have }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+      - id: p
+        run: |
+          # shellcheck disable=SC2046 # a list of paths
+          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."pigeon-app".paths | join(" ")' deploy/images.json))
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/pigeon-app:pull" | jq -r .token)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/de0ch/pigeon-app/manifests/${sha::12}")
+          echo "pigeon-app:${sha::12}: HTTP $code"
+          if [ "$code" = 200 ]; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+
+  image:
+    needs: [build, part]
+    if: needs.part.outputs.have == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    # one image job at a time: each merges the previous image's assets
+    concurrency:
+      group: pigeon-app-image
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      actions: write  # starts clients.yml
+      deployments: read
+    env:
+      IMAGE: ghcr.io/de0ch/pigeon-app
+      UI_IMAGE: ghcr.io/de0ch/yyc-ai-ui
+      # the build's commit: the last that changed app/ (its tag's 12 characters)
+      PART_SHA: ${{ needs.part.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # every commit of main (no old trees or blobs), to resolve the builds' tags to their commits
+          fetch-depth: 0
+          filter: tree:0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.3
+      - name: crane
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/crane.tgz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/crane.tgz" -C "$RUNNER_TEMP/bin" crane
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: registry login
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          crane auth login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+
+      - name: the images served within the Access session lifetime (the deploy run's records, DE0CH/yyc-code's pin history)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # a blobless clone of the deploy repository before the monorepo: pins.mjs fetches the kustomizations it reads
+          git clone -q --bare --filter=blob:none https://github.com/DE0CH/yyc-code.git "$RUNNER_TEMP/yyc.git"
+          # the builds before the monorepo are DE0CH/claudecodeui commits (no trees or blobs: their names only)
+          git clone -q --bare --filter=tree:0 https://github.com/DE0CH/claudecodeui.git "$RUNNER_TEMP/ccui.git"
+          # a build's tag → its commit: an aviary commit (deployed from here) or an earlier claudecodeui one
+          commit_of() { git rev-parse --verify --quiet "$1^{commit}" || git -C "$RUNNER_TEMP/ccui.git" rev-parse --verify --quiet "$1^{commit}"; }
+          echo "yyc-ai-ui (the seeds):"
+          # 720 h plus a 24 h margin for push and rollout delays (pins.mjs). An empty list is an error only while YYC
+          # still pins yyc-ai-ui: after the switch's cleanup removes the ui pin, the seeds run out 744 h later
+          node app/scripts/pigeon-app/pins.mjs --repo "$RUNNER_TEMP/yyc.git" --image yyc-ai-ui --hours 720 --margin-hours 24 --require-while-pinned | tee "$RUNNER_TEMP/pins.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || exit 1
+          cut -d' ' -f1 "$RUNNER_TEMP/pins.txt" > "$RUNNER_TEMP/seed-tags.txt"
+          echo "pigeon-app (their builds stay whatever their age): YYC's pins before the monorepo, then both deployments' records"
+          node app/scripts/pigeon-app/pins.mjs --repo "$RUNNER_TEMP/yyc.git" --image pigeon-app --hours 720 --margin-hours 24 | tee "$RUNNER_TEMP/app-pins.txt"
+          for env in yyc-ai jarvis; do
+            node app/scripts/pigeon-app/deployments.mjs --repo "$GITHUB_REPOSITORY" --environment "$env" --image pigeon-app --hours 720 --margin-hours 24 | tee -a "$RUNNER_TEMP/app-pins.txt"
+          done
+          : > "$RUNNER_TEMP/served-builds.txt"
+          while read -r tag _; do
+            commit=$(commit_of "$tag") || { echo "::error::pigeon-app tag $tag is neither an aviary nor a claudecodeui commit"; exit 1; }
+            grep -qx "$commit" "$RUNNER_TEMP/served-builds.txt" || echo "$commit" >> "$RUNNER_TEMP/served-builds.txt"
+          done < "$RUNNER_TEMP/app-pins.txt"
+
+      - name: the seeds' commits
+        run: |
+          # in pin order, oldest first (pins.mjs's order), without repeats: assemble's report
+          # charges the seeds newest pin first
+          awk '!seen[$0]++' "$RUNNER_TEMP/seed-tags.txt" > "$RUNNER_TEMP/seed-tags.dedup" && mv "$RUNNER_TEMP/seed-tags.dedup" "$RUNNER_TEMP/seed-tags.txt"
+          : > "$RUNNER_TEMP/seeds.txt"
+          while read -r tag; do
+            commit=$(git -C "$RUNNER_TEMP/ccui.git" rev-parse --verify --quiet "$tag^{commit}") \
+              || { echo "::error::yyc-ai-ui tag $tag is not a single claudecodeui commit"; exit 1; }
+            echo "$tag $commit" >> "$RUNNER_TEMP/seeds.txt"
+          done < "$RUNNER_TEMP/seed-tags.txt"
+          cat "$RUNNER_TEMP/seeds.txt"
+
+      # the merge base, and the trusted record of every seed it holds (meta/seeds.json: digests and sha256 the image job
+      # took from its own fresh exports)
+      - name: the previous pigeon-app image
+        id: previous
+        run: |
+          set +e
+          digest=$(crane digest --platform linux/amd64 "$IMAGE:main" 2> "$RUNNER_TEMP/previous.err")
+          status=$?
+          set -e
+          if [ "$status" != 0 ]; then
+            if grep -q MANIFEST_UNKNOWN "$RUNNER_TEMP/previous.err"; then
+              echo "::notice::no $IMAGE:main yet: the first build"
+              echo "dir=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/previous.err" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/previous"
+          crane export --platform linux/amd64 "$IMAGE@$digest" - | tar -x -C "$RUNNER_TEMP/previous" app meta
+          echo "previous: $IMAGE:main = $digest, built from $(jq -r '.[0].commit' "$RUNNER_TEMP/previous/meta/builds.json")"
+          echo "dir=$RUNNER_TEMP/previous" >> "$GITHUB_OUTPUT"
+
+      # a served pigeon-app build that :main no longer holds (YYC rolled back to a pruned build): its files come from its
+      # own image, which GHCR keeps
+      - name: served builds the previous image no longer holds
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.dir }}
+        run: |
+          : > "$RUNNER_TEMP/restore.txt"
+          while read -r commit; do
+            if [ -n "$PREVIOUS" ] && jq -e --arg c "$commit" 'any(.[]; .commit == $c)' "$PREVIOUS/meta/builds.json" >/dev/null; then continue; fi
+            [ "$commit" != "$PART_SHA" ] || continue
+            dir="$RUNNER_TEMP/restore/$commit"
+            mkdir -p "$dir"
+            crane export --platform linux/amd64 "$IMAGE:${commit::12}" - | tar -x -C "$dir" app meta
+            echo "restoring build ${commit::12} from $IMAGE:${commit::12}"
+            echo "$commit=$dir" >> "$RUNNER_TEMP/restore.txt"
+          done < "$RUNNER_TEMP/served-builds.txt"
+
+      # a download cache only: fetch-seeds.mjs accepts a cached tag only at the tag's current digest and with exactly
+      # the files and sha256 the previous image's seeds.json records (any job of the branch can write a cache entry)
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/seeds
+          key: pigeon-app-seeds-${{ github.run_id }}
+          restore-keys: pigeon-app-seeds-
+      - name: fetch the seeds (/app/dist/_expo/static and /app/dist/assets of each ui image)
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.dir }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/seeds"
+          # drop cached images no longer listed
+          for dir in "$RUNNER_TEMP"/seeds/*/ "$RUNNER_TEMP"/seeds/.fetch-*; do
+            [ -e "$dir" ] || continue
+            grep -qx "$(basename "$dir")" "$RUNNER_TEMP/seed-tags.txt" || rm -rf "$dir"
+          done
+          args=(--dir "$RUNNER_TEMP/seeds")
+          [ -z "$PREVIOUS" ] || args+=(--trusted "$PREVIOUS/meta/seeds.json")
+          mapfile -t tags < "$RUNNER_TEMP/seed-tags.txt"
+          node app/scripts/pigeon-app/fetch-seeds.mjs "${args[@]}" "${tags[@]}"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/seeds
+          key: pigeon-app-seeds-${{ github.run_id }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-export
+          path: ${{ runner.temp }}/dist
+      # pigeon's emptyDir for these files is 2 GiB (DE0CH/yyc-code yyc-ai/deploy/pigeon.yaml): the tree may take 2016 MiB of it on disk. This
+      # holds only once the pigeon container's ephemeral-storage limit covers the emptyDir too (kubelet counts a
+      # disk-backed emptyDir against the pod's summed limits; app/scripts/pigeon-app/README.md "Size"): the budget follows
+      # the lower of the two
+      - name: assemble (merge, prune, .br/.gz, sw.js, the size budget)
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.dir }}
+        run: |
+          # --pins: the report gives the mandatory part's headroom and projects it over 744 h at the ui pin rate of the
+          # last 7 days (a warning when it would go over the budget; README design gap 1)
+          args=(--dist "$RUNNER_TEMP/dist" --sw public/sw.js --commit "$PART_SHA" --out "$RUNNER_TEMP/pigeon-app" --seeds "$RUNNER_TEMP/seeds" --budget-mib 2016 --pins "$RUNNER_TEMP/pins.txt")
+          [ -z "$PREVIOUS" ] || args+=(--previous "$PREVIOUS")
+          while read -r tag commit; do args+=(--seed "$tag=$commit"); done < "$RUNNER_TEMP/seeds.txt"
+          while read -r commit; do args+=(--served-build "$commit"); done < "$RUNNER_TEMP/served-builds.txt"
+          while read -r restore; do args+=(--restore "$restore"); done < "$RUNNER_TEMP/restore.txt"
+          node app/scripts/pigeon-app/assemble.mjs "${args[@]}"
+          mapfile -t tags < "$RUNNER_TEMP/seed-tags.txt"
+          node app/scripts/pigeon-app/verify-seeds.mjs "$RUNNER_TEMP/pigeon-app/app" "$RUNNER_TEMP/seeds" "${tags[@]}"
+
+      - name: build and push
+        run: |
+          tag=${PART_SHA::12}
+          # amd64 and arm64 (the new cluster's workers are ARM): the files are the same, only /cp is per platform
+          # (a multi-platform build needs buildx's docker-container driver; the default docker driver refuses it)
+          docker buildx create --use --driver docker-container --name multi >/dev/null
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$PART_SHA" \
+            -f app/scripts/pigeon-app/Dockerfile -t "$IMAGE:$tag" --push "$RUNNER_TEMP/pigeon-app"
+      # /cp under a memory limit: under cgroup v2 the page cache the copy dirties is charged to the initContainer, and
+      # how much of it the kernel writes back and reclaims in time depends on the host. On a Hetzner host (Ubuntu 6.8)
+      # the real tree copies within 32 MiB; on GitHub's runner (7.0 azure) /cp is OOM-killed at 32, 64 and 128 MiB
+      # and copies at 256 MiB. Platform 9.4's 32Mi is too low; the manifest's initContainer gets CP_MEMORY_MIB, the
+      # emptyDir's size, which no copy into it can outgrow (README "Design gaps" 4). The step must copy within that and
+      # reports the lowest limit that worked on this host.
+      - name: the pushed image holds every seeded file, and /cp copies it as pigeon's uid within the initContainer's memory limit
+        env:
+          CP_MEMORY_MIB: 2048
+        run: |
+          tag=${PART_SHA::12}
+          mkdir -p "$RUNNER_TEMP/pushed"
+          crane export --platform linux/amd64 "$IMAGE:$tag" - | tar -x -C "$RUNNER_TEMP/pushed"
+          mapfile -t tags < "$RUNNER_TEMP/seed-tags.txt"
+          node app/scripts/pigeon-app/verify-seeds.mjs "$RUNNER_TEMP/pushed/app" "$RUNNER_TEMP/seeds" "${tags[@]}"
+          docker pull -q "$IMAGE:$tag" >/dev/null
+          echo "host: kernel $(uname -r), $(docker info -f 'cgroup v{{.CgroupVersion}}, docker {{.ServerVersion}}')"
+          for mib in 32 64 128 256 512 1024 2048; do
+            [ "$mib" -le "$CP_MEMORY_MIB" ] || break
+            dir="$RUNNER_TEMP/srv-app-$mib"
+            mkdir -p "$dir"
+            sudo chown 65532:65532 "$dir"
+            set +e
+            docker run --name "cp-$mib" --user 65532:65532 --read-only --cap-drop ALL --security-opt no-new-privileges \
+              --memory "${mib}m" --memory-swap "${mib}m" \
+              -v "$dir:/srv/app" "$IMAGE:$tag" /cp -a /app/. /srv/app/
+            status=$?
+            set -e
+            oom=$(docker inspect -f '{{.State.OOMKilled}}' "cp-$mib")
+            docker rm -f "cp-$mib" >/dev/null
+            if [ "$status" = 0 ] && sudo diff -r "$RUNNER_TEMP/pushed/app" "$dir"; then
+              echo "/cp copied $(sudo find "$dir" -type f | wc -l) files ($(sudo du -sm "$dir" | cut -f1) MiB) within $mib MiB (the manifest's limit: $CP_MEMORY_MIB MiB)"
+              exit 0
+            fi
+            echo "/cp within $mib MiB: exit $status, OOM-killed: $oom, $(sudo du -sm "$dir" | cut -f1) MiB copied"
+            sudo rm -rf "$dir"
+          done
+          echo "::error::/cp did not copy the tree within $CP_MEMORY_MIB MiB"
+          exit 1
+      - name: the arm64 image holds the same files, and its /cp is an arm64 binary
+        run: |
+          tag=${PART_SHA::12}
+          mkdir -p "$RUNNER_TEMP/pushed-arm64"
+          crane export --platform linux/arm64 "$IMAGE:$tag" - | tar -x -C "$RUNNER_TEMP/pushed-arm64"
+          diff -r "$RUNNER_TEMP/pushed/app" "$RUNNER_TEMP/pushed-arm64/app"
+          diff -r "$RUNNER_TEMP/pushed/meta" "$RUNNER_TEMP/pushed-arm64/meta"
+          file -L "$RUNNER_TEMP/pushed-arm64/cp" | tee /dev/stderr | grep -q 'ARM aarch64'
+      # the next build's merge base. Also after a run of an older commit that waited behind a newer one: its image holds
+      # everything the newer one kept, plus its own build
+      - name: move :main
+        run: crane tag "$IMAGE:${PART_SHA::12}" main
+
+      # GitHub keeps one pending run per concurrency group, so of three quick pushes the middle one's image job is
+      # cancelled: that commit gets no pigeon-app image (so nothing can pin it) and is not dispatched here. If its ui
+      # image is pinned in YYC, the next pigeon-app build seeds it and lists it (the seed list is read anew each run);
+      # the A1 build reads the whole 720 h of pins, so every ui commit a pigeon-served tab can run is listed by then.
+      - name: list this build and the seeded ui builds in testing/paseo-contract/clients.txt (clients.yml, one run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo "$PART_SHA"; cut -d' ' -f2 "$RUNNER_TEMP/seeds.txt"; } | sed '/^$/d' | sort -u > "$RUNNER_TEMP/dispatched.txt"
+          echo "starting clients.yml for $(wc -l < "$RUNNER_TEMP/dispatched.txt") builds"
+          # a workflow_dispatch made with this run's token starts the workflow (other events it makes start none)
+          gh workflow run clients.yml -R "$GITHUB_REPOSITORY" --ref main -f clients="$(sed 's/$/:web/' "$RUNNER_TEMP/dispatched.txt" | tr '\n' ' ')"
+      # clients.yml validates and commits the lines (and starts itself again on a stale list): this step waits until
+      # main lists every dispatched commit
+      - name: aviary's clients.txt lists every dispatched commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$(( $(date +%s) + 60 * 60 ))
+          while :; do
+            if gh api -H 'Accept: application/vnd.github.raw+json' "repos/DE0CH/aviary/contents/testing/paseo-contract/clients.txt?ref=main" > "$RUNNER_TEMP/clients.txt" 2> "$RUNNER_TEMP/clients.err"; then
+              missing=$(node app/scripts/pigeon-app/clients-missing.mjs "$RUNNER_TEMP/clients.txt" "$RUNNER_TEMP/dispatched.txt")
+              if [ -z "$missing" ]; then
+                echo "aviary main's clients.txt lists all $(wc -l < "$RUNNER_TEMP/dispatched.txt") dispatched commits"
+                break
+              fi
+              echo "not listed yet: $(wc -w <<<"$missing") commits"
+            else
+              echo "reading clients.txt failed: $(head -c 300 "$RUNNER_TEMP/clients.err")"
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::after 60 min aviary main's clients.txt still lacks: $missing (see DE0CH/aviary's clients workflow runs)"
+              exit 1
+            fi
+            sleep 60
+          done

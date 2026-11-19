@@ -1,0 +1,115 @@
+# herald (DE0CH/aviary crates/herald): Telegram notification channels a conversation creates and posts to. Sandboxes
+# reach it only through egress's route `telegram` (egress.json), which injects the pair token and the verified
+# Aviary-Sandbox-Conversation. It creates channels as YYC's Telegram account (+44 7448 090466, connected only for a
+# creation) and posts as the bot; both go out through the socks pool. Stateless: a channel's handle is signed for its
+# conversation (crates/herald/README.md). Secret herald: HERALD_ACCEPT_GATEWAY (= egress's EGRESS_TOKEN_HERALD),
+# HERALD_HANDLE_KEY, HERALD_TELEGRAM_API_ID, HERALD_TELEGRAM_SESSION, HERALD_BOT_TOKEN, HERALD_SOCKS (the socks pool),
+# HERALD_TITLE_PREFIX (「YYC AI ·」).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: herald
+  namespace: yyc-ai
+  labels: {app: herald}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: herald}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: herald}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 330
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: herald}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: herald
+          image: herald
+          args: [serve]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: HERALD_SOCKS, valueFrom: {secretKeyRef: {name: herald, key: HERALD_SOCKS}}}
+            - {name: HERALD_TITLE_PREFIX, valueFrom: {secretKeyRef: {name: herald, key: HERALD_TITLE_PREFIX}}}
+            - {name: HERALD_ACCEPT_GATEWAY, valueFrom: {secretKeyRef: {name: herald, key: HERALD_ACCEPT_GATEWAY}}}
+            - {name: HERALD_HANDLE_KEY, valueFrom: {secretKeyRef: {name: herald, key: HERALD_HANDLE_KEY}}}
+            - {name: HERALD_TELEGRAM_API_ID, valueFrom: {secretKeyRef: {name: herald, key: HERALD_TELEGRAM_API_ID}}}
+            - {name: HERALD_TELEGRAM_SESSION, valueFrom: {secretKeyRef: {name: herald, key: HERALD_TELEGRAM_SESSION}}}
+            - {name: HERALD_BOT_TOKEN, valueFrom: {secretKeyRef: {name: herald, key: HERALD_BOT_TOKEN}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 10}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi, ephemeral-storage: 16Mi}
+            limits: {cpu: "1", memory: 64Mi, ephemeral-storage: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: herald, namespace: yyc-ai}
+spec:
+  selector: {app: herald}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: herald, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: herald}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: herald-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: herald}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: egress}}}]
+      ports: [{port: 8080, protocol: TCP}]
+---
+# out: only the socks pool (host-network pods on the nodes' private addresses: the Cilium entities on this cluster)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: herald-out-socks, namespace: yyc-ai}
+spec:
+  endpointSelector: {matchLabels: {app: herald}}
+  egress:
+    - toEntities: [host, remote-node]
+      toPorts: [{ports: [{port: "1080", protocol: TCP}]}]

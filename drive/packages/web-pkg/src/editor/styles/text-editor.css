@@ -1,0 +1,265 @@
+/* Editor layout styles */
+.text-editor-content {
+  --text-editor-zoom-factor: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  container-type: inline-size;
+}
+
+.text-editor-provider .text-editor-content .ProseMirror {
+  max-width: 800px;
+  padding: 1rem;
+}
+
+.text-editor-content .ProseMirror {
+  flex: 1;
+  min-height: 100%;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  border: none;
+  margin: 0 auto;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  zoom: var(--text-editor-zoom-factor);
+}
+
+/* Focus styles */
+.text-editor-content .ProseMirror:focus,
+.text-editor-content .ProseMirror:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Placeholder styles */
+.text-editor-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--oc-role-outline-variant, rgba(0, 0, 0, 0.4));
+  pointer-events: none;
+  user-select: none;
+  height: 0;
+}
+
+/* Slash command filter styles */
+.text-editor-content .ProseMirror .text-editor-slash-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  background: var(--oc-role-surface-container);
+  color: var(--oc-role-on-surface-variant);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+}
+
+.text-editor-content .ProseMirror .text-editor-slash-filter::first-letter {
+  color: var(--oc-role-secondary);
+}
+
+.text-editor-content .ProseMirror .text-editor-slash-filter--empty::after {
+  content: attr(data-decoration-content);
+  color: var(--oc-role-on-surface-variant);
+  opacity: 0.9;
+}
+
+/* Paragraph styles */
+.text-editor-content .ProseMirror p {
+  margin: 0 0 8px;
+}
+
+/* Heading styles */
+.text-editor-content .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+/* First block styles */
+.text-editor-content .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+/* Link styles */
+.text-editor-content .ProseMirror a {
+  color: var(--oc-role-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Mention styles */
+.text-editor-content .ProseMirror .text-editor-mention {
+  color: var(--oc-role-secondary);
+  font-weight: 600;
+}
+
+/* List styles */
+.text-editor-content .ProseMirror ul:not(.vs__dropdown-menu) {
+  list-style-type: disc;
+  padding-left: 20px;
+  margin: 4px 0 8px;
+}
+
+.text-editor-content .ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 20px;
+  margin: 4px 0 8px;
+}
+
+.text-editor-content .ProseMirror li:not(.vs__dropdown-option):not(.vs__no-options) {
+  margin: 2px 0;
+}
+
+/* Text formatting styles */
+.text-editor-content .ProseMirror strong {
+  font-weight: 600;
+}
+
+.text-editor-content .ProseMirror em {
+  font-style: italic;
+}
+
+.text-editor-content .ProseMirror u {
+  text-decoration: underline;
+}
+
+/* Blockquote styles */
+.text-editor-content .ProseMirror blockquote {
+  border-left: 2px solid var(--oc-role-outline-variant);
+  padding-left: 12px;
+  margin: 4px 0 8px;
+  font-style: italic;
+  opacity: 0.9;
+}
+
+/* Source view styles */
+.text-editor-content textarea {
+  font-size: 15px;
+  zoom: var(--text-editor-zoom-factor);
+}
+
+/* Codeblock styles */
+.text-editor-content .ProseMirror pre {
+  font-size: 14px;
+  background: var(--oc-role-surface-container-high);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+/* Inline code styles */
+.text-editor-content .ProseMirror :not(pre) > code {
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: var(--oc-role-surface-container-high);
+}
+
+/* Codeblock container styles */
+.text-editor-content .ProseMirror .code-block {
+  position: relative;
+}
+
+/* reserve a row for the language selector so it never covers the code */
+.text-editor-content .ProseMirror .code-block pre {
+  padding-top: 28px;
+}
+
+/* Frontmatter styles */
+.text-editor-content .ProseMirror .text-editor-frontmatter {
+  position: relative;
+  margin: 0 0 1.5rem;
+  /* reserve a row for the label so it never covers the content */
+  padding: 28px 12px 8px;
+  border: 1px dashed var(--oc-role-outline-variant);
+  border-radius: 6px;
+  background: var(--oc-role-surface-container-high);
+  color: var(--oc-role-on-surface-variant);
+  font-size: 13px;
+}
+
+.text-editor-content .ProseMirror .text-editor-frontmatter pre {
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+}
+
+/* Raw HTML styles */
+.text-editor-content .ProseMirror .text-editor-html-block {
+  position: relative;
+}
+
+/* reserve a row for the label so it never covers the html */
+.text-editor-content .ProseMirror .text-editor-html-block pre {
+  padding-top: 28px;
+}
+
+.text-editor-content .ProseMirror .text-editor-html-inline {
+  font-size: 13px;
+  color: var(--oc-role-on-surface-variant);
+}
+
+/* Table styles */
+.text-editor-content .ProseMirror .tableWrapper {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.text-editor-content .ProseMirror .tableWrapper table {
+  margin: 0;
+}
+
+.text-editor-content .ProseMirror table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.text-editor-content .ProseMirror th,
+.text-editor-content .ProseMirror td {
+  border: 1px solid var(--oc-role-outline-variant);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.text-editor-content .ProseMirror th {
+  font-weight: 600;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+/* Task list styles */
+.text-editor-content .ProseMirror ul[data-type='taskList'] {
+  list-style-type: none;
+  padding-left: 4px;
+}
+
+.text-editor-content .ProseMirror ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.text-editor-content .ProseMirror ul[data-type='taskList'] li label {
+  margin-top: 2px;
+}
+
+/* Horizontal rule styles */
+.text-editor-content .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--oc-role-outline-variant);
+  margin: 12px 0;
+}
+
+/* Make room for the hover controls (plus button, drag handle) left of the content when the container is narrow */
+@container (max-width: 840px) {
+  .text-editor-provider .text-editor-content .ProseMirror {
+    max-width: 100%;
+    padding-left: calc(1rem + var(--text-editor-handle-width, 3rem));
+  }
+}

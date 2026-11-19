@@ -1,0 +1,135 @@
+# YYC Drive (DE0CH/yyc-drive: a fork of OpenCloud's web page and its own small server, YYC-DRIVE.md): one shared
+# folder for the whole company at https://drive.yyc-internal.com, the same folder every YYC AI sandbox has at /drive.
+# The folder is `drive/` of the JuiceFS volume yyc-ai (PV drive-jfs below, the volume hermit's /jfs is). No database,
+# no secrets: its settings are flags. Sign-in is Cloudflare Access (app "YYC Drive"). The page, its settings and its
+# sign-in are the edge's: the Worker yyc-drive (job drive-edge of yyc-ai.yml, from this same image; its settings are
+# edge.json, whose DRIVE_NAME is this --name), which passes the folder's calls here naming the person in a header;
+# cloudflared checks Access's token on the tunnel's rule, and only cloudflared reaches the pods (drive-in).
+# Uploads arrive in 10 MB pieces kept in the folder's `.drive-uploads` until the last one, so any replica takes any
+# piece. On SIGTERM it finishes the transfers in flight; one longer than the grace period is cut (a large download
+# during a rollout: the browser asks again).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive
+  namespace: yyc-ai
+  labels: {app: drive}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: drive}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: drive}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 120
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: drive}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: drive
+          image: yyc-drive
+          args: [--root, /drive, --name, YYC Drive, --url, "https://drive.yyc-internal.com"]
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 10}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi, ephemeral-storage: 16Mi}
+            # 512Mi: ffmpeg draws previews, two at a time (one frame, one thread each)
+            limits: {cpu: "1", memory: 512Mi, ephemeral-storage: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: jfs, mountPath: /drive, subPath: drive}
+      volumes:
+        - {name: jfs, persistentVolumeClaim: {claimName: drive-jfs}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: drive, namespace: yyc-ai}
+spec:
+  selector: {app: drive}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: drive, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: drive}
+---
+# in: only cloudflared (it checks Access's token for this host). Out: nothing (the JuiceFS mount is the CSI driver's).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: drive-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: drive}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: cloudflared}}}]
+      ports: [{port: 8080, protocol: TCP}]
+---
+# The JuiceFS volume yyc-ai once more, with its own volumeHandle (its own mount pods), as hermit-jfs is
+# (hermit/juicefs.yaml); the pod mounts only the folder `drive/` of it. Files are uid/gid 1000, as the sandboxes' are.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: drive-jfs
+  labels: {juicefs-volume: yyc-ai-drive}
+spec:
+  capacity: {storage: 1Pi}
+  volumeMode: Filesystem
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: csi.juicefs.com
+    volumeHandle: yyc-ai-drive
+    fsType: juicefs
+    nodePublishSecretRef: {name: hermit-juicefs, namespace: yyc-ai}
+  mountOptions: [cache-size=0, open-cache=0, all-squash=1000:1000]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drive-jfs
+  namespace: yyc-ai
+spec:
+  accessModes: [ReadWriteMany]
+  volumeMode: Filesystem
+  resources: {requests: {storage: 1Pi}}
+  storageClassName: ""
+  selector:
+    matchLabels: {juicefs-volume: yyc-ai-drive}

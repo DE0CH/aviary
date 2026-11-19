@@ -1,0 +1,633 @@
+/**
+ * @license
+ * Copyright 2025 Qwen
+ * SPDX-License-Identifier: Apache-2.0
+ */
+// @vitest-environment jsdom
+
+import type { Config } from '@qwen-code/qwen-code-core/config/config.js';
+import { MessageBusType } from '@qwen-code/qwen-code-core/confirmation-bus/types.js';
+import { renderHook } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { StreamingState } from '../types.js';
+import {
+  LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS,
+  useAttentionNotifications,
+} from './useAttentionNotifications.js';
+import type { LoadedSettings } from '../../config/settings.js';
+import type { TerminalNotification } from './useTerminalNotification.js';
+import type { TrackedToolCall } from './useReactToolScheduler.js';
+
+vi.mock('../../services/notificationService.js', () => ({
+  sendNotification: vi.fn(),
+}));
+
+const { sendNotification: mockedSendNotification } = await import(
+  '../../services/notificationService.js'
+);
+
+const mockTerminal: TerminalNotification = {
+  notifyITerm2: vi.fn(),
+  notifyKitty: vi.fn(),
+  notifyGhostty: vi.fn(),
+  notifyBell: vi.fn(),
+  writeTerminalSequence: vi.fn(() => true),
+};
+
+const mockSettings: LoadedSettings = {
+  merged: {
+    general: {
+      terminalBell: true,
+    },
+  },
+} as LoadedSettings;
+
+const mockSettingsDisabled: LoadedSettings = {
+  merged: {
+    general: {
+      terminalBell: false,
+    },
+  },
+} as LoadedSettings;
+
+// Approval notifications suppressed; task-completion notifications preserved.
+const mockSettingsTaskCompleteOnly: LoadedSettings = {
+  merged: {
+    general: {
+      terminalBell: true,
+      notificationMode: 'task-complete',
+    },
+  },
+} as LoadedSettings;
+
+// Explicit 'all' — same behavior as an unset notificationMode.
+const mockSettingsAllMode: LoadedSettings = {
+  merged: {
+    general: {
+      terminalBell: true,
+      notificationMode: 'all',
+    },
+  },
+} as LoadedSettings;
+
+// Unknown value must fall back to 'all' rather than silently disabling
+// approval notifications (defensive parse in the hook).
+const mockSettingsUnknownMode: LoadedSettings = {
+  merged: {
+    general: {
+      terminalBell: true,
+      notificationMode: 'garbage-value',
+    },
+  },
+} as unknown as LoadedSettings;
+
+describe('useAttentionNotifications', () => {
+  beforeEach(() => {
+    vi.mocked(mockedSendNotification).mockReset();
+  });
+
+  const render = (
+    props?: Partial<Parameters<typeof useAttentionNotifications>[0]>,
+  ) =>
+    renderHook(({ hookProps }) => useAttentionNotifications(hookProps), {
+      initialProps: {
+        hookProps: {
+          isFocused: true,
+          streamingState: StreamingState.Idle,
+          elapsedTime: 0,
+          settings: mockSettings,
+          terminal: mockTerminal,
+          ...props,
+        },
+      },
+    });
+
+  it('sends the main-session owner with idle hook notifications', () => {
+    const request = vi.fn().mockResolvedValue({ success: true });
+    const config = {
+      getSessionId: () => 'idle-session',
+      getHookSystem: () => ({ runtimeId: 'idle-runtime' }),
+      getMessageBus: () => ({ request }),
+      getDisableAllHooks: () => false,
+    } as unknown as Config;
+    render({ config });
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: MessageBusType.HOOK_EXECUTION_REQUEST,
+        eventName: 'Notification',
+        owner: {
+          runtimeId: 'idle-runtime',
+          sessionId: 'idle-session',
+          agentId: null,
+        },
+        input: expect.objectContaining({ notification_type: 'idle_prompt' }),
+      }),
+      MessageBusType.HOOK_EXECUTION_RESPONSE,
+    );
+  });
+
+  it('notifies when tool approval is required while unfocused', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+    expect(mockedSendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Qwen Code' }),
+      mockTerminal,
+      true,
+    );
+  });
+
+  it('notifies when focus is lost after entering approval wait state', () => {
+    const { rerender } = render({
+      isFocused: true,
+      streamingState: StreamingState.WaitingForConfirmation,
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a notification when a long task finishes while unfocused', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Responding,
+        elapsedTime: LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS + 5,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Idle,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not notify about long tasks when the CLI is focused', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: true,
+        streamingState: StreamingState.Responding,
+        elapsedTime: LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS + 2,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: true,
+        streamingState: StreamingState.Idle,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).not.toHaveBeenCalled();
+  });
+
+  it('does not treat short responses as long tasks', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Responding,
+        elapsedTime: 5,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Idle,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).not.toHaveBeenCalled();
+  });
+
+  it('includes tool name in approval notification message', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+        pendingToolCalls: [
+          { status: 'awaiting_approval', request: { name: 'Bash' } },
+        ] as unknown as TrackedToolCall[],
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+    expect(mockedSendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Qwen Code needs your permission to use Bash',
+      }),
+      mockTerminal,
+      true,
+    );
+  });
+
+  it('uses fallback message when no pending tool call is found', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+        pendingToolCalls: [] as TrackedToolCall[],
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Qwen Code is waiting for your input',
+      }),
+      mockTerminal,
+      true,
+    );
+  });
+
+  it('sends "waiting for input" message for long task completion', () => {
+    const { rerender } = render();
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Responding,
+        elapsedTime: LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS + 5,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Idle,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Qwen Code is waiting for your input',
+      }),
+      mockTerminal,
+      true,
+    );
+  });
+
+  it('does not notify when terminalBell is disabled', () => {
+    const { rerender } = render({
+      settings: mockSettingsDisabled,
+    });
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettingsDisabled,
+        terminal: mockTerminal,
+      },
+    });
+
+    expect(mockedSendNotification).not.toHaveBeenCalled();
+  });
+
+  describe('notificationMode (#6898)', () => {
+    it('suppresses approval notification when mode is task-complete', () => {
+      // The whole point of the task-complete mode: users driving many tool
+      // approvals in a single task no longer get an OS notification for every
+      // one. The WaitingForConfirmation transition must NOT fire sendNotification.
+      const { rerender } = render({ settings: mockSettingsTaskCompleteOnly });
+
+      rerender({
+        hookProps: {
+          isFocused: false,
+          streamingState: StreamingState.WaitingForConfirmation,
+          elapsedTime: 0,
+          settings: mockSettingsTaskCompleteOnly,
+          terminal: mockTerminal,
+        },
+      });
+
+      expect(mockedSendNotification).not.toHaveBeenCalled();
+    });
+
+    it('still fires task-completion notification when mode is task-complete', () => {
+      // task-complete only silences approvals — the long-task idle notification
+      // is the one the user WANTS to keep. Guards against widening the gate.
+      const { rerender } = render({ settings: mockSettingsTaskCompleteOnly });
+
+      // Simulate a long streaming task followed by return to Idle while
+      // unfocused, matching the LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS path.
+      rerender({
+        hookProps: {
+          isFocused: false,
+          streamingState: StreamingState.Responding,
+          elapsedTime: LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS + 1,
+          settings: mockSettingsTaskCompleteOnly,
+          terminal: mockTerminal,
+        },
+      });
+      rerender({
+        hookProps: {
+          isFocused: false,
+          streamingState: StreamingState.Idle,
+          elapsedTime: LONG_TASK_NOTIFICATION_THRESHOLD_SECONDS + 1,
+          settings: mockSettingsTaskCompleteOnly,
+          terminal: mockTerminal,
+        },
+      });
+
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+      expect(mockedSendNotification).toHaveBeenCalledWith(
+        {
+          message: 'Qwen Code is waiting for your input',
+          title: 'Qwen Code',
+        },
+        mockTerminal,
+        true,
+      );
+    });
+
+    it('preserves current behavior when mode is explicitly "all"', () => {
+      // Setting notificationMode: 'all' must be a no-op compared to leaving
+      // it unset — same firing pattern as the pre-#6898 default.
+      const { rerender } = render({ settings: mockSettingsAllMode });
+
+      rerender({
+        hookProps: {
+          isFocused: false,
+          streamingState: StreamingState.WaitingForConfirmation,
+          elapsedTime: 0,
+          settings: mockSettingsAllMode,
+          terminal: mockTerminal,
+        },
+      });
+
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to "all" when notificationMode is an unrecognized value', () => {
+      // A legacy settings file with a typo or a future value we don't know
+      // yet must not silently disable approval notifications — the user's
+      // intent is unclear, so we preserve the visible (louder) behavior.
+      const { rerender } = render({ settings: mockSettingsUnknownMode });
+
+      rerender({
+        hookProps: {
+          isFocused: false,
+          streamingState: StreamingState.WaitingForConfirmation,
+          elapsedTime: 0,
+          settings: mockSettingsUnknownMode,
+          terminal: mockTerminal,
+        },
+      });
+
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.each([
+    {
+      description: 'names the foreground subagent tool waiting for approval',
+      awaitingToolsByAgent: [['grep_search']],
+      message: 'Qwen Code needs your permission to use grep_search',
+    },
+    {
+      description: 'uses a generic alert for parallel approvals in one agent',
+      awaitingToolsByAgent: [['read_file', 'grep_search']],
+      message: 'Qwen Code is waiting for your input',
+    },
+    {
+      description: 'uses a generic alert across foreground agents',
+      awaitingToolsByAgent: [['grep_search'], ['edit']],
+      message: 'Qwen Code is waiting for your input',
+    },
+  ])('$description', ({ awaitingToolsByAgent, message }) => {
+    const { rerender } = render();
+    const pendingToolCalls = awaitingToolsByAgent.map((toolNames, index) => ({
+      status: 'executing',
+      request: { name: 'agent', callId: `agent-${index}` },
+      liveOutput: {
+        type: 'task_execution',
+        pendingConfirmation: { type: 'info' },
+        toolCalls: [
+          { callId: 'done', name: 'list_directory', status: 'success' },
+          ...toolNames.map((name, callIndex) => ({
+            callId: `c${callIndex}`,
+            name,
+            status: 'awaiting_approval',
+          })),
+        ],
+      },
+    })) as unknown as TrackedToolCall[];
+
+    rerender({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.WaitingForConfirmation,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+        pendingToolCalls,
+      },
+    });
+
+    expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+    expect(mockedSendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ message }),
+      mockTerminal,
+      true,
+    );
+  });
+
+  describe('background agent and workflow approvals (#16425)', () => {
+    const parked = (key: string, toolName: string, at = 0) => ({
+      key,
+      toolName,
+      at,
+    });
+    const unfocused = (
+      backgroundApprovals: Array<ReturnType<typeof parked>>,
+      overrides: Partial<Parameters<typeof useAttentionNotifications>[0]> = {},
+    ) => ({
+      hookProps: {
+        isFocused: false,
+        streamingState: StreamingState.Idle,
+        elapsedTime: 0,
+        settings: mockSettings,
+        terminal: mockTerminal,
+        backgroundApprovals,
+        ...overrides,
+      },
+    });
+
+    it('notifies when a background approval is parked while unfocused', () => {
+      const { rerender } = render();
+
+      rerender(unfocused([parked('workflow:ap-1', 'grep_search')]));
+
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+      expect(mockedSendNotification).toHaveBeenCalledWith(
+        {
+          message: 'Qwen Code needs your permission to use grep_search',
+          title: 'Qwen Code',
+        },
+        mockTerminal,
+        true,
+      );
+    });
+
+    it('notifies once per approval, and again for a new one', () => {
+      const { rerender } = render();
+      const first = parked('agent:a:c1', 'run_shell_command', 1);
+
+      rerender(unfocused([first]));
+      // A fresh array with the same approval is a snapshot refresh, not news.
+      rerender(unfocused([{ ...first }]));
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+
+      rerender(unfocused([first, parked('workflow:ap-2', 'edit', 2)]));
+      expect(mockedSendNotification).toHaveBeenCalledTimes(2);
+      expect(mockedSendNotification).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          message: 'Qwen Code needs your permission to use edit',
+        }),
+        mockTerminal,
+        true,
+      );
+    });
+
+    it('notifies for every parked approval when focus is lost', () => {
+      const approvals = [
+        parked('workflow:ap-1', 'grep_search', 1),
+        parked('workflow:ap-2', 'edit', 2),
+      ];
+      const { rerender } = render({ backgroundApprovals: approvals });
+      expect(mockedSendNotification).not.toHaveBeenCalled();
+
+      rerender(unfocused(approvals));
+      expect(mockedSendNotification).toHaveBeenCalledTimes(2);
+      expect(mockedSendNotification).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          message: 'Qwen Code needs your permission to use grep_search',
+        }),
+        mockTerminal,
+        true,
+      );
+      expect(mockedSendNotification).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          message: 'Qwen Code needs your permission to use edit',
+        }),
+        mockTerminal,
+        true,
+      );
+
+      // Coming back and leaving again re-arms it, like the main prompt.
+      rerender(unfocused(approvals, { isFocused: true }));
+      rerender(unfocused(approvals));
+      expect(mockedSendNotification).toHaveBeenCalledTimes(4);
+    });
+
+    it('defers a background alert until the main prompt clears', () => {
+      const approvals = [parked('workflow:ap-1', 'grep_search')];
+      const { rerender } = render();
+
+      rerender(
+        unfocused(approvals, {
+          streamingState: StreamingState.WaitingForConfirmation,
+          pendingToolCalls: [
+            { status: 'awaiting_approval', request: { name: 'Bash' } },
+          ] as unknown as TrackedToolCall[],
+        }),
+      );
+
+      expect(mockedSendNotification).toHaveBeenCalledTimes(1);
+      expect(mockedSendNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Qwen Code needs your permission to use Bash',
+        }),
+        mockTerminal,
+        true,
+      );
+
+      rerender(unfocused(approvals));
+      expect(mockedSendNotification).toHaveBeenCalledTimes(2);
+      expect(mockedSendNotification).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          message: 'Qwen Code needs your permission to use grep_search',
+        }),
+        mockTerminal,
+        true,
+      );
+    });
+
+    it('respects notificationMode task-complete and a disabled bell', () => {
+      for (const settings of [
+        mockSettingsTaskCompleteOnly,
+        mockSettingsDisabled,
+      ]) {
+        const { rerender, unmount } = render({ settings });
+        rerender(
+          unfocused([parked('workflow:ap-1', 'grep_search')], { settings }),
+        );
+        unmount();
+      }
+
+      expect(mockedSendNotification).not.toHaveBeenCalled();
+    });
+  });
+});

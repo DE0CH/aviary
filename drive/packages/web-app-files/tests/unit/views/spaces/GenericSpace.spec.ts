@@ -1,0 +1,553 @@
+import { computed, ref } from 'vue'
+import { mock, mockDeep } from 'vitest-mock-extended'
+import { HttpError, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { ListFilesResult } from '@opencloud-eu/web-client/webdav'
+import GenericSpace from '../../../../src/views/spaces/GenericSpace.vue'
+import { useResourcesViewDefaults } from '../../../../src/composables/resourcesViewDefaults'
+import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
+import {
+  defaultPlugins,
+  mount,
+  defaultComponentMocks,
+  defaultStubs,
+  RouteLocation,
+  ComponentProps,
+  PartialComponentProps
+} from '@opencloud-eu/web-test-helpers'
+import {
+  AppBar,
+  ConflictDialog,
+  eventBus,
+  ResourceTable,
+  useBreadcrumbsFromPath,
+  useMessages,
+  usePasteWorker,
+  ResolveStrategy
+} from '@opencloud-eu/web-pkg'
+import { useBreadcrumbsFromPathMock } from '../../../mocks/useBreadcrumbsFromPathMock'
+import { BreadcrumbItem } from '@opencloud-eu/design-system/helpers'
+import { flushPromises } from '@vue/test-utils'
+import type { MockInstance } from 'vitest'
+
+const mockCreateFolder = vi.fn()
+const mockUseEmbedMode = vi.fn().mockReturnValue({ isEnabled: computed(() => false) })
+const extensionRegistryMock = {
+  extensions: ref([])
+}
+
+vi.mock('../../../../src/composables/resourcesViewDefaults')
+vi.mock('../../../../src/composables/keyboardActions')
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useBreadcrumbsFromPath: vi.fn(),
+  useExtensionRegistry: vi.fn(() => extensionRegistryMock),
+  useEmbedMode: vi.fn().mockImplementation(() => mockUseEmbedMode()),
+  useFileActions: vi.fn(() => ({})),
+  usePasteWorker: vi.fn(() => ({ startWorker: vi.fn() }))
+}))
+
+vi.mock('../../../../src/composables/actions/files', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useFileActionsCreateNewFolder: () => ({
+    actions: [{ handler: mockCreateFolder }]
+  })
+}))
+
+describe('GenericSpace view', () => {
+  it('appBar always present', () => {
+    const { wrapper } = getMountedWrapper()
+    expect(wrapper.find('app-bar-stub').exists()).toBeTruthy()
+  })
+  it('sideBar always present', () => {
+    const { wrapper } = getMountedWrapper()
+    expect(wrapper.find('file-side-bar-stub').exists()).toBeTruthy()
+  })
+  describe('space header', () => {
+    it('does not render the space header in the personal space', () => {
+      const { wrapper } = getMountedWrapper()
+      expect(wrapper.find('space-header-stub').exists()).toBeFalsy()
+    })
+    it('does not render the space header in a nested project space', () => {
+      const { wrapper } = getMountedWrapper({
+        props: {
+          item: '/someFolder',
+          space: mock<SpaceResource>({ driveType: 'project' })
+        }
+      })
+      expect(wrapper.find('space-header-stub').exists()).toBeFalsy()
+    })
+    it('renders the space header on a space frontpage', () => {
+      const { wrapper } = getMountedWrapper({
+        props: {
+          space: mock<SpaceResource>({ driveType: 'project' })
+        }
+      })
+      expect(wrapper.find('space-header-stub').exists()).toBeTruthy()
+    })
+  })
+  describe('different files view states', () => {
+    it('shows the loading spinner during loading', () => {
+      const { wrapper } = getMountedWrapper({ loading: true })
+      expect(wrapper.find('oc-spinner-stub').exists()).toBeTruthy()
+    })
+    it('shows the no-content-message after loading', () => {
+      const { wrapper } = getMountedWrapper()
+      expect(wrapper.find('oc-spinner-stub').exists()).toBeFalsy()
+      expect(wrapper.find('.no-content-message').exists()).toBeTruthy()
+    })
+    it('shows the files table when files are available', () => {
+      const { wrapper } = getMountedWrapper({ files: [mock<Resource>({ name: 'file.txt' })] })
+      expect(wrapper.find('.no-content-message').exists()).toBeFalsy()
+      expect(wrapper.find('resource-table-stub').exists()).toBeTruthy()
+    })
+  })
+  describe('document title', () => {
+    const publishedTitles = (publishSpy: MockInstance) =>
+      publishSpy.mock.calls
+        .filter(([topic]) => topic === 'runtime.documentTitle.changed')
+        .map(([, payload]) => payload.shortDocumentTitle)
+
+    it('names a folder that was not found as not found', () => {
+      const publishSpy = vi.spyOn(eventBus, 'publish')
+      getMountedWrapper({ currentFolder: null, props: { item: '/removed' } })
+      expect(publishedTitles(publishSpy)).toEqual(['Resource not found'])
+    })
+    it('keeps the folder name while the folder is loading', () => {
+      const publishSpy = vi.spyOn(eventBus, 'publish')
+      getMountedWrapper({ currentFolder: null, loading: true, props: { item: '/removed' } })
+      expect(publishedTitles(publishSpy)).toEqual(['removed - Personal space'])
+    })
+  })
+  describe('breadcrumbs', () => {
+    it.each([
+      { driveType: 'personal', expectedItems: 1 },
+      { driveType: 'project', expectedItems: 2 },
+      { driveType: 'share', expectedItems: 3 }
+    ])('include root item(s)', ({ driveType, expectedItems }) => {
+      const space = mock<SpaceResource>({
+        id: '1',
+        getDriveAliasAndItem: vi.fn(),
+        driveType,
+        isOwner: () => driveType === 'personal'
+      })
+      const { wrapper } = getMountedWrapper({ files: [mockDeep<Resource>()], props: { space } })
+      expect(wrapper.findComponent<typeof AppBar>('app-bar-stub').props().breadcrumbs.length).toBe(
+        expectedItems
+      )
+    })
+    it('include the guest shares and the guest share root in a guest context', () => {
+      const space = mock<SpaceResource>({
+        id: '1',
+        getDriveAliasAndItem: vi.fn(),
+        driveType: 'share',
+        driveAlias: 'share/folder'
+      })
+      const { wrapper } = getMountedWrapper({
+        files: [mockDeep<Resource>()],
+        props: { space },
+        isGuest: true
+      })
+      const { breadcrumbs } = wrapper.findComponent<typeof AppBar>('app-bar-stub').props()
+      expect(breadcrumbs.length).toBe(2)
+      expect(breadcrumbs[0]).toMatchObject({
+        text: 'Shares',
+        to: { name: 'files-guest-shares' }
+      })
+      expect(breadcrumbs[1].to).toMatchObject({ name: 'files-guest-link' })
+    })
+    it('include the root item and the current folder', () => {
+      const folderName = 'someFolder'
+      const { wrapper } = getMountedWrapper({
+        files: [mockDeep<Resource>()],
+        props: { item: `/${folderName}` },
+        breadcrumbsFromPath: [{ text: folderName }]
+      })
+      expect(wrapper.findComponent<typeof AppBar>('app-bar-stub').props().breadcrumbs.length).toBe(
+        2
+      )
+      expect(
+        wrapper.findComponent<typeof AppBar>('app-bar-stub').props().breadcrumbs[1].text
+      ).toEqual(folderName)
+    })
+    it('omit the "page"-query of the current route', () => {
+      const currentRoute = { name: 'files-spaces-generic', path: '/', query: { page: '2' } }
+      const { wrapper } = getMountedWrapper({
+        files: [mockDeep<Resource>()],
+        props: { item: 'someFolder' },
+        currentRoute
+      })
+      const breadCrumbItem = wrapper.findComponent<typeof AppBar>('app-bar-stub').props()
+        .breadcrumbs[0]
+      expect((breadCrumbItem.to as RouteLocation).query.page).toBeUndefined()
+    })
+    it('sets shield-keyhole icon for vault root breadcrumb items', () => {
+      const vaultRoot = '/secure.vault'
+      const { wrapper } = getMountedWrapper({
+        files: [mockDeep<Resource>()],
+        props: { item: `${vaultRoot}/docs` },
+        breadcrumbsFromPath: [{ text: 'Secure' }, { text: 'docs' }],
+        vaultRoots: [vaultRoot]
+      })
+      const breadcrumbItems = wrapper
+        .findComponent<typeof AppBar>('app-bar-stub')
+        .props().breadcrumbs
+      expect(breadcrumbItems[1]).toMatchObject({
+        text: 'Secure',
+        icon: 'shield-keyhole',
+        iconAccessibleLabel: 'Encrypted vault'
+      })
+      expect(breadcrumbItems[2]).toMatchObject({ text: 'docs' })
+    })
+  })
+  describe('loader task', () => {
+    it('scrolls to the resource from the route when a file list is rendered', async () => {
+      const { mocks } = getMountedWrapper()
+      await flushPromises()
+      expect(mocks.scrollToResourceFromRoute).toHaveBeenCalledTimes(1)
+    })
+    it('finds the resource to scroll to beyond the current page', async () => {
+      const files = Array.from({ length: 25 }, (_, i) =>
+        mock<Resource>({ id: `${i + 1}`, name: `file-${i + 1}.txt` })
+      )
+      const { mocks } = getMountedWrapper({ files })
+      await flushPromises()
+
+      const [resources] = vi.mocked(mocks.scrollToResourceFromRoute).mock.calls[0]
+      expect(resources).toContain(files[24])
+    })
+    it('re-loads the resources on item change', async () => {
+      const { wrapper, mocks } = getMountedWrapper()
+      await flushPromises()
+      expect(mocks.refreshFileListHeaderPosition).toHaveBeenCalledTimes(1)
+      await wrapper.setProps({ item: 'newItem' })
+      await flushPromises()
+      expect(mocks.refreshFileListHeaderPosition).toHaveBeenCalledTimes(2)
+    })
+    it.each([
+      { query: { scrollTo: '' }, preventScroll: false },
+      { query: { scrollTo: 'fileId' }, preventScroll: true }
+    ])(
+      'focuses the breadcrumb on item change, preventing scroll: $preventScroll',
+      async ({ query, preventScroll }) => {
+        document.body.innerHTML =
+          '<nav id="files-breadcrumb"><ol><li><button></button></li></ol></nav>'
+        const focusSpy = vi.spyOn(document.querySelector('button'), 'focus')
+        const { wrapper } = getMountedWrapper({
+          currentRoute: { name: 'files-spaces-generic', path: '/', query }
+        })
+        await flushPromises()
+        await wrapper.setProps({ item: 'newItem' })
+        await flushPromises()
+        expect(focusSpy).toHaveBeenCalledWith({ preventScroll })
+      }
+    )
+    it('re-loads the resources on space change', async () => {
+      const { wrapper, mocks } = getMountedWrapper()
+      await flushPromises()
+      expect(mocks.refreshFileListHeaderPosition).toHaveBeenCalledTimes(1)
+      await wrapper.setProps({ space: mockDeep<SpaceResource>() })
+      await flushPromises()
+      expect(mocks.refreshFileListHeaderPosition).toHaveBeenCalledTimes(2)
+    })
+  })
+  describe('empty folder upload hint', () => {
+    it('renders if the user can upload to the current folder', () => {
+      const { wrapper } = getMountedWrapper({
+        currentFolder: mock<Resource>({ canUpload: () => true })
+      })
+      expect(wrapper.find('.file-empty-upload-hint').exists()).toBeTruthy()
+    })
+    it('does not render if the user can not upload to the current folder', () => {
+      const { wrapper } = getMountedWrapper({
+        currentFolder: mock<Resource>({ canUpload: () => false })
+      })
+      expect(wrapper.find('.file-empty-upload-hint').exists()).toBeFalsy()
+    })
+  })
+  describe('for a single file', () => {
+    describe('on public links', () => {
+      it('renders the ResourceDetails component', () => {
+        const { wrapper } = getMountedWrapper({
+          currentFolder: {
+            ...mock<Resource>({ canUpload: () => true })
+          },
+          files: [{ ...mock<Resource>({ name: 'file.txt' }), isFolder: false }],
+          space: mock<SpaceResource>({
+            id: '1',
+            getDriveAliasAndItem: vi.fn(),
+            name: 'Personal space',
+            driveType: 'public'
+          })
+        })
+        expect(wrapper.find('resource-details-stub').exists()).toBeTruthy()
+      })
+      it('does not scroll to the resource since no file list is rendered', async () => {
+        const { mocks } = getMountedWrapper({
+          currentFolder: {
+            ...mock<Resource>({ canUpload: () => true })
+          },
+          files: [{ ...mock<Resource>({ name: 'file.txt' }), isFolder: false }],
+          space: mock<SpaceResource>({
+            id: '1',
+            getDriveAliasAndItem: vi.fn(),
+            name: 'Personal space',
+            driveType: 'public'
+          })
+        })
+        await flushPromises()
+        expect(mocks.scrollToResourceFromRoute).not.toHaveBeenCalled()
+      })
+    })
+    describe('on shares', () => {
+      const space = mock<SpaceResource>({
+        id: '1',
+        getDriveAliasAndItem: vi.fn(),
+        name: 'file.txt',
+        driveType: 'share'
+      })
+      const file = { ...mock<Resource>({ name: 'file.txt' }), isFolder: false }
+
+      it('renders the ResourceDetails component for a single file share', () => {
+        const { wrapper } = getMountedWrapper({
+          currentFolder: { ...mock<Resource>({ canUpload: () => false }), isFolder: false },
+          files: [file],
+          space
+        })
+        expect(wrapper.find('resource-details-stub').exists()).toBeTruthy()
+      })
+      it('renders the file list for a single file inside a shared folder', () => {
+        const { wrapper } = getMountedWrapper({
+          currentFolder: { ...mock<Resource>({ canUpload: () => false }), isFolder: true },
+          files: [file],
+          space
+        })
+        expect(wrapper.find('resource-details-stub').exists()).toBeFalsy()
+      })
+    })
+  })
+  describe('drag and drop move', () => {
+    function getFile({ canBeDeleted = true } = {}) {
+      return mock<Resource>({
+        id: 'file',
+        name: 'f.txt',
+        path: '/f.txt',
+        type: 'file',
+        isInVault: false,
+        canBeDeleted: () => canBeDeleted,
+        isReceivedShare: () => false,
+        isMounted: () => false
+      })
+    }
+
+    function getFolder({ canUpload = true } = {}) {
+      return mock<Resource>({
+        id: 'folder',
+        name: 'x',
+        path: '/x',
+        type: 'folder',
+        isInVault: false,
+        canUpload: () => canUpload
+      })
+    }
+
+    async function dropFileOnFolder({
+      file,
+      folder,
+      children = []
+    }: {
+      file: Resource
+      folder: Resource
+      children?: Resource[]
+    }) {
+      const { mocks, wrapper } = getMountedWrapper({
+        files: [file, folder],
+        selectedResources: [file]
+      })
+      mocks.$clientService.webdav.listFiles.mockResolvedValue({ children } as ListFilesResult)
+      wrapper
+        .findComponent<typeof ResourceTable>('resource-table-stub')
+        .vm.$emit('fileDropped', 'folder')
+      await flushPromises()
+    }
+
+    it('shows an error message when the move fails', async () => {
+      const startWorker = vi.fn()
+      vi.mocked(usePasteWorker).mockReturnValue({ startWorker })
+      await dropFileOnFolder({ file: getFile(), folder: getFolder() })
+
+      const [, callback] = startWorker.mock.calls[0]
+      callback({
+        successful: [],
+        failed: [{ resourceName: 'f.txt', error: new HttpError('Forbidden', undefined, 403) }]
+      })
+
+      const { showErrorMessage } = useMessages()
+      expect(showErrorMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Failed to move »f.txt«' })
+      )
+    })
+    it('does not move anything when the conflict dialog is closed', async () => {
+      const startWorker = vi.fn()
+      vi.mocked(usePasteWorker).mockReturnValue({ startWorker })
+      const resolveFileExists = vi
+        .spyOn(ConflictDialog.prototype, 'resolveFileExists')
+        .mockResolvedValue({ strategy: ResolveStrategy.CANCEL, doForAllConflicts: false })
+      onTestFinished(() => resolveFileExists.mockRestore())
+
+      await dropFileOnFolder({
+        file: getFile(),
+        folder: getFolder(),
+        children: [mock<Resource>({ name: 'f.txt', path: '/x/f.txt', isFolder: false })]
+      })
+
+      expect(resolveFileExists).toHaveBeenCalledTimes(1)
+      expect(startWorker).not.toHaveBeenCalled()
+    })
+    it.each([
+      { canUpload: false, canBeDeleted: true },
+      { canUpload: true, canBeDeleted: false }
+    ])(
+      'does not move and shows an error message without permission (canUpload: $canUpload, canBeDeleted: $canBeDeleted)',
+      async ({ canUpload, canBeDeleted }) => {
+        const startWorker = vi.fn()
+        vi.mocked(usePasteWorker).mockReturnValue({ startWorker })
+        await dropFileOnFolder({
+          file: getFile({ canBeDeleted }),
+          folder: getFolder({ canUpload })
+        })
+
+        expect(startWorker).not.toHaveBeenCalled()
+        const { showErrorMessage } = useMessages()
+        expect(showErrorMessage).toHaveBeenCalledWith({
+          title: 'You have no permission to move this item here.'
+        })
+      }
+    )
+  })
+
+  describe('list header', () => {
+    it('renders when a readme file is present', () => {
+      const { wrapper } = getMountedWrapper({ files: [mock<Resource>({ name: 'readme.md' })] })
+      expect(wrapper.find('list-header-stub').exists()).toBeTruthy()
+    })
+    it('does not render when a readme file is not present', () => {
+      const { wrapper } = getMountedWrapper({ files: [mock<Resource>({ name: 'file.txt' })] })
+      expect(wrapper.find('list-header-stub').exists()).toBeFalsy()
+    })
+    it('does not render on the frontpage of a space', () => {
+      const { wrapper } = getMountedWrapper({
+        files: [mock<Resource>({ name: 'readme.md' })],
+        space: mock<SpaceResource>({ driveType: 'project' })
+      })
+      expect(wrapper.find('list-header-stub').exists()).toBeFalsy()
+    })
+  })
+})
+
+function getMountedWrapper({
+  mocks = {},
+  props = {},
+  files = [],
+  selectedResources = [],
+  loading = false,
+  currentRoute = { name: 'files-spaces-generic', path: '/' },
+  currentFolder = mock<Resource>(),
+  space = mock<SpaceResource>({
+    id: '1',
+    getDriveAliasAndItem: vi.fn(),
+    name: 'Personal space',
+    driveType: ''
+  }),
+  breadcrumbsFromPath = [],
+  vaultRoots = [],
+  stubs = {},
+  isGuest = false
+}: {
+  mocks?: Record<string, unknown>
+  props?: PartialComponentProps<typeof GenericSpace>
+  files?: Resource[]
+  selectedResources?: Resource[]
+  loading?: boolean
+  currentRoute?: { name?: string; path?: string; query?: Record<string, string> }
+  currentFolder?: Resource
+  space?: SpaceResource
+  breadcrumbsFromPath?: BreadcrumbItem[]
+  vaultRoots?: string[]
+  stubs?: any
+  isGuest?: boolean
+} = {}) {
+  extensionRegistryMock.extensions.value = vaultRoots.length
+    ? [
+        ref([
+          {
+            id: 'test-vault-extension',
+            type: 'vault',
+            claimsPath: (_space: SpaceResource, path: string) => {
+              const root = vaultRoots.find((vaultRoot) => {
+                return path === vaultRoot || path?.startsWith(`${vaultRoot}/`)
+              })
+              if (!root) {
+                return null
+              }
+              return {
+                vaultRoot: root,
+                encryptsNames: true,
+                unlockRoute: { name: 'rclone-crypt-unlock' }
+              }
+            },
+            resolve: vi.fn()
+          }
+        ])
+      ]
+    : []
+
+  const plugins = defaultPlugins({
+    piniaOptions: {
+      resourcesStore: { currentFolder, resources: files },
+      authState: { guestContextReady: isGuest }
+    }
+  })
+
+  const resourcesViewDetailsMock = useResourcesViewDefaultsMock({
+    // like the real view defaults: all resources get sorted, only the first page is shown
+    sortedResources: ref(files),
+    paginatedResources: ref(files.slice(0, 20)),
+    selectedResources: ref(selectedResources),
+    areResourcesLoading: ref(loading),
+    storeItems: ref(files)
+  })
+  vi.mocked(useResourcesViewDefaults).mockImplementation(() => resourcesViewDetailsMock)
+  vi.mocked(useBreadcrumbsFromPath).mockImplementation(() =>
+    useBreadcrumbsFromPathMock({ breadcrumbsFromPath: vi.fn(() => breadcrumbsFromPath) })
+  )
+
+  const defaultMocks = {
+    ...defaultComponentMocks({ currentRoute: mock<RouteLocation>(currentRoute) }),
+    ...(mocks && mocks)
+  }
+
+  const propsData: ComponentProps<typeof GenericSpace> = {
+    space,
+    item: '/',
+    itemId: undefined,
+    ...props
+  }
+
+  return {
+    mocks: { ...defaultMocks, ...resourcesViewDetailsMock },
+    wrapper: mount(GenericSpace, {
+      props: propsData,
+      global: {
+        plugins,
+        mocks: defaultMocks,
+        provide: defaultMocks,
+        stubs: {
+          ...defaultStubs,
+          'resource-details': true,
+          ...stubs,
+          ListHeader: true
+        }
+      }
+    })
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "_comment": "The two cross-cluster bridges of YYC AI's switch window (yyc/refactor DESIGN 15.5, WP-60), as code: yyc/infra/bridges.sh up|check|down reads this. Both live on ONE server, `server` below: a Debian box with no public IP in Hetzner project yyc, network yyc (10.0.0.0/16), carrying each bridge's address as a Hetzner alias IP, with HAProxy in TCP mode (Hetzner refused lb11 load balancers: the account's primary IP limit, 16, is full and stays so, Deyao 2026-11-05). Each service listens on its bridge's address at `listen` and goes round-robin to every target server's private IP at `nodePort`, a NodePort with externalTrafficPolicy Local; connections and health checks leave from the bridge's address, so the callee's NetworkPolicy admits that /32. Health check: TCP every `interval` s, `timeout` s, down after 1 + `retries` failures: a node without a ready callee pod fails it and gets no traffic. Targets: the servers matching the Hetzner label selector `targets` minus those matching `exclude` (servers that are no Kubernetes node), read from the Hetzner API on every `up`. callee names the pods behind the NodePort, on the targets' cluster: bridges.sh check expects every server that runs a ready one to be a healthy target. The box reaches the internet (packages) only through network yyc's route 0.0.0.0/0 -> yyc-nat1 (`gateway` 10.0.0.1 on its private interface, DNS `resolver`), and SSH only through `jump`. Cost: cax11 fsn1 EUR 5.99 net, EUR 7.188 gross a month (EUR 0.01152 gross an hour; Hetzner API /v1/server_types, 2026-11-05), no primary IP.",
+  "network": "yyc",
+  "server": {
+    "name": "yyc-bridge1",
+    "type": "cax11",
+    "location": "fsn1",
+    "image": "debian-13",
+    "sshKey": "yyc-cluster-admin",
+    "labels": {"yyc-cluster": "bridge"},
+    "gateway": "10.0.0.1",
+    "resolver": "10.0.0.30",
+    "jump": "root@2a01:4f8:c013:e0b5::1"
+  },
+  "healthCheck": {"interval": 3, "timeout": 2, "retries": 2},
+  "bridges": [
+    {
+      "name": "yyc-bridge-old",
+      "ip": "10.0.255.1",
+      "targets": "yyc-cluster=k3s",
+      "exclude": "role=nat",
+      "cluster": "old",
+      "services": [
+        {"link": "B1", "listen": 8080, "nodePort": 30880, "callee": {"namespace": "jarvis", "selector": "app=ui"},
+         "removed": "A6"},
+        {"link": "B5", "listen": 8081, "nodePort": 30881, "callee": {"namespace": "yyc", "selector": "app=yyc-mcp"},
+         "removed": "yyc-mcp's T4 move"},
+        {"link": "B6", "listen": 8082, "nodePort": 30882, "callee": {"namespace": "yyc", "selector": "app=web"},
+         "removed": "the capture route's T4 move"}
+      ]
+    },
+    {
+      "name": "yyc-bridge-new",
+      "ip": "10.0.255.2",
+      "targets": "yyc-cluster=talos",
+      "exclude": "role=nat",
+      "cluster": "new",
+      "services": [
+        {"link": "B2", "listen": 8080, "nodePort": 30890, "callee": {"namespace": "yyc-ai", "selector": "app=pigeon"},
+         "removed": "A6"},
+        {"link": "B4", "listen": 8083, "nodePort": 30893, "callee": {"namespace": "yyc-ai", "selector": "app=hermit"},
+         "removed": "the monitor's T4 move"}
+      ]
+    }
+  ]
+}

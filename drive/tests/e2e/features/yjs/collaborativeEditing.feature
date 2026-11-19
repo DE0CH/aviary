@@ -1,0 +1,251 @@
+Feature: yjs collaborative editing
+  As a user
+  I want the text editor to relay my edits to everyone viewing the same file
+  So that documents can be edited collaboratively in real time
+
+  Scenario: collaborative editing in a shared file
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+      | Carol |
+    And "Alice" creates the following file into personal space using API
+      | pathToFile | content     |
+      | example.md | lorem ipsum |
+    And "Alice" shares the following resources using API
+      | resource   | recipient | type | role     |
+      | example.md | Brian     | user | Can edit |
+      | example.md | Carol     | user | Can view |
+
+    And "Brian" logs in
+    And "Brian" navigates to the shared with me page
+    And "Brian" opens file "example.md" via "text-editor" using the context menu
+    And "Brian" should see the following yjs status
+      | status    |
+      | Connected |
+    And "Brian" is in a text-editor
+    And "Brian" enters the text "Brian says hello" in editor "TextEditor"
+
+    And "Carol" logs in
+    And "Carol" navigates to the shared with me page
+    And "Carol" opens file "example.md" via "text-editor" using the context menu
+    And "Carol" should not see a yjs status
+    And "Carol" is in a text-editor
+    And "Carol" should see the text "Brian says hello" exactly once in the text-editor
+    And "Carol" should not be able to edit the current file
+
+    And "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" should see the following yjs status
+      | status    |
+      | Connected |
+    And "Alice" is in a text-editor
+    Then "Alice" should see the text "Brian says hello" exactly once in the text-editor
+
+    When "Alice" enters the text "Alice says hello" in editor "TextEditor"
+    Then "Brian" should see the text "Alice says hello" in the text-editor
+    And "Carol" should see the text "Alice says hello" in the text-editor
+
+    And "Alice" sees the current file as dirty
+    And "Brian" sees the current file as dirty
+
+    When "Alice" saves the file viewer
+    Then "Alice" sees the current file as clean
+    And "Brian" sees the current file as clean
+
+    And "Alice" logs out
+    And "Brian" logs out
+    And "Carol" logs out
+
+  Scenario: collaborative editing in a project space
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+      | Carol |
+    And "Admin" assigns following roles to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Alice" creates the project space using API "Team"
+    And "Alice" creates the following files in space "Team" using API
+      | name        | content     |
+      | example.md  | lorem ipsum |
+
+    And "Alice" logs in
+    And "Alice" navigates to the project space "Team"
+    And "Alice" adds following user to the project space
+      | user  | role     | kind |
+      | Brian | Can edit | user |
+      | Carol | Can view | user |
+
+    And "Brian" logs in
+    And "Brian" navigates to the project space "Team"
+    And "Brian" opens file "example.md" via "text-editor" using the context menu
+    And "Brian" should see the following yjs status
+      | status    |
+      | Connected |
+    And "Brian" is in a text-editor
+    And "Brian" enters the text "Brian says hello" in editor "TextEditor"
+
+    And "Carol" logs in
+    And "Carol" navigates to the project space "Team"
+    And "Carol" opens file "example.md" via "text-editor" using the context menu
+    And "Carol" should not see a yjs status
+    And "Carol" is in a text-editor
+    And "Carol" should see the text "Brian says hello" in the text-editor
+    And "Carol" should not be able to edit the current file
+    And "Carol" should see the collaboration carets of the following users
+      | id    |
+      | Brian |
+
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" should see the following yjs status
+      | status    |
+      | Connected |
+    And "Alice" is in a text-editor
+    Then "Alice" should see the text "Brian says hello" in the text-editor
+    And "Alice" should see the collaboration carets of the following users
+      | id    |
+      | Brian |
+    And "Brian" should see the collaboration carets of the following users
+      | id    |
+      | Alice |
+
+    When "Alice" enters the text "Alice says hello" in editor "TextEditor"
+    Then "Brian" should see the text "Alice says hello" in the text-editor
+    And "Carol" should see the text "Alice says hello" in the text-editor
+
+    And "Alice" sees the current file as dirty
+    And "Brian" sees the current file as dirty
+
+    When "Alice" saves the file viewer
+    Then "Alice" sees the current file as clean
+    And "Brian" sees the current file as clean
+
+    And "Alice" logs out
+    And "Brian" logs out
+    And "Carol" logs out
+
+  Scenario: collaborative editing across two tabs of the same user
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+    And "Alice" creates the following file into personal space using API
+      | pathToFile | content     |
+      | example.md | lorem ipsum |
+
+    And "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" is in a text-editor
+
+    When "Alice" opens a new tab
+    And "Alice" opens the "files" app
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" is in a text-editor
+    And "Alice" enters the text "Alice says hello" in editor "TextEditor"
+
+    Then "Alice" switches to tab 1
+    And "Alice" should see the text "Alice says hello" in the text-editor
+    And "Alice" sees the current file as dirty
+
+    When "Alice" saves the file viewer
+    Then "Alice" sees the current file as clean
+    And "Alice" switches to tab 2
+    And "Alice" sees the current file as clean
+
+    And "Alice" logs out
+
+  Scenario: an editor joins a session that was initiated by a viewer
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+    And "Alice" creates the following file into personal space using API
+      | pathToFile | content     |
+      | example.md | lorem ipsum |
+    And "Alice" shares the following resources using API
+      | resource   | recipient | type | role     |
+      | example.md | Brian     | user | Can view |
+
+    And "Brian" logs in
+    And "Brian" navigates to the shared with me page
+    And "Brian" opens file "example.md" via "text-editor" using the context menu
+    And "Brian" is in a text-editor
+
+    When "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" is in a text-editor
+
+    Then "Alice" should see the text "lorem ipsum" exactly once in the text-editor
+    And "Brian" should see the text "lorem ipsum" exactly once in the text-editor
+
+    When "Alice" enters the text "Alice says hello" in editor "TextEditor"
+    Then "Brian" should see the text "Alice says hello" in the text-editor
+
+    And "Alice" logs out
+    And "Brian" logs out
+
+  Scenario: mentioning a collaborator in a shared file
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+    And "Alice" creates the following file into personal space using API
+      | pathToFile | content     |
+      | example.md | lorem ipsum |
+    And "Alice" shares the following resources using API
+      | resource   | recipient | type | role     |
+      | example.md | Brian     | user | Can edit |
+
+    And "Alice" logs in
+    And "Alice" opens the "files" app
+    And "Alice" opens file "example.md" via "text-editor" using the context menu
+    And "Alice" is in a text-editor
+    And "Alice" enters the text "hello" in editor "TextEditor"
+    And "Alice" mentions user "Brian" in editor
+    And "Alice" saves the file viewer
+
+    And "Brian" logs in
+    And "Brian" opens the file from the mention notification
+    And "Brian" is in a text-editor
+    And "Brian" should see the text "hello @Brian Murphy" in the text-editor
+
+    And "Alice" logs out
+    And "Brian" logs out
+
+  Scenario: mentioning a collaborator in a project space notifies them
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+      | Carol |
+    And "Admin" assigns following roles to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Alice" creates the project space using API "Team"
+    And "Alice" creates the following files in space "Team" using API
+      | name        | content     |
+      | example.md  | lorem ipsum |
+    And "Alice" adds the following members to the space "Team" using API
+      | user  | role     | shareType |
+      | Brian | Can edit | user      |
+      | Carol | Can view | user      |
+
+    And "Brian" logs in
+    And "Brian" navigates to the project space "Team"
+    And "Brian" opens file "example.md" via "text-editor" using the context menu
+    And "Brian" is in a text-editor
+    And "Brian" enters the text "hello" in editor "TextEditor"
+    And "Brian" mentions user "Carol" in editor
+    And "Brian" saves the file viewer
+
+    And "Carol" logs in
+    And "Carol" opens the file from the mention notification
+    And "Carol" is in a text-editor
+    And "Carol" should see the text "hello @Carol King" in the text-editor
+
+    And "Brian" logs out
+    And "Carol" logs out

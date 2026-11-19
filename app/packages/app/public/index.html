@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="robots" content="noindex,nofollow" />
+    <!-- The browser's bar and an installed app's status bar: the page's own background (styles/theme.ts surface0),
+         by the system's scheme until the app sets its theme's (appearance/system-bars.web.tsx) -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#181b1a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="YYC AI" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+    />
+    <!-- The deployment's own files (src/yyc/brand.ts): the bundle's are neutral -->
+    <link rel="manifest" href="/branding/manifest.json" />
+    <link rel="apple-touch-icon" href="/branding/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/branding/favicon.png" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* Keep the app shell fixed to the viewport. */
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      /* These styles smooth text rendering in the app shell. */
+      body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      /* Prevent white flash before React mounts */
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background-color: #181b1a;
+        }
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+    </style>
+    <style>
+      button,
+      a,
+      input,
+      textarea,
+      select,
+      [role="button"],
+      [role="link"],
+      [role="textbox"],
+      [role="combobox"],
+      [role="tab"],
+      [role="switch"],
+      [role="checkbox"],
+      [role="slider"],
+      [role="menuitem"],
+      [tabindex],
+      [contenteditable="true"] {
+        -webkit-app-region: no-drag !important;
+      }
+
+      /* Electron does not clip app-region rectangles to scroll viewports.
+         Content-only viewports emit no window regions, including from their
+         controls. Visible controls here use normal DOM hit testing.
+         Use initial: Blink parses the explicit value none as no-drag. */
+      [data-window-content],
+      [data-window-content] * {
+        -webkit-app-region: initial !important;
+      }
+
+      /* Suppress the browser's default focus outline — it appears on mouse
+         clicks and looks out of place against our themed surfaces. Keep a
+         themed ring for keyboard users via :focus-visible. */
+      *:focus {
+        outline: none;
+      }
+      *:focus-visible {
+        outline: 2px solid #0a7f95;
+        outline-offset: 2px;
+      }
+    </style>
+    <!-- The page frame before the script arrives (docs/paseo-ui.md "Loading"): the app's own layout drawn in plain
+         HTML, so a slow connection shows the app at once instead of a blank page. React replaces #root's children
+         on its first render. Colours and sizes follow styles/theme.ts and the sidebar/composer; compact below 600px. -->
+    <style>
+      #boot {
+        --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7;
+        display: flex; width: 100%; height: 100%; background: var(--b-main);
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
+      }
+      #boot .side {
+        width: var(--b-side-w, 320px); flex: none; box-sizing: border-box; background: var(--b-side);
+        border-right: 1px solid var(--b-rule);
+      }
+      #boot .side .rows { padding: 16px; border-bottom: 1px solid var(--b-rule); }
+      #boot .bar { height: 12px; background: var(--b-bar); border-radius: 6px; }
+      #boot .side .rows .bar { margin: 14px 0; width: 45%; }
+      #boot .side .rows .bar:nth-child(2) { width: 38%; }
+      #boot .side .rows .bar:nth-child(3) { width: 30%; }
+      #boot .side .list { padding: 20px 16px; }
+      #boot .side .list .bar { width: 20%; height: 10px; }
+      #boot .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      #boot .head { display: none; height: 56px; flex: none; }
+      /* The message box sits at the bottom on every page and screen size, where the app's composer is
+         (composer/index.tsx: 16 px around it, at most theme.contentMaxWidth wide (the content-width setting, --b-col-w,
+         820 px by default); 116 px tall, 104 px below 720 px), with the
+         new-chat screen's logo and greeting just above it (screens/new-workspace-screen.tsx) */
+      #boot .center { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 16px 16px; }
+      #boot .col { width: 100%; max-width: var(--b-col-w, 820px); margin: 0 auto; }
+      #boot .logo { width: 48px; height: 48px; display: block; }
+      #boot .greet { width: 140px; height: 20px; margin: 20px 0 36px; }
+      #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); box-sizing: border-box; }
+      #boot .lead { display: none; width: 260px; max-width: 80%; height: 12px; }
+      html.yyc-out #boot .greet { margin-bottom: 16px; }
+      html.yyc-out #boot .lead { display: block; margin: 0 0 37px; }
+      /* Conversation pages (html.yyc-conv, set by the early box's script) have no logo or greeting */
+      .yyc-conv #boot .logo, .yyc-conv #boot .greet { display: none; }
+      /* The saved sidebar: closed (html.yyc-noside) or its width (--b-side-w), from the early box's script; the
+         connecting frame drawn inside the app's main column (data-yyc-in-shell) leaves the sidebar to the app */
+      html.yyc-noside #boot .side, [data-yyc-in-shell] #boot .side { display: none; }
+      /* Share pages (/s/<id>, html.yyc-share) have no sidebar and no message box */
+      html.yyc-share #boot .side, html.yyc-share #boot .col { display: none; }
+      /* The saved theme, when the early box's script could read it, wins over the system's */
+      html.yyc-light #boot { --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7; }
+      html.yyc-dark #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
+      @media (max-width: 719px) {
+        #boot .box { height: 104px; }
+      }
+      @media (max-width: 599px) {
+        #boot .side { display: none; }
+        #boot .head { display: flex; align-items: center; padding: 0 16px; }
+        #boot .head .bar { width: 22px; height: 14px; border-radius: 3px; }
+      }
+    </style>
+    <!-- The early message box (docs/paseo-ui.md "Loading"): a plain textarea over the frame's message box, so people
+         can type before the app arrives; the app's message box takes the text over (src/yyc/early-input.web.ts).
+         Font, line height and padding follow composer/input/input.tsx (15/21 px; padding 16 px, 8/12 below 720 px). -->
+    <style>
+      #yyc-early {
+        --e-fg: #1a1a1e; --e-muted: #71717a; --e-box: #fafafa; --e-rule: #e4e4e7; --e-accent: #0a7f95;
+        position: fixed; z-index: 2147483000; display: none; box-sizing: border-box;
+        background: var(--e-box); border: 1px solid var(--e-rule); border-radius: 16px;
+      }
+      @media (prefers-color-scheme: dark) {
+        #yyc-early { --e-fg: #fafafa; --e-muted: #a1a1aa; --e-box: #1e2120; --e-rule: #252b2a; }
+      }
+      html.yyc-light #yyc-early { --e-fg: #1a1a1e; --e-muted: #71717a; --e-box: #fafafa; --e-rule: #e4e4e7; }
+      html.yyc-dark #yyc-early { --e-fg: #fafafa; --e-muted: #a1a1aa; --e-box: #1e2120; --e-rule: #252b2a; }
+      #yyc-early.on { display: block; }
+      #yyc-early textarea {
+        position: absolute; left: 0; top: 0; right: 0; bottom: 44px; box-sizing: border-box; width: 100%;
+        margin: 0; padding: 16px 16px 0; border: 0; outline: none; resize: none; background: transparent;
+        color: var(--e-fg); caret-color: var(--e-fg); font-size: 15px; line-height: 21px; font-weight: 400;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang HK',
+          'Noto Sans HK', 'Microsoft JhengHei', 'Noto Sans TC', sans-serif;
+      }
+      #yyc-early textarea::placeholder { color: var(--e-muted); opacity: 1; }
+      #yyc-early button {
+        position: absolute; right: 10px; bottom: 12px; width: 28px; height: 28px; padding: 0; border: 0;
+        border-radius: 14px; background: var(--e-accent); opacity: 0.4; display: flex; align-items: center;
+        justify-content: center; cursor: default;
+      }
+      #yyc-early.ready button { opacity: 1; cursor: pointer; }
+      @media (max-width: 719px) {
+        #yyc-early textarea { padding: 8px 12px 0; bottom: 40px; }
+        #yyc-early button { bottom: 8px; right: 6px; }
+      }
+      /* Phones: 16 px, or iOS zooms the page when the box takes focus */
+      @media (pointer: coarse) {
+        #yyc-early textarea { font-size: 16px; }
+      }
+      /* Over the app's own text box (a phone waiting for its next tap): exactly its rectangle */
+      #yyc-early.over { border-color: transparent; border-radius: 0; }
+      #yyc-early.over textarea { padding: 0; bottom: 0; }
+      #yyc-early.over button { display: none; }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><img class="logo" src="/branding/logo.png" alt="" /><div class="bar greet"></div><div class="bar lead"></div><div class="box"></div></div></div></div></div></div>
+    <script>
+      window.__yycBootFrame = document.getElementById("boot").outerHTML;
+    </script>
+    <div id="yyc-early" data-yyc-early><textarea id="yyc-early-input" rows="1" autocomplete="off" spellcheck="true"></textarea><button type="button" tabindex="-1" disabled aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+    <script>
+      // The early message box (docs/paseo-ui.md "Loading"): typable before any app script arrives; the app's message
+      // box takes the text over through window.__yycEarly (src/yyc/early-input.web.ts). Keep COMPOSER and CONV equal
+      // to src/yyc/early-input-routes.ts (a test checks). Every storage access may throw (private windows).
+      (function () {
+        var COMPOSER = /^\/(new|h\/[^\/]+(\/(workspace|agent)\/[^\/]+)?)?$/;
+        var CONV = /^\/h\/[^\/]+\/(workspace|agent)\/[^\/]+$/;
+        var MIRROR = "yyc-early-input";
+        var d = document, w = window, html = d.documentElement;
+        var layer = d.getElementById("yyc-early"), box = d.getElementById("yyc-early-input");
+        var button = layer.querySelector("button"), root = d.getElementById("root");
+        function norm(p) { return p.replace(/\/+$/, "") || "/"; }
+        function read(store, key) { try { return w[store].getItem(key); } catch (e) { return null; } }
+        function json(text) { try { return JSON.parse(text); } catch (e) { return null; } }
+        function mark(name) { try { performance.mark(name); } catch (e) {} }
+        function setMirror(value) {
+          try {
+            if (value) sessionStorage.setItem(MIRROR, JSON.stringify(value));
+            else sessionStorage.removeItem(MIRROR);
+          } catch (e) {}
+        }
+        var path = norm(location.pathname);
+        var signedOut = (d.querySelector('meta[name="yyc-signed-out"]') || {}).content === "1";
+        var skip = signedOut ||
+          /(^|[#&])jarvis-view-as=/.test(location.hash) || !!read("sessionStorage", "yyc.view-as") ||
+          !!w.paseoDesktop || !COMPOSER.test(path);
+        var active = false, composing = false, readied = false, handoff = null, timer = 0, observer = null;
+        // Adoptions waiting for an IME composition to end; release() runs them too, so none is stranded
+        var pending = [];
+        function runPending() {
+          var runs = pending;
+          pending = [];
+          for (var i = 0; i < runs.length; i++) setTimeout(runs[i], 0);
+        }
+        function compact() { return w.innerWidth < 600; }
+        function release(reason) {
+          if (!active) return;
+          active = false;
+          readied = false;
+          handoff = null;
+          clearTimeout(timer);
+          if (observer) observer.disconnect();
+          d.removeEventListener("pointerdown", anyTouch, true);
+          d.removeEventListener("touchstart", anyTouch, true);
+          layer.remove();
+          mark("yyc:early-released:" + reason);
+          runPending();
+        }
+        function take(p) {
+          var taken = null;
+          var m = json(read("sessionStorage", MIRROR)), here = norm(p);
+          var mine = !!m && typeof m.text === "string" && m.path === here;
+          if (active) {
+            taken = { text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "" };
+          } else if (mine || (m && typeof m.text === "string" && here === "/new" && Date.now() - m.t < 60000)) {
+            taken = { text: m.text, selStart: m.selStart, selEnd: m.selEnd, base: m.base || "" };
+          }
+          // Only text that was handed over leaves the copy; another page's text stays for its own page
+          if ((active && mine) || (!active && taken)) setMirror(null);
+          return taken;
+        }
+        w.__yycEarly = {
+          take: take,
+          release: release,
+          peek: function () {
+            return active ? { text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "" } : null;
+          },
+          ready: function (next) {
+            readied = true; handoff = next; layer.className = "on ready over"; preview(); place();
+          },
+          state: function () { return { active: active, composing: composing, focused: active && d.activeElement === box }; },
+          whenIdle: function (run) {
+            if (!composing || !active) return run();
+            pending.push(run);
+            clearTimeout(timer); timer = 0;
+          }
+        };
+        // A signed-out page's frame has the signed-out screen's second line under the greeting (yyc/signed-out-shell.tsx)
+        if (signedOut) html.classList.add("yyc-out");
+        if (/^\/s\//.test(path)) html.classList.add("yyc-share");
+        // The frame's geometry as the app will draw it, also when there is no early box (View as tabs and other skips);
+        // the signed-out shell has a fixed sidebar and the system theme
+        var settings = signedOut ? {} :
+          json(read("localStorage", "@paseo:app-settings")) || json(read("localStorage", "@paseo:settings")) || {};
+        if (!signedOut) {
+          if (settings.theme === "light") html.classList.add("yyc-light");
+          else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
+          // The saved theme's background on the bar too, before the app arrives
+          var bar = html.classList.contains("yyc-light") ? "#ffffff" : html.classList.contains("yyc-dark") ? "#181b1a" : "";
+          var metas = d.querySelectorAll('meta[name="theme-color"]');
+          for (var k = 0; bar && k < metas.length; k++) metas[k].setAttribute("content", bar);
+          if (CONV.test(path)) html.classList.add("yyc-conv");
+          // The column's width (appearance/provider.tsx resolveContentMaxWidth; storage.ts clamps it to 600..4000)
+          var colW = settings.contentMaxWidth;
+          if (typeof colW === "number" && isFinite(colW)) html.style.setProperty("--b-col-w", Math.max(600, Math.min(4000, colW)) + "px");
+          // The sidebar as the app will draw it (stores/panel-store: "panel-state"; desktop-sidebar-layout.ts's width):
+          // closed, or hidden by focus mode on a workspace route (_layout.tsx; host-routes.ts's workspace pattern)
+          var WS = /^\/h\/[^\/]+\/workspace\/[^\/]+\/?$/;
+          var panels = (json(read("localStorage", "panel-state")) || {}).state || {};
+          if (panels.desktop && (panels.desktop.agentListOpen === false ||
+              (WS.test(path) && panels.desktop.focusModeEnabled === true))) html.classList.add("yyc-noside");
+          var sideW = typeof panels.sidebarWidth === "number" ? panels.sidebarWidth : 320;
+          html.style.setProperty("--b-side-w", Math.max(200, Math.min(600, w.innerWidth - 400, sideW)) + "px");
+        }
+        if (skip) { layer.remove(); return; }
+        // Text typed here before a refresh (or a chunk reload) that never reached the app: back in the box
+        var kept = json(read("sessionStorage", MIRROR));
+        if (kept && typeof kept.text === "string" && kept.path === path && kept.text) {
+          box.value = kept.text;
+          try { box.setSelectionRange(kept.selStart, kept.selEnd); } catch (e) {}
+        }
+        var lang = settings.language;
+        if (lang !== "en" && lang !== "zh-HK") {
+          lang = "zh-HK";
+          var langs = navigator.languages || [navigator.language || ""];
+          for (var i = 0; i < langs.length; i++) {
+            var base = String(langs[i]).toLowerCase().split("-")[0];
+            if (base === "zh") break;
+            if (base === "en") { lang = "en"; break; }
+          }
+        }
+        var wide = { en: "Message the agent, tag @files, or use /commands and /skills", "zh-HK": "給 Agent 發訊息，標記 @files，或使用 /commands 和 /skills" };
+        var narrow = { en: "Message, @files, /commands", "zh-HK": "發訊息，@files，/commands" };
+        box.placeholder = (compact() ? narrow : wide)[lang];
+        box.setAttribute("aria-label", narrow[lang]);
+        var lastRect = null;
+        function place() {
+          var target = handoff && handoff.element && handoff.element.isConnected ? handoff.element : root.querySelector(".box,[data-yyc-box]");
+          var r = target && target.getBoundingClientRect();
+          if (r && r.width > 0) lastRect = r;
+          if (!lastRect) return;
+          var s = layer.style;
+          s.left = lastRect.left + "px"; s.top = lastRect.top + "px";
+          s.width = lastRect.width + "px"; s.height = lastRect.height + "px";
+        }
+        // Never removed mid-composition, nor while an adoption waits for one to end (compositionend calls watch)
+        function settled() { return !composing && !pending.length && !root.querySelector("#boot,[data-yyc-loading]"); }
+        function watch() {
+          place();
+          if (readied) return clearTimeout(timer);
+          if (!settled()) { clearTimeout(timer); timer = 0; return; }
+          if (!timer) timer = setTimeout(function () { timer = 0; if (!readied && settled()) release("timeout"); }, 1500);
+        }
+        // While a phone waits to swap, the app's own box holds a copy of the text (no focus), so its send button shows
+        function preview() {
+          if (!handoff || !handoff.preview) return;
+          handoff.preview();
+          if (w.requestAnimationFrame) w.requestAnimationFrame(place);
+        }
+        function swap(submit, focus) {
+          if (!handoff) return false;
+          var next = handoff;
+          handoff = null;
+          next.adopt(focus !== false);
+          if (submit) next.submit();
+          return true;
+        }
+        // A phone's first tap anywhere else (the app's send button, the list, a menu) hands the text over first, in
+        // the capture phase, so that tap already acts on the app's own box; the keyboard is not pulled back
+        function anyTouch(e) { if (readied && !composing && e.target !== box) swap(false, false); }
+        // A phone swaps once a typed character has landed in this box (so the text taken includes it), never from
+        // keydown: Android keyboards send keydown (229) before the character and before compositionstart
+        box.addEventListener("input", function () {
+          setMirror({ text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "", path: norm(location.pathname), t: Date.now() });
+          if (!readied) return;
+          if (composing) preview();
+          else swap(false);
+        });
+        box.addEventListener("compositionstart", function () { composing = true; clearTimeout(timer); timer = 0; });
+        box.addEventListener("compositionend", function () {
+          composing = false;
+          runPending();
+          setTimeout(function () { if (readied && !composing) swap(false); else if (active) watch(); }, 0);
+        });
+        box.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing && !compact()) {
+            e.preventDefault();
+            if (readied) swap(true);
+          }
+        });
+        box.addEventListener("touchend", function () { if (readied && !composing) swap(false); });
+        // Leaving the box (keyboard dismissed, focus moved) hands the text over too: the box never outlives its focus
+        box.addEventListener("blur", function () { if (readied && !composing) swap(false, false); });
+        d.addEventListener("pointerdown", anyTouch, true);
+        d.addEventListener("touchstart", anyTouch, true);
+        button.addEventListener("click", function () { if (readied) swap(true); });
+        active = true;
+        layer.className = "on";
+        place();
+        mark("yyc:early-typable");
+        observer = new MutationObserver(watch);
+        observer.observe(root, { childList: true, subtree: true });
+        w.addEventListener("resize", place);
+        if (w.visualViewport) w.visualViewport.addEventListener("resize", place);
+      })();
+    </script>
+  </body>
+</html>

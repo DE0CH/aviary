@@ -1,0 +1,239 @@
+import merge from 'deepmerge'
+import { defineStore } from 'pinia'
+import { computed, ref, unref } from 'vue'
+import { StorageSerializers, useLocalStorage, usePreferredDark } from '@vueuse/core'
+import { z } from 'zod'
+import { applyCustomProp } from '@opencloud-eu/design-system/helpers'
+import { ShareRole } from '@opencloud-eu/web-client'
+import kebabCase from 'lodash-es/kebabCase'
+
+const CommonSection = z.object({
+  name: z.string().optional(),
+  slogan: z.string().optional(),
+  logo: z.string().optional(),
+  logoMobile: z.string().optional(),
+  urls: z
+    .object({
+      accessDeniedHelp: z.string().optional(),
+      imprint: z.string().optional(),
+      privacy: z.string().optional(),
+      accessibility: z.string().optional()
+    })
+    .optional(),
+  shareRoles: z
+    .record(
+      z.string(),
+      z.object({
+        iconName: z.string()
+      })
+    )
+    .optional()
+})
+
+const DesignTokens = z.object({
+  roles: z.record(z.string(), z.string()).optional(),
+  /** @deprecated */
+  colorPalette: z.record(z.string(), z.string()).optional().meta({ deprecated: true }),
+  fontFamily: z.string().optional(),
+  fontSource: z.string().optional(),
+  fontSize: z.string().optional()
+})
+
+const WebDefaults = CommonSection.extend({
+  designTokens: DesignTokens.optional(),
+  favicon: z.string().optional(),
+  background: z.string().optional()
+})
+
+const WebTheme = WebDefaults.extend({
+  isDark: z.boolean(),
+  label: z.string()
+})
+
+export const WebThemeConfig = z.object({
+  defaults: WebDefaults,
+  themes: z.array(WebTheme)
+})
+
+export const ThemeConfig = z.object({
+  common: CommonSection.optional(),
+  clients: z.object({
+    web: WebThemeConfig
+  })
+})
+
+export type WebThemeType = z.infer<typeof WebTheme>
+export type ThemeConfigType = z.infer<typeof ThemeConfig>
+
+const themeStorageKey = 'oc_currentThemeName'
+const themeIsDarkStorageKey = 'oc_currentThemeIsDark'
+
+const setFavicon = (url: string) => {
+  let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement
+  if (!link) {
+    link = document.createElement('link')
+    link.rel = 'icon'
+    document.head.appendChild(link)
+  }
+  link.href = url
+}
+
+export const useThemeStore = defineStore('theme', () => {
+  const currentLocalStorageThemeName = useLocalStorage(themeStorageKey, null)
+  const currentLocalStorageThemeIsDark = useLocalStorage<boolean | null>(
+    themeIsDarkStorageKey,
+    null,
+    {
+      serializer: StorageSerializers.boolean
+    }
+  )
+
+  const isDark = usePreferredDark()
+
+  const currentTheme = ref<WebThemeType | undefined>()
+
+  const availableThemes = ref<WebThemeType[]>([])
+
+  // `--oc-` prop keys the active theme set, so the next theme can clear the ones it omits
+  let appliedCustomProps: string[] = []
+  let currentFontFace: FontFace | undefined
+  let currentFontFaceKey: string | undefined
+
+  const applyFontFace = (fontFamily: string | undefined, fontSource: string | undefined) => {
+    // family name must match the first entry of --oc-font-family
+    const familyName = fontFamily?.split(',')[0].trim().replace(/['"]/g, '')
+    if (fontSource && !familyName) {
+      console.warn(`Ignoring theme font source "${fontSource}" without a font family`)
+    }
+    const fontFaceKey = familyName && fontSource ? `${familyName}|${fontSource}` : undefined
+    // keep the loaded face when switching between themes sharing the same font
+    if (fontFaceKey === currentFontFaceKey) {
+      return
+    }
+
+    if (currentFontFace) {
+      document.fonts.delete(currentFontFace)
+      currentFontFace = undefined
+    }
+    currentFontFaceKey = fontFaceKey
+    if (!fontFaceKey) {
+      return
+    }
+
+    const escapedSource = fontSource.replace(/[\\']/g, '\\$&')
+    currentFontFace = new FontFace(familyName, `url('${escapedSource}')`, {
+      display: 'swap',
+      weight: '100 900'
+    })
+    document.fonts.add(currentFontFace)
+    currentFontFace
+      .load()
+      .catch((error) => console.warn(`Failed to load theme font "${fontSource}"`, error))
+  }
+
+  const initializeThemes = (themeConfig: ThemeConfigType) => {
+    const commonThemeConfig = themeConfig.common as WebThemeType
+    const webThemeConfig = themeConfig.clients.web.defaults as WebThemeType
+    const baseTheme = merge(commonThemeConfig, webThemeConfig)
+    availableThemes.value = themeConfig.clients.web.themes.map((theme) => {
+      return merge(baseTheme, theme)
+    })
+    setThemeFromStorageOrSystem()
+  }
+
+  const setThemeFromStorageOrSystem = () => {
+    const firstLightTheme = unref(availableThemes).find((theme) => !theme.isDark)
+    const firstDarkTheme = unref(availableThemes).find((theme) => theme.isDark)
+    setAndApplyTheme(
+      unref(availableThemes).find((t) => t.label === unref(currentLocalStorageThemeName)) ||
+        (unref(isDark) ? firstDarkTheme : firstLightTheme) ||
+        unref(availableThemes)[0],
+      false
+    )
+  }
+
+  const setAutoSystemTheme = () => {
+    currentLocalStorageThemeName.value = null
+    setThemeFromStorageOrSystem()
+  }
+
+  const isCurrentThemeAutoSystem = computed(() => {
+    return currentLocalStorageThemeName.value === null
+  })
+
+  const setAndApplyTheme = (theme: WebThemeType, updateStorage = true) => {
+    currentTheme.value = theme
+    if (updateStorage) {
+      currentLocalStorageThemeName.value = unref(currentTheme).label
+    }
+    currentLocalStorageThemeIsDark.value = unref(isCurrentThemeAutoSystem) ? null : theme.isDark
+
+    document.documentElement.style.colorScheme = theme.isDark ? 'dark' : 'light'
+    document.documentElement.dataset.colorScheme = theme.isDark ? 'dark' : 'light'
+    // expose the active theme on the DOM so deployment CSS (a global stylesheet or
+    // theme.json) can attach structural styles (borders, radii, ...) that the
+    // design-token system alone cannot express
+    document.documentElement.dataset.theme = theme.label
+
+    // applyCustomProp only sets inline props, never clears them. Remove the previous theme's
+    // props first so tokens this theme leaves unset fall back to the design-system defaults.
+    const root = document.documentElement
+    appliedCustomProps.forEach((key) => root.style.removeProperty(`--oc-${key}`))
+
+    const appliedProps: string[] = []
+    const apply = (key: string, value: string | undefined) => {
+      if (value === undefined) {
+        return
+      }
+      applyCustomProp(key, value)
+      appliedProps.push(key)
+    }
+
+    apply('font-family', theme.designTokens?.fontFamily)
+
+    const fontSize = theme.designTokens?.fontSize
+    if (fontSize && !CSS.supports('font-size', fontSize)) {
+      console.warn(`Ignoring invalid theme font size "${fontSize}"`)
+    } else {
+      apply('font-size', fontSize)
+    }
+    applyFontFace(theme.designTokens?.fontFamily, theme.designTokens?.fontSource)
+
+    const customizableDesignTokens = [
+      { name: 'roles', prefix: 'role' },
+      { name: 'colorPalette', prefix: 'color' }
+    ] as const
+    customizableDesignTokens.forEach(({ name, prefix }) => {
+      const tokens = theme.designTokens?.[name]
+      for (const param in tokens) {
+        apply(`${prefix}-${kebabCase(param)}`, tokens[param])
+      }
+    })
+
+    if (!theme.designTokens?.roles?.chrome) {
+      // fallback to surfaceContainer if chrome is not defined since it may not be set
+      apply('role-chrome', theme.designTokens?.roles?.surfaceContainer)
+      apply('role-on-chrome', theme.designTokens?.roles?.onSurface)
+    }
+
+    appliedCustomProps = appliedProps
+
+    if (theme.favicon) {
+      setFavicon(theme.favicon)
+    }
+  }
+
+  const getRoleIcon = (role: ShareRole) => {
+    return unref(currentTheme).shareRoles[role.id]?.iconName || 'user'
+  }
+
+  return {
+    availableThemes,
+    currentTheme,
+    initializeThemes,
+    setAndApplyTheme,
+    setAutoSystemTheme,
+    isCurrentThemeAutoSystem,
+    getRoleIcon
+  }
+})

@@ -1,0 +1,167 @@
+import { unref } from 'vue'
+import { ActionExtension } from '@opencloud-eu/web-pkg'
+import {
+  batchActionsExtensionPoint,
+  contextActionsExtensionPoint,
+  resourceTableActionsExtensionPoint
+} from '../../extensionPoints'
+import {
+  useSpaceActionsDelete,
+  useSpaceActionsDisable,
+  useSpaceActionsDuplicate,
+  useSpaceActionsEditQuota,
+  useSpaceActionsNavigateToTrash,
+  useSpaceActionsRename,
+  useSpaceActionsRestore,
+  useSpaceActionsShowMembers,
+  useSpaceActionsCustomizeMenu,
+  useSpaceActionsLockVault,
+  useSpaceActionsCreate
+} from '../actions'
+
+const adminSettingsSpacesCreateExtensionPointId = 'app.admin-settings.spaces.create'
+const adminSettingsSpacesContextActionsExtensionPointId =
+  'app.admin-settings.spaces.context-actions'
+const adminSettingsSpacesBatchActionsExtensionPointId = 'app.admin-settings.spaces.batch-actions'
+
+export const useSpaceActions = (): ActionExtension[] => {
+  const { actions: deleteActions } = useSpaceActionsDelete()
+  const { actions: disableActions } = useSpaceActionsDisable()
+  const { actions: duplicateActions } = useSpaceActionsDuplicate()
+  const { actions: editQuotaActions } = useSpaceActionsEditQuota()
+  const { actions: navigateToTrashActions } = useSpaceActionsNavigateToTrash()
+  const { actions: renameActions } = useSpaceActionsRename()
+  const { actions: restoreActions } = useSpaceActionsRestore()
+  const { actions: customizeSpaceMenu } = useSpaceActionsCustomizeMenu()
+  const { actions: showMembersActions } = useSpaceActionsShowMembers()
+  const { actions: lockVaultActions } = useSpaceActionsLockVault()
+  const { actions: createSpaceActions } = useSpaceActionsCreate()
+
+  return [
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.action.create',
+      extensionPointIds: [adminSettingsSpacesCreateExtensionPointId],
+      type: 'action',
+      action: unref(createSpaceActions)[0]
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.context-action.show-members',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(showMembersActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.context-action.rename',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        resourceTableActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(renameActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.context-action.customize-space-menu',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(customizeSpaceMenu)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.context-action.lock-vault',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: unref(lockVaultActions)[0]
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.context-action.navigate-to-trash',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(navigateToTrashActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.batch-action.duplicate',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId,
+        adminSettingsSpacesBatchActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(duplicateActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.batch-action.edit-quota',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId,
+        adminSettingsSpacesBatchActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(editQuotaActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.batch-action.restore',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId,
+        adminSettingsSpacesBatchActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(restoreActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.batch-action.disable',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId,
+        adminSettingsSpacesBatchActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(disableActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.spaces.batch-action.delete',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        adminSettingsSpacesContextActionsExtensionPointId,
+        adminSettingsSpacesBatchActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...unref(deleteActions)[0],
+        category: 'tertiary'
+      }
+    }
+  ]
+}

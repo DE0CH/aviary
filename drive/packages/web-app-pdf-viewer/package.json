@@ -1,0 +1,15 @@
+{
+  "name": "pdf-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenCloud web PDF viewer",
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "@opencloud-eu/web-test-helpers": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
+    "vue3-gettext": "^4.0.0-beta.1"
+  }
+}

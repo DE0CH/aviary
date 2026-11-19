@@ -1,0 +1,21 @@
+# The app starts on its sign-in screen (no Access token on a fresh install): the product's name and the button, which
+# a tap reaches. Text alone is not enough: views under iOS's launch screen are still in the accessibility tree, and
+# Jarvis Chat passed that check while its launch image covered the sign-in screen (src/yyc/launch-screen.ts).
+# The tap opens iOS's sign-in prompt for the server's domain, which is cancelled. The screenshot is taken before it
+# (YYC AI's address is a build secret; simulator-test.sh drops its other screenshots).
+# APP_ID and PRODUCT_NAME are the build's (ios/simulator-test.sh reads them from the built app's Info.plist and the
+# variant).
+appId: ${APP_ID}
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "登入|Sign in"
+    timeout: 60000
+- assertVisible: "${PRODUCT_NAME}"
+- takeScreenshot: sign-in
+- tapOn: "登入|Sign in"
+- extendedWaitUntil:
+    visible: ".*Wants to Use.*"
+    timeout: 30000
+# No wait for the prompt to go: Maestro's notVisible on it hung until the job's timeout (run 63)
+- tapOn: "Cancel"

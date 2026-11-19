@@ -1,0 +1,388 @@
+import { defineStore } from 'pinia'
+import { Ref, computed, ref, unref } from 'vue'
+import { SpaceResource, type Resource } from '@opencloud-eu/web-client'
+import { countResources, getParentPaths } from '../../helpers'
+import { AncestorMetaData, AncestorMetaDataValue } from '../../types'
+import { DavProperty, WebDAV } from '@opencloud-eu/web-client/webdav'
+import { useSpacesStore } from './spaces'
+import { eventBus, releaseFilePreviews } from '../../services'
+
+export const useResourcesStore = defineStore('resources', () => {
+  const spacesStore = useSpacesStore()
+
+  const resources = ref<Resource[]>([]) as Ref<Resource[]>
+  const currentFolder = ref<Resource>()
+  const ancestorMetaData = ref<AncestorMetaData>({})
+  const deleteQueue = ref<string[]>([])
+
+  const activeResources = computed(() => {
+    let res = unref(resources)
+
+    if (!unref(areHiddenFilesShown)) {
+      res = res.filter((file) => !file.name.startsWith('.'))
+    }
+
+    return res
+  })
+
+  const totalResourcesCount = computed(() => countResources(unref(resources)))
+
+  const setResources = (file: Resource[]) => {
+    resources.value = file
+  }
+
+  const removeResources = (values: Resource[]) => {
+    const removedIds = new Set(values.map(({ id }) => id))
+    releaseFilePreviews(values.map(({ id }) => id))
+    resources.value = unref(resources).filter((file) => !removedIds.has(file.id))
+    deselectResources(removedIds)
+  }
+
+  const clearResources = () => {
+    resources.value = []
+  }
+
+  const upsertResource = (resource: Resource) => {
+    const existing = unref(resources).find(({ id }) => id === resource.id)
+    if (existing) {
+      Object.assign(existing, resource)
+      return
+    }
+    unref(resources).push(resource)
+  }
+
+  const upsertResources = (values: Resource[]) => {
+    const other = unref(resources).filter((f) => !values.some((r) => r.path === f.path))
+    resources.value = [...other, ...values]
+  }
+
+  const updateResourceField = <T extends Resource>({
+    id,
+    field,
+    value
+  }: {
+    id: T['id']
+    field: keyof T
+    value: T[keyof T]
+  }) => {
+    const resource = unref(resources).find((resource) => id === resource.id) as T
+    if (resource) {
+      resource[field] = value
+    }
+
+    // actions on the open folder itself (e.g. via the breadcrumb) need to update it as well
+    const folder = unref(currentFolder) as T
+    if (id && folder?.id === id) {
+      folder[field] = value
+    }
+  }
+
+  const setCurrentFolder = (value: Resource) => {
+    currentFolder.value = value
+  }
+
+  const clearCurrentFolder = () => {
+    currentFolder.value = undefined
+  }
+
+  const initResourceList = <T extends Resource>(data: { resources: T[]; currentFolder: T }) => {
+    resources.value = data.resources
+    currentFolder.value = data.currentFolder
+  }
+
+  const clearResourceList = () => {
+    resources.value = []
+    currentFolder.value = undefined
+    selectedIds.value = []
+  }
+
+  // counter because folder loads can overlap
+  const runningResourceLoads = ref(0)
+  const resourcesLoading = computed(() => unref(runningResourceLoads) > 0)
+
+  const startResourcesLoading = () => {
+    runningResourceLoads.value = unref(runningResourceLoads) + 1
+  }
+
+  const finishResourcesLoading = () => {
+    runningResourceLoads.value = Math.max(0, unref(runningResourceLoads) - 1)
+  }
+
+  const selectedIds = ref<string[]>([])
+  const latestSelectedId = ref<string>(null)
+
+  const selectedIdsSet = computed(() => new Set(unref(selectedIds)))
+
+  const selectedResources = computed(() => {
+    return unref(resources).filter((f) => unref(selectedIdsSet).has(f.id))
+  })
+
+  const setSelection = (ids: string[]) => {
+    const latestSelected = ids.find((id) => !unref(selectedIds).includes(id))
+
+    if (latestSelected) {
+      latestSelectedId.value = latestSelected
+    }
+    selectedIds.value = ids
+  }
+
+  const addSelection = (id: string) => {
+    latestSelectedId.value = id
+    if (!unref(selectedIds).includes(id)) {
+      unref(selectedIds).push(id)
+    }
+  }
+
+  const removeSelection = (id: string) => {
+    latestSelectedId.value = id
+    if (unref(selectedIds).includes(id)) {
+      selectedIds.value = unref(selectedIds).filter((i) => i !== id)
+    }
+  }
+
+  const toggleSelection = (id: string) => {
+    if (unref(selectedIds).includes(id)) {
+      removeSelection(id)
+    } else {
+      addSelection(id)
+    }
+  }
+
+  const resetSelection = () => {
+    eventBus.publish('app.files.shiftAnchor.reset')
+    selectedIds.value = []
+  }
+
+  const setLastSelectedId = (id: string) => {
+    latestSelectedId.value = id
+  }
+
+  const areHiddenFilesShown = ref(true)
+  const areFileExtensionsShown = ref(true)
+  const areWebDavDetailsShown = ref(false)
+  const areDisabledSpacesShown = ref(true)
+  const areEmptyTrashesShown = ref(true)
+  const areFoldersSortedFirst = ref(true)
+
+  const setAreHiddenFilesShown = (value: boolean) => {
+    areHiddenFilesShown.value = value
+    window.localStorage.setItem('oc_hiddenFilesShown', value.toString())
+
+    if (!value) {
+      deselectHiddenResources()
+    }
+  }
+
+  function deselectHiddenResources() {
+    const hiddenIds = new Set(
+      unref(resources)
+        .filter(({ name }) => name.startsWith('.'))
+        .map(({ id }) => id)
+    )
+    deselectResources(hiddenIds)
+  }
+
+  function deselectResources(ids: Set<string>) {
+    const removesLatest = ids.has(unref(latestSelectedId))
+    const removesSelected = unref(selectedIds).some((id) => ids.has(id))
+    if (!removesLatest && !removesSelected) {
+      return
+    }
+
+    if (removesSelected) {
+      selectedIds.value = unref(selectedIds).filter((id) => !ids.has(id))
+    }
+    if (removesLatest) {
+      latestSelectedId.value = null
+    }
+    eventBus.publish('app.files.shiftAnchor.reset')
+  }
+
+  const setAreFileExtensionsShown = (value: boolean) => {
+    areFileExtensionsShown.value = value
+    window.localStorage.setItem('oc_fileExtensionsShown', value.toString())
+  }
+  const setAreWebDavDetailsShown = (value: boolean) => {
+    areWebDavDetailsShown.value = value
+    window.localStorage.setItem('oc_webDavDetailsShown', value.toString())
+  }
+  const setAreDisabledSpacesShown = (value: boolean) => {
+    areDisabledSpacesShown.value = value
+    window.localStorage.setItem('oc_disabledSpacesShown', value.toString())
+  }
+  const setAreEmptyTrashesShown = (value: boolean) => {
+    areEmptyTrashesShown.value = value
+    window.localStorage.setItem('oc_emptyTrashesShown', value.toString())
+  }
+  const setAreFoldersSortedFirst = (value: boolean) => {
+    areFoldersSortedFirst.value = value
+    window.localStorage.setItem('oc_foldersSortedFirst', value.toString())
+  }
+
+  const setAncestorMetaData = (value: AncestorMetaData) => {
+    ancestorMetaData.value = value
+  }
+
+  const updateAncestorField = <
+    T extends AncestorMetaDataValue,
+    K extends keyof AncestorMetaDataValue
+  >({
+    path,
+    field,
+    value
+  }: {
+    path: T['path']
+    field: K
+    value: T[K]
+  }) => {
+    const resource = unref(ancestorMetaData)[path] ?? null
+    if (resource) {
+      resource[field] = value
+    }
+  }
+
+  const loadAncestorMetaData = ({
+    folder,
+    space,
+    client,
+    signal
+  }: {
+    folder: Resource
+    space: SpaceResource
+    client: WebDAV
+    signal?: AbortSignal
+  }) => {
+    const data: AncestorMetaData = {
+      [folder.path]: {
+        id: folder.fileId,
+        shareTypes: folder.shareTypes,
+        parentFolderId: folder.parentFolderId,
+        spaceId: space.id,
+        path: folder.path
+      }
+    }
+    const promises = []
+    const davProperties = [DavProperty.FileId, DavProperty.ShareTypes, DavProperty.FileParent]
+    const parentPaths = getParentPaths(folder.path)
+
+    for (const path of parentPaths) {
+      const cachedData = unref(ancestorMetaData)[path] ?? null
+      if (cachedData?.spaceId === space.id) {
+        data[path] = cachedData
+        continue
+      }
+
+      promises.push(
+        client
+          .listFiles(space, { path }, { depth: 0, davProperties, signal })
+          .then(({ resource }) => {
+            data[path] = {
+              id: resource.fileId,
+              shareTypes: resource.shareTypes,
+              parentFolderId: resource.parentFolderId,
+              spaceId: space.id,
+              path
+            }
+          })
+      )
+    }
+
+    return Promise.all(promises).then(() => {
+      if (!Object.keys(data).includes('/')) {
+        // add space as root element
+        const cachedRoot = unref(ancestorMetaData)['/']
+        if (cachedRoot?.spaceId === space.id) {
+          data['/'] = cachedRoot
+        } else {
+          const { parentFolderId } = Object.values(data)[0]
+          const space = spacesStore.spaces.find(({ id }) => parentFolderId.startsWith(id))
+          if (space) {
+            data['/'] = {
+              id: space.id,
+              shareTypes: space.shareTypes,
+              parentFolderId: space.id,
+              spaceId: space.id,
+              path: '/'
+            }
+          }
+        }
+      }
+
+      setAncestorMetaData(data)
+    })
+  }
+
+  const getAncestorById = (id: string) => {
+    return Object.values(unref(ancestorMetaData)).find((a) => id === a.id)
+  }
+
+  const addResourcesIntoDeleteQueue = (ids: string[]): void => {
+    deleteQueue.value = deleteQueue.value.concat(
+      ids.filter((id) => !unref(deleteQueue).includes(id))
+    )
+  }
+
+  const removeResourcesFromDeleteQueue = (ids: string[]): void => {
+    deleteQueue.value = deleteQueue.value.filter((id) => !ids.includes(id))
+  }
+
+  return {
+    resources,
+    currentFolder,
+    activeResources,
+    totalResourcesCount,
+
+    setResources,
+    removeResources,
+    clearResources,
+    upsertResource,
+    upsertResources,
+    updateResourceField,
+
+    setCurrentFolder,
+    clearCurrentFolder,
+
+    initResourceList,
+    clearResourceList,
+
+    resourcesLoading,
+    startResourcesLoading,
+    finishResourcesLoading,
+
+    selectedIds,
+    selectedIdsSet,
+    latestSelectedId,
+    selectedResources,
+    setSelection,
+    addSelection,
+    removeSelection,
+    toggleSelection,
+    resetSelection,
+    setLastSelectedId,
+
+    areHiddenFilesShown,
+    areFileExtensionsShown,
+    areWebDavDetailsShown,
+    areDisabledSpacesShown,
+    areEmptyTrashesShown,
+    areFoldersSortedFirst,
+    setAreHiddenFilesShown,
+    setAreFileExtensionsShown,
+    setAreWebDavDetailsShown,
+    setAreDisabledSpacesShown,
+    setAreEmptyTrashesShown,
+    setAreFoldersSortedFirst,
+
+    ancestorMetaData,
+    setAncestorMetaData,
+    updateAncestorField,
+    loadAncestorMetaData,
+    getAncestorById,
+
+    deleteQueue,
+    addResourcesIntoDeleteQueue,
+    removeResourcesFromDeleteQueue
+  }
+})
+
+export type ResourcesStore = ReturnType<typeof useResourcesStore>

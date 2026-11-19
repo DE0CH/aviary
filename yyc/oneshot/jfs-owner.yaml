@@ -1,0 +1,77 @@
+# Job hermit-jfs-owner (hermit 15.4; cutover 8.1, 10.2 step 1): `hermit jfs-owner` puts ws/ and everything under it to
+# 1000:1000 (lchown, a symlink's target untouched). Runs once in A2 before the first hermit-import, again in A6 after
+# legacy-down.sh (a new Job name then). Root on a mount WITHOUT squashing: its own PV hermit-jfs-owner (the same JuiceFS
+# volume yyc-ai, its own volumeHandle, so its own mount pods; hermit-jfs squashes every caller to 1000:1000). The pod
+# itself needs no network: the CSI mount pod reaches the metadata. Run with yyc/oneshot/run.sh (never applied by yyc-ai.yml); deleted in the teardown.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hermit-jfs-owner
+  labels: {juicefs-volume: yyc-ai-hermit-owner}
+spec:
+  capacity: {storage: 1Pi}
+  volumeMode: Filesystem
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: csi.juicefs.com
+    volumeHandle: yyc-ai-hermit-owner
+    fsType: juicefs
+    nodePublishSecretRef: {name: hermit-juicefs, namespace: yyc-ai}
+  mountOptions: [cache-size=0, open-cache=0]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermit-jfs-owner
+  namespace: yyc-ai-fabric
+spec:
+  accessModes: [ReadWriteMany]
+  volumeMode: Filesystem
+  resources: {requests: {storage: 1Pi}}
+  storageClassName: ""
+  selector:
+    matchLabels: {juicefs-volume: yyc-ai-hermit-owner}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hermit-jfs-owner
+  namespace: yyc-ai-fabric
+  labels: {app: import, import: hermit-jfs-owner}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels: {app: import, import: hermit-jfs-owner}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: batch
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: hermit-jfs-owner
+          image: hermit
+          args: [jfs-owner]
+          resources:
+            requests: {cpu: 200m, memory: 256Mi, ephemeral-storage: 64Mi}
+            limits: {cpu: "1", memory: 256Mi, ephemeral-storage: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL], add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER]}
+          volumeMounts:
+            - {name: jfs, mountPath: /jfs, mountPropagation: HostToContainer}
+      volumes:
+        - {name: jfs, persistentVolumeClaim: {claimName: hermit-jfs-owner}}

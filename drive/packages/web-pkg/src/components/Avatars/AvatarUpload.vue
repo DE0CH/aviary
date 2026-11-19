@@ -1,0 +1,214 @@
+<template>
+  <div v-if="user">
+    <input
+      ref="fileInputRef"
+      class="hidden avatar-file-input"
+      type="file"
+      accept="image/jpeg, image/png"
+      @change="onFileChange"
+    />
+    <div class="flex flex-col md:flex-row items-center gap-6">
+      <user-avatar :width="128" :user-id="user.id" :user-name="user.displayName" />
+      <div class="flex flex-col items-center md:items-start gap-4">
+        <slot />
+        <div class="oc-button-group">
+          <oc-button size="small" @click="triggerFileInput">
+            <oc-icon name="upload-cloud" fill-type="line" size-class="size-4" />
+            {{ hasAvatar ? $gettext('Replace') : $gettext('Upload') }}
+          </oc-button>
+          <oc-button
+            v-if="hasAvatar"
+            class="avatar-upload-remove-button"
+            size="small"
+            @click="showRemoveModal = true"
+          >
+            <oc-icon name="delete-bin" fill-type="line" size-class="size-4" />
+            {{ $gettext('Remove') }}
+          </oc-button>
+        </div>
+      </div>
+    </div>
+    <oc-modal
+      v-if="showCropModal"
+      :title="$gettext('Crop your new profile picture')"
+      :button-confirm-text="$gettext('Set')"
+      :button-confirm-disabled="!imageUrl"
+      :is-loading="isSetting"
+      focus-trap-initial="#image-cropper-selection"
+      @cancel="onCropModalCancel"
+      @confirm="onCropModalConfirm"
+    >
+      <template #content>
+        <image-cropper
+          ref="imageCropperRef"
+          :image-url="imageUrl"
+          :aspect-ratio="1"
+          rounded-selection
+        />
+      </template>
+    </oc-modal>
+    <oc-modal
+      v-if="showRemoveModal"
+      :message="$gettext('Are you sure you want to remove your profile picture?')"
+      :title="$gettext('Remove profile picture')"
+      :button-confirm-text="$gettext('Remove')"
+      :is-loading="isRemoving"
+      show-cancel-action
+      @cancel="showRemoveModal = false"
+      @confirm="onRemoveModalConfirm"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, unref } from 'vue'
+import { useObjectUrl } from '@vueuse/core'
+import { useAvatarsStore, useClientService, useMessages, useUserStore } from '../../composables'
+import { storeToRefs } from 'pinia'
+import { useGettext } from 'vue3-gettext'
+import { AVATAR_UPLOAD_MAX_FILE_SIZE_MB } from '../../constants'
+import UserAvatar from './UserAvatar.vue'
+import ImageCropper from '../ImageCropper.vue'
+import { isDecodableImage } from '../../helpers'
+
+const userStore = useUserStore()
+const avatarsStore = useAvatarsStore()
+const { avatarMap } = storeToRefs(avatarsStore)
+const { user } = storeToRefs(userStore)
+
+const { $gettext } = useGettext()
+const { showErrorMessage, showMessage } = useMessages()
+const { graphAuthenticated } = useClientService()
+
+const selectedFile = ref<File>(null)
+const imageUrl = useObjectUrl(selectedFile)
+const imageCropperRef = ref<InstanceType<typeof ImageCropper> | null>(null)
+const showCropModal = ref(false)
+const showRemoveModal = ref(false)
+const isRemoving = ref(false)
+const isSetting = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const maxFileSize = AVATAR_UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024
+
+const hasAvatar = computed(() => {
+  return !!unref(avatarMap)[unref(user).id]
+})
+
+const onFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) {
+    return
+  }
+
+  if (file.size > maxFileSize) {
+    showErrorMessage({
+      title: $gettext('File size exceeds the limit of %{size}MB', {
+        size: AVATAR_UPLOAD_MAX_FILE_SIZE_MB.toString()
+      })
+    })
+    resetFileInput()
+    return
+  }
+
+  if (!(await isDecodableImage(file))) {
+    showErrorMessage({ title: $gettext('The selected image is not supported or damaged') })
+    resetFileInput()
+    return
+  }
+
+  selectedFile.value = file
+  showCropModal.value = true
+}
+
+const getCroppedImage = async () => {
+  if (!unref(imageCropperRef)) {
+    return null
+  }
+  return await unref(imageCropperRef).getCroppedCanvas(256, 256)
+}
+
+const getCanvasBlob = async (canvas: HTMLCanvasElement): Promise<Blob> => {
+  return await new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob as Blob), 'image/png')
+  })
+}
+
+const triggerFileInput = () => {
+  unref(fileInputRef).click()
+}
+
+const onCropModalCancel = () => {
+  showCropModal.value = false
+  destroyCropper()
+}
+
+const onCropModalConfirm = async () => {
+  // keeps the dialog from being cancelled or confirmed again while the upload is in flight
+  if (unref(isSetting)) {
+    return
+  }
+
+  isSetting.value = true
+  try {
+    const croppedImage = await getCroppedImage()
+    if (!croppedImage) {
+      return
+    }
+
+    const blob = await getCanvasBlob(croppedImage)
+    const objectUrl = URL.createObjectURL(blob)
+    const file = new File([blob], 'avatar.png', {
+      type: 'image/png',
+      lastModified: Date.now()
+    })
+
+    try {
+      await graphAuthenticated.photos.updateOwnUserPhotoPatch(file)
+      avatarsStore.addAvatar(unref(user).id, objectUrl)
+      showMessage({ title: $gettext('Profile picture was set successfully') })
+    } catch (error) {
+      showErrorMessage({
+        title: $gettext('Failed to set profile picture'),
+        errors: [error]
+      })
+    }
+
+    showCropModal.value = false
+    destroyCropper()
+  } finally {
+    isSetting.value = false
+  }
+}
+
+const onRemoveModalConfirm = async () => {
+  // keeps the dialog from being cancelled or confirmed again while the removal is in flight
+  isRemoving.value = true
+  try {
+    await graphAuthenticated.photos.deleteOwnUserPhoto()
+    avatarsStore.removeAvatar(unref(user).id)
+    showMessage({ title: $gettext('Profile picture was removed successfully') })
+  } catch (error) {
+    showErrorMessage({
+      title: $gettext('Failed to remove profile picture'),
+      errors: [error]
+    })
+  } finally {
+    isRemoving.value = false
+  }
+
+  showRemoveModal.value = false
+}
+
+function resetFileInput() {
+  if (unref(fileInputRef)) {
+    fileInputRef.value.value = ''
+  }
+}
+
+const destroyCropper = () => {
+  resetFileInput()
+  selectedFile.value = null
+}
+</script>

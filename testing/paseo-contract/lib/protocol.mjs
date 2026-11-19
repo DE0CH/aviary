@@ -1,7 +1,8 @@
 // The Paseo protocol package of one client build, loaded the way that build validates frames.
 //
-// A client build is a DE0CH/claudecodeui commit. Its `paseo/packages/protocol` is fetched (a blobless, shallow fetch
-// of just that commit), its runtime packages (zod, zod-aot, semver, …) are installed at the versions the commit's own
+// A client build is a commit of DE0CH/aviary (the app lives in `app/` since the monorepo, docs/DEPLOY.md) or, before
+// it, of DE0CH/claudecodeui (in `paseo/`). Its `<app dir>/packages/protocol` is fetched (a blobless, shallow fetch
+// of just that commit, from whichever repository has it), its runtime packages (zod, zod-aot, semver, …) are installed at the versions the commit's own
 // `paseo/package-lock.json` resolves (lib/runtime.mjs), its zod-aot validators are generated with the commit's own
 // generator script (what the shipped bundle runs), and the package is bundled with esbuild into one ESM module.
 // Installs are shared by every build that resolves the same versions; builds are cached by the package's git tree.
@@ -41,8 +42,17 @@ export const cacheRoot = process.env.PASEO_CONTRACT_CACHE
   ? path.resolve(process.env.PASEO_CONTRACT_CACHE)
   : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "paseo-contract");
 
-/** The claudecodeui repository the client commits come from (a URL, or a local clone for offline runs). */
+/** The claudecodeui repository the client commits before the monorepo come from (a URL, or a local clone for offline runs). */
 export const repository = process.env.PASEO_CONTRACT_REPOSITORY || pkg.paseo.repository;
+/** The monorepo the newer client commits come from, their app in `app/` (a URL, or a local clone). */
+export const monorepo = process.env.PASEO_CONTRACT_MONOREPO || pkg.paseo.monorepo;
+
+/** Where each client commit is: the repository's mirror and the app's directory in it (`app` or `paseo`). */
+const sources = [
+  { name: "aviary.git", url: () => monorepo, prefix: "app" },
+  { name: "claudecodeui.git", url: () => repository, prefix: "paseo" },
+];
+const where = new Map();
 
 const SHA = /^[0-9a-f]{40}$/;
 
@@ -71,13 +81,13 @@ function cache() {
   return cacheRoot;
 }
 
-/** The bare, partial clone every commit is fetched into (created under a scratch name, then renamed into place). */
-function mirror() {
-  const dir = path.join(cache(), "claudecodeui.git");
+/** The bare, partial clone a source's commits are fetched into (created under a scratch name, then renamed into place). */
+function mirror(source) {
+  const dir = path.join(cache(), source.name);
   if (!existsSync(path.join(dir, "HEAD"))) {
     const work = scratch(dir);
     git(["init", "--bare", "--quiet", work]);
-    git(["-C", work, "remote", "add", "origin", repository]);
+    git(["-C", work, "remote", "add", "origin", source.url()]);
     git(["-C", work, "config", "remote.origin.promisor", "true"]);
     git(["-C", work, "config", "remote.origin.partialclonefilter", "blob:none"]);
     publish(work, dir);
@@ -90,22 +100,40 @@ function haveCommit(dir, sha) {
 }
 
 /**
- * Fetches one commit (no history, blobs on demand) into the mirror; returns the mirror's directory. Another process
- * fetching at the same time holds the mirror's shallow.lock, so a failed fetch is retried a few times.
+ * Fetches one commit (no history, blobs on demand) into a source's mirror; true when the source has it. Another
+ * process fetching at the same time holds the mirror's shallow.lock, so a failed fetch is retried a few times; a
+ * source that does not have the commit answers "not our ref" every time.
  */
-function fetchCommit(sha) {
-  if (!SHA.test(sha)) throw new Error(`not a full commit hash: ${sha}`);
-  const dir = mirror();
+function fetchFrom(source, sha) {
+  const dir = mirror(source);
   for (let attempt = 1; !haveCommit(dir, sha); attempt++) {
     try {
       git(["-C", dir, "fetch", "--quiet", "--depth=1", "--filter=blob:none", "origin", sha]);
     } catch (error) {
       if (haveCommit(dir, sha)) break;
-      if (attempt >= 6) throw new Error(`fetching claudecodeui ${sha} failed: ${error.stderr || error.message}`);
+      const msg = String(error.stderr || error.message);
+      if (/not our ref|unadvertised object|couldn't find remote ref|no such remote ref/i.test(msg)) return false;
+      if (attempt >= 6) throw new Error(`fetching ${source.name} ${sha} failed: ${msg}`);
       sleep(250 * attempt);
     }
   }
-  return dir;
+  return true;
+}
+
+/** The mirror holding a client commit and the app's directory there: `{ dir, prefix }` (aviary first). */
+function locate(sha) {
+  if (!SHA.test(sha)) throw new Error(`not a full commit hash: ${sha}`);
+  if (!where.has(sha)) {
+    const source = sources.find((s) => fetchFrom(s, sha));
+    if (!source) throw new Error(`client commit ${sha} is in neither DE0CH/aviary nor DE0CH/claudecodeui`);
+    where.set(sha, { dir: mirror(source), prefix: source.prefix });
+  }
+  return where.get(sha);
+}
+
+/** The mirror's directory for a client commit (`locate`). */
+function fetchCommit(sha) {
+  return locate(sha).dir;
 }
 
 /** The committer time of a commit, UTC, to the second (`2026-11-02T08:29:13Z`): the order of clients.txt. */
@@ -119,7 +147,7 @@ export function commitTime(sha) {
 /** The git tree hash of `paseo/packages/<name>` at `sha`, or null when the commit has none. */
 function packageTree(sha, name) {
   const dir = fetchCommit(sha);
-  const result = spawnSync("git", ["-C", dir, "rev-parse", "--verify", "--quiet", `${sha}:paseo/packages/${name}`], { encoding: "utf8" });
+  const result = spawnSync("git", ["-C", dir, "rev-parse", "--verify", "--quiet", `${sha}:${locate(sha).prefix}/packages/${name}`], { encoding: "utf8" });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
@@ -131,7 +159,7 @@ export function hasPaseo(sha) {
 /** The git tree hash of the commit's protocol package (throws when it is not a Paseo client build). */
 export function protocolTree(sha) {
   const tree = packageTree(sha, "protocol");
-  if (!tree) throw new Error(`claudecodeui ${sha} has no paseo/packages/protocol: it is not a Paseo client build`);
+  if (!tree) throw new Error(`client commit ${sha} has no packages/protocol: it is not a Paseo client build`);
   return tree;
 }
 
@@ -139,9 +167,9 @@ export function protocolTree(sha) {
 function commitLock(sha) {
   const dir = fetchCommit(sha);
   try {
-    return JSON.parse(git(["-C", dir, "show", `${sha}:paseo/package-lock.json`]));
+    return JSON.parse(git(["-C", dir, "show", `${sha}:${locate(sha).prefix}/package-lock.json`]));
   } catch (error) {
-    throw new Error(`claudecodeui ${sha}: cannot read paseo/package-lock.json (${error.message})`);
+    throw new Error(`client commit ${sha}: cannot read its package-lock.json (${error.message})`);
   }
 }
 
@@ -160,7 +188,7 @@ async function runtimeFor(lock, workspaces, label) {
 function extract(sha, names, target) {
   const dir = fetchCommit(sha);
   mkdirSync(target, { recursive: true });
-  const archive = spawnSync("git", ["-C", dir, "archive", "--format=tar", sha, ...names.map((n) => `paseo/packages/${n}`)], {
+  const archive = spawnSync("git", ["-C", dir, "archive", "--format=tar", sha, ...names.map((n) => `${locate(sha).prefix}/packages/${n}`)], {
     maxBuffer: 1 << 30,
   });
   if (archive.status !== 0) throw new Error(`git archive ${sha} failed: ${archive.stderr}`);
@@ -342,7 +370,7 @@ export async function clientForCommit(sha) {
   const workspaces = ["protocol", "client", "relay"];
   const trees = workspaces.map((name) => {
     const tree = packageTree(sha, name);
-    if (!tree) throw new Error(`claudecodeui ${sha} has no paseo/packages/${name}: it is not a Paseo client build`);
+    if (!tree) throw new Error(`client commit ${sha} has no packages/${name}: it is not a Paseo client build`);
     return tree;
   });
   const runtime = await runtimeFor(commitLock(sha), workspaces, `claudecodeui ${sha.slice(0, 12)}`);
@@ -402,7 +430,7 @@ const STORE_STUB = [
  */
 export async function appTimelineForCommit(sha) {
   const app = packageTree(sha, "app/src");
-  if (!app) throw new Error(`claudecodeui ${sha} has no paseo/packages/app`);
+  if (!app) throw new Error(`client commit ${sha} has no packages/app`);
   const tree = protocolTree(sha);
   const runtime = await runtimeFor(commitLock(sha), ["protocol"], `claudecodeui ${sha.slice(0, 12)}`);
   const key = createHash("sha256").update(`${app} ${tree}`).digest("hex").slice(0, 20);

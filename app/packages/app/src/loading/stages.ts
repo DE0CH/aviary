@@ -1,0 +1,288 @@
+import { useEffect, useSyncExternalStore } from "react";
+import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
+import { isWeb } from "@/constants/platform";
+import { loadHighlighter } from "@/utils/highlight-grammars";
+import { isChunkLoadError, loadWithRetry } from "@/utils/lazy-with-retry";
+
+// The order the web app's pieces arrive in (Deyao, 2026-10-29; docs/paseo-ui.md "Loading"): the message box and the
+// connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
+// conversation list; everything else only when used. Each stage's import() starts when the one before it has
+// arrived, so a later chunk never takes bandwidth from an earlier one:
+// - stage 1, the reply display (the reply chunk and the code highlighter): once the server-message validator (the
+//   connection's own chunk) has arrived or failed;
+// - stage 2, the sidebar chunk: once stage 1 has settled; then the conversation page's chunk
+//   (loading/workspace-chunk.ts), which a send or a conversation route fetches at once anyway;
+// - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
+// Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
+// fetches the reply and conversation chunks at once, opening the phone drawer the sidebar, and a conversation page
+// fetches its own chunk as it renders (it holds that page's message box). Native has every module in one bundle, so
+// every stage is reached from the start.
+// Send waits for the reply display (Deyao, 2026-10-29): every composer's send stays off until the reply chunk and the
+// highlighter have arrived (useReplyDisplayReady), so nothing goes out before its reply can render.
+export type LoadingStage = 0 | 1 | 2 | 3;
+
+let reached: LoadingStage = isWeb ? 0 : 3;
+const listeners = new Set<() => void>();
+const stageWaiters = new Map<LoadingStage, Array<() => void>>();
+
+function reach(stage: LoadingStage): void {
+  if (stage <= reached) return;
+  reached = stage;
+  for (const [waiting, resolvers] of stageWaiters) {
+    if (waiting > stage) continue;
+    stageWaiters.delete(waiting);
+    for (const resolve of resolvers) resolve();
+  }
+  for (const listener of listeners) listener();
+}
+
+/** Resolves once `stage` has been reached. */
+export function waitForStage(stage: LoadingStage): Promise<void> {
+  if (stage <= reached) return Promise.resolve();
+  return new Promise((resolve) => {
+    const resolvers = stageWaiters.get(stage) ?? [];
+    resolvers.push(resolve);
+    stageWaiters.set(stage, resolvers);
+  });
+}
+
+export function hasReachedStage(stage: LoadingStage): boolean {
+  return stage <= reached;
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Re-renders when the app reaches `stage`. */
+export function useStageReached(stage: LoadingStage): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => stage <= reached,
+    () => stage <= reached,
+  );
+}
+
+function markChunk(name: string): void {
+  try {
+    performance.mark(`yyc:chunk-requested:${name}`);
+  } catch {
+    // performance marks are for load-timing only
+  }
+}
+
+function settle(promise: Promise<unknown>): Promise<void> {
+  return promise.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+let replyChunk: Promise<typeof import("./reply-chunk")> | null = null;
+let workspaceChunk: Promise<typeof import("./workspace-chunk")> | null = null;
+let sidebarChunk: Promise<typeof import("./sidebar-chunk")> | null = null;
+
+/** The reply's display: the timeline and the markdown renderer. Starts the fetch now (a send, a stage). */
+export function loadReplyChunk(): Promise<typeof import("./reply-chunk")> {
+  if (!replyChunk) {
+    markChunk("reply");
+    // A failed fetch is forgotten, so a retry fetches again
+    replyChunk = import("./reply-chunk").catch((error: unknown) => {
+      replyChunk = null;
+      throw error;
+    });
+  }
+  return replyChunk;
+}
+
+/** The conversation page (the workspace screen). Starts the fetch now (a conversation page, a send, stage 2). */
+export function loadWorkspaceChunk(): Promise<typeof import("./workspace-chunk")> {
+  if (!workspaceChunk) {
+    markChunk("workspace");
+    workspaceChunk = import("./workspace-chunk").catch((error: unknown) => {
+      workspaceChunk = null;
+      throw error;
+    });
+  }
+  return workspaceChunk;
+}
+
+// Native has every module in its one bundle; unit tests never run the stages (app/_layout.tsx)
+let replyDisplayReady = !isWeb || process.env.NODE_ENV === "test";
+let replyDisplay: Promise<void> | null = null;
+let replyDisplayFailures = 0;
+let replyDisplayFailed = false;
+const replyDisplayListeners = new Set<() => void>();
+
+function notifyReplyDisplay(): void {
+  for (const listener of replyDisplayListeners) listener();
+}
+
+/**
+ * The reply's display, everything a reply needs to render: the reply chunk (timeline, markdown, the KaTeX and Mermaid
+ * loaders) and the code highlighter. A failed fetch goes through loadWithRetry (retries, then one page reload, which
+ * covers a deploy that replaced the build), and after that is tried again by itself (1 s, 2 s, 4 s ... at most 30 s
+ * apart, and at once when the browser comes back online) until it arrives, since every send waits for it. After three
+ * failures in a row, or an error that is not a fetch, `useReplyDisplayFailed` turns true so the composer says why send
+ * is off and offers a reload; send stays off.
+ */
+export function loadReplyDisplay(): Promise<void> {
+  if (replyDisplayReady) return Promise.resolve();
+  replyDisplay ??= Promise.all([loadWithRetry(loadReplyChunk), loadWithRetry(loadHighlighter)]).then(
+    () => {
+      replyDisplayReady = true;
+      replyDisplayFailures = 0;
+      replyDisplayFailed = false;
+      try {
+        performance.mark("yyc:reply-display");
+      } catch {
+        // performance marks are for load-timing only
+      }
+      notifyReplyDisplay();
+    },
+    (error: unknown) => {
+      replyDisplay = null;
+      replyDisplayFailures += 1;
+      const fetchError = isChunkLoadError(error);
+      if (!replyDisplayFailed && (!fetchError || replyDisplayFailures >= 3)) {
+        replyDisplayFailed = true;
+        notifyReplyDisplay();
+      }
+      // An error the chunk threw while it evaluated is a bug: fetching it again cannot help
+      if (fetchError) {
+        const delay = Math.min(30_000, 1000 * 2 ** (replyDisplayFailures - 1));
+        setTimeout(() => void loadReplyDisplay().catch(() => undefined), delay);
+      }
+      throw error;
+    },
+  );
+  return replyDisplay;
+}
+
+if (isWeb && typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  // Back online: try again now rather than at the next backoff tick (an in-flight load is reused, not doubled)
+  window.addEventListener("online", () => {
+    if (!replyDisplayReady && replyDisplayFailures > 0) void loadReplyDisplay().catch(() => undefined);
+  });
+}
+
+export function isReplyDisplayReady(): boolean {
+  return replyDisplayReady;
+}
+
+function isReplyDisplayFailed(): boolean {
+  return replyDisplayFailed;
+}
+
+function subscribeReplyDisplay(listener: () => void): () => void {
+  replyDisplayListeners.add(listener);
+  return () => replyDisplayListeners.delete(listener);
+}
+
+/** Whether a reply can render now; a composer's send stays off until it can (docs/paseo-ui.md "Loading"). */
+export function useReplyDisplayReady(): boolean {
+  const ready = useSyncExternalStore(subscribeReplyDisplay, isReplyDisplayReady, isReplyDisplayReady);
+  useEffect(() => {
+    // Normally stage 1 starts it; this only covers a composer on a page whose stages never started
+    if (!ready) void waitForStage(1).then(loadReplyDisplay).catch(() => undefined);
+  }, [ready]);
+  return ready;
+}
+
+/** The reply display has failed to load repeatedly (or threw): the composer says so beside its disabled send. */
+export function useReplyDisplayFailed(): boolean {
+  return useSyncExternalStore(subscribeReplyDisplay, isReplyDisplayFailed, isReplyDisplayFailed);
+}
+
+/** A message is being sent: the reply's display and the conversation page jump the loading queue. */
+export function loadChunksForSend(): void {
+  void loadReplyChunk();
+  void loadWorkspaceChunk();
+}
+
+/** The reply chunk once its stage has come, for a lazy area that is merely rendered. */
+export function loadReplyChunkInTurn(): Promise<typeof import("./reply-chunk")> {
+  return waitForStage(1).then(loadReplyChunk);
+}
+
+/** The conversation list. Starts the fetch now; only the phone drawer, opened by hand, calls this before stage 2. */
+export function loadSidebarChunk(): Promise<typeof import("./sidebar-chunk")> {
+  if (!sidebarChunk) {
+    markChunk("sidebar");
+    sidebarChunk = import("./sidebar-chunk").catch((error: unknown) => {
+      sidebarChunk = null;
+      throw error;
+    });
+  }
+  return sidebarChunk;
+}
+
+let requestSidebarNow: (() => void) | null = null;
+const sidebarRequested = new Promise<void>((resolve) => {
+  requestSidebarNow = resolve;
+});
+
+/** A person opened the phone drawer: the sidebar chunk jumps the queue. */
+export function requestSidebarChunkNow(): void {
+  requestSidebarNow?.();
+  void loadSidebarChunk();
+}
+
+/** The sidebar chunk once its stage has come (never before the reply chunk has settled), or once asked for. */
+export function loadSidebarChunkInTurn(): Promise<typeof import("./sidebar-chunk")> {
+  return Promise.race([waitForStage(2), sidebarRequested]).then(loadSidebarChunk);
+}
+
+/** The hosts chunk (loading/hosts-chunk.tsx), once stage 3 has come. */
+export function loadHostsChunkInTurn(): Promise<typeof import("./hosts-chunk")> {
+  return waitForStage(3).then(() => {
+    markChunk("hosts");
+    return import("./hosts-chunk");
+  });
+}
+
+function onIdle(run: () => void): void {
+  const requestIdle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => void })
+    .requestIdleCallback;
+  if (requestIdle) requestIdle(run, { timeout: 2_000 });
+  else setTimeout(run, 200);
+}
+
+let started = false;
+
+/** Runs the stages on web; called once when the entry chunk evaluates. */
+export function startLoadingStages(): void {
+  if (started || !isWeb) return;
+  started = true;
+  void settle(loadWSOutboundValidator())
+    .then(() => {
+      reach(1);
+      // The reply display first, on its own (every send waits for it)
+      return settle(loadReplyDisplay());
+    })
+    .finally(() => {
+      reach(2);
+      // Then the list; the conversation page after it (a send or a conversation route fetches it at once)
+      void settle(loadSidebarChunk())
+        .then(() => settle(loadWorkspaceChunk()))
+        .finally(() => onIdle(() => reach(3)));
+    });
+}
+
+export const __private__ = {
+  reset(stage: LoadingStage = 0): void {
+    reached = stage;
+    started = false;
+    replyChunk = null;
+    workspaceChunk = null;
+    sidebarChunk = null;
+    replyDisplayReady = !isWeb;
+    replyDisplay = null;
+    replyDisplayFailures = 0;
+    replyDisplayFailed = false;
+    stageWaiters.clear();
+  },
+  reach,
+  isReplyDisplayFailed,
+};

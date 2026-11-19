@@ -1,0 +1,43 @@
+<template>
+  <div v-if="loading" class="flex justify-center my-4">
+    <oc-spinner :aria-label="$gettext('Loading actions')" />
+  </div>
+  <div v-else>
+    <context-action-menu :menu-sections="menuSections" :action-options="actionOptions" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ContextActionMenu, MenuSection, SpaceActionOptions } from '@opencloud-eu/web-pkg'
+import { computed, toRef, unref } from 'vue'
+import { useSpaceActionsNavigateToTrash, useFileActionsEmptyTrashBin } from '../../composables'
+
+const props = defineProps<{
+  actionOptions: SpaceActionOptions
+  loading?: boolean
+}>()
+
+const actionOptions = toRef(props, 'actionOptions')
+
+const { actions: navigateToTrashActions } = useSpaceActionsNavigateToTrash()
+const { actions: emptyTrashBinActions } = useFileActionsEmptyTrashBin()
+
+const menuItemsPrimaryActions = computed(() =>
+  [...unref(navigateToTrashActions), ...unref(emptyTrashBinActions)].filter((item) =>
+    item.isVisible(unref(actionOptions))
+  )
+)
+
+const menuSections = computed<MenuSection[]>(() => {
+  const sections: MenuSection[] = []
+
+  if (unref(menuItemsPrimaryActions).length) {
+    sections.push({
+      name: 'primaryActions',
+      items: unref(menuItemsPrimaryActions)
+    })
+  }
+
+  return sections
+})
+</script>

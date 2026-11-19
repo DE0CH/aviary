@@ -1,0 +1,83 @@
+import React, { useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { Pencil, Pin, PinOff, Share2, Trash2 } from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { openConversationDialog } from "@/yyc/conversation-dialog-store";
+import { useConversationDeleteAvailable, useSharingAvailable } from "@/yyc/me";
+import { useActiveWorkspacePin } from "@/hooks/use-global-workspace-pin-action";
+import type { Theme } from "@/styles/theme";
+
+const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const ThemedPencil = withUnistyles(Pencil);
+const ThemedShare = withUnistyles(Share2);
+const ThemedTrash = withUnistyles(Trash2);
+const ThemedPin = withUnistyles(Pin);
+const ThemedPinOff = withUnistyles(PinOff);
+
+// One set for both copies of the conversation menu (this header ⋯ and the sidebar row's ⋯ / right-click), sized to
+// the menu item's 16 px leading slot.
+export const RENAME_ICON = <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+export const SHARE_ICON = <ThemedShare size={16} uniProps={mutedColorMapping} />;
+export const PIN_ICON = <ThemedPin size={16} uniProps={mutedColorMapping} />;
+export const UNPIN_ICON = <ThemedPinOff size={16} uniProps={mutedColorMapping} />;
+export const DELETE_ICON = <ThemedTrash size={16} uniProps={destructiveColorMapping} />;
+/** Both copies of the menu are this wide on desktop (a phone opens a sheet). */
+export const CONVERSATION_MENU_WIDTH = 220;
+
+/**
+ * The conversation's own actions in the header's ⋯ menu (docs/paseo-ui.md): pin to the top of the list, rename, share
+ * and delete (to Recently deleted), for the conversation the route shows. The dialogs open in ConversationDialogsHost,
+ * outside the menu.
+ */
+export function ConversationMenuItems() {
+  const { t } = useTranslation();
+  const selection = useActiveWorkspaceSelection();
+  const sharing = useSharingAvailable();
+  // a deployment that ends every conversation itself (Jarvis 4) offers no delete (yyc/me.ts)
+  const conversationDelete = useConversationDeleteAvailable();
+  const pin = useActiveWorkspacePin();
+  const open = useCallback(
+    (kind: "rename" | "share" | "delete") => {
+      if (selection) openConversationDialog({ kind, serverId: selection.serverId, workspaceId: selection.workspaceId });
+    },
+    [selection],
+  );
+  if (!selection) return null;
+  return (
+    <>
+      {pin ? (
+        <DropdownMenuItem
+          testID="conversation-menu-pin"
+          leading={pin.pinned ? UNPIN_ICON : PIN_ICON}
+          onSelect={() => pin.toggle()}
+        >
+          {pin.pinned ? t("conversation.menu.unpin") : t("conversation.menu.pin")}
+        </DropdownMenuItem>
+      ) : null}
+      <DropdownMenuItem testID="conversation-menu-rename" leading={RENAME_ICON} onSelect={() => open("rename")}>
+        {t("conversation.menu.rename")}
+      </DropdownMenuItem>
+      {sharing ? (
+        <DropdownMenuItem testID="conversation-menu-share" leading={SHARE_ICON} onSelect={() => open("share")}>
+          {t("conversation.menu.share")}
+        </DropdownMenuItem>
+      ) : null}
+      {conversationDelete ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            testID="conversation-menu-delete"
+            leading={DELETE_ICON}
+            destructive
+            onSelect={() => open("delete")}
+          >
+            {t("conversation.menu.delete")}
+          </DropdownMenuItem>
+        </>
+      ) : null}
+    </>
+  );
+}

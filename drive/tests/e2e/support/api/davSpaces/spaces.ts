@@ -1,0 +1,327 @@
+import { checkResponseStatus, request } from '../http'
+import { User } from '../../types'
+import { urlJoin, encodeWebDavPath } from '../../utils/urlJoin'
+import { XMLParser } from 'fast-xml-parser'
+import { getSpaceIdBySpaceName } from '../graph'
+import _ from 'lodash-es/object.js'
+import { createTagsForResource } from '../graph/utils'
+
+export const folderExists = async ({
+  user,
+  path
+}: {
+  user: User
+  path: string
+}): Promise<boolean> => {
+  const getResponse = await request({
+    method: 'GET',
+    path,
+    user: user
+  })
+
+  return getResponse.status() === 200
+}
+
+const createFolder = async ({
+  user,
+  folder,
+  webDavEndPathToRoot // the root of the WebDAV path, this is `spaces/<space-id>`.
+}: {
+  user: User
+  folder: string
+  webDavEndPathToRoot: string
+}): Promise<void> => {
+  const paths = folder.split('/')
+
+  let parentFolder = ''
+  for (const resource of paths) {
+    const encodedResource = encodeWebDavPath(resource)
+    const path = urlJoin('remote.php', 'dav', webDavEndPathToRoot, parentFolder, encodedResource)
+    // check if the folder exists already or not
+    const folderExist = await folderExists({ user, path })
+    if (folderExist === false) {
+      const response = await request({
+        method: 'MKCOL',
+        path,
+        user: user
+      })
+      checkResponseStatus(response, 'Failed while creating folder')
+    }
+    parentFolder = urlJoin(parentFolder, encodedResource)
+  }
+}
+const createFile = async ({
+  user,
+  pathToFile,
+  content,
+  webDavEndPathToRoot, // the root of the WebDAV path, this is `spaces/<space-id>`.
+  mtimeDeltaDays
+}: {
+  user: User
+  pathToFile: string
+  content: string | Buffer
+  webDavEndPathToRoot: string
+  mtimeDeltaDays?: string
+}): Promise<void> => {
+  const today = new Date()
+  const response = await request({
+    method: 'PUT',
+    path: urlJoin('remote.php', 'dav', webDavEndPathToRoot, encodeWebDavPath(pathToFile)),
+    body: content,
+    user: user,
+    header: mtimeDeltaDays
+      ? { 'X-OC-Mtime': String(today.getTime() / 1000 + parseInt(mtimeDeltaDays) * 86400) }
+      : {}
+  })
+
+  checkResponseStatus(response, `Failed while uploading file '${pathToFile}' in personal space`)
+}
+
+const deleteFile = async ({
+  user,
+  pathToFile,
+  webDavEndPathToRoot
+}: {
+  user: User
+  pathToFile: string
+  webDavEndPathToRoot: string
+}): Promise<void> => {
+  const response = await request({
+    method: 'DELETE',
+    path: urlJoin('remote.php', 'dav', webDavEndPathToRoot, encodeWebDavPath(pathToFile)),
+    user: user,
+    header: {}
+  })
+
+  checkResponseStatus(response, `Failed deleting file '${pathToFile}'`)
+}
+
+export const uploadFileInPersonalSpace = async ({
+  user,
+  pathToFile,
+  content,
+  mtimeDeltaDays
+}: {
+  user: User
+  pathToFile: string
+  content: string | Buffer
+  mtimeDeltaDays?: string
+}): Promise<void> => {
+  const webDavEndPathToRoot =
+    'spaces/' + (await getSpaceIdBySpaceName({ user, spaceType: 'personal' }))
+  await createFile({ user, pathToFile, content, webDavEndPathToRoot, mtimeDeltaDays })
+}
+
+export const createFolderInsideSpaceBySpaceName = async ({
+  user,
+  folder,
+  spaceName
+}: {
+  user: User
+  folder: string
+  spaceName: string
+}): Promise<void> => {
+  const webDavEndPathToRoot =
+    'spaces/' + (await getSpaceIdBySpaceName({ user, spaceType: 'project', spaceName }))
+  await createFolder({ user, folder, webDavEndPathToRoot })
+}
+
+export const createFolderInsidePersonalSpace = async ({
+  user,
+  folder
+}: {
+  user: User
+  folder: string
+}): Promise<void> => {
+  const webDavEndPathToRoot =
+    'spaces/' + (await getSpaceIdBySpaceName({ user, spaceType: 'personal' }))
+  await createFolder({ user, folder, webDavEndPathToRoot })
+}
+
+export const uploadFileInsideSpaceBySpaceName = async ({
+  user,
+  pathToFile,
+  spaceName,
+  content = ''
+}: {
+  user: User
+  pathToFile: string
+  spaceName: string
+  content?: string | Buffer
+}): Promise<void> => {
+  const webDavEndPathToRoot =
+    'spaces/' + (await getSpaceIdBySpaceName({ user, spaceType: 'project', spaceName }))
+  await createFile({ user, pathToFile, content, webDavEndPathToRoot })
+}
+
+// the facet is written asynchronously after the upload, once tika has extracted
+// the file; a fresh tika takes a few seconds for its first file
+const waitForFacet = async ({
+  user,
+  pathToFile,
+  facet,
+  property,
+  timeoutMs = 30000
+}: {
+  user: User
+  pathToFile: string
+  facet: string
+  property: string
+  timeoutMs?: number
+}): Promise<void> => {
+  const body =
+    '<?xml version="1.0"?>\n' +
+    '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">\n' +
+    '  <d:prop>\n' +
+    `    <oc:${facet} />\n` +
+    '  </d:prop>\n' +
+    '</d:propfind>'
+  const path = urlJoin(
+    'remote.php',
+    'dav',
+    'spaces',
+    await getSpaceIdBySpaceName({ user, spaceType: 'personal' }),
+    encodeWebDavPath(pathToFile)
+  )
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const response = await request({ method: 'PROPFIND', path, body, user })
+    checkResponseStatus(response, `Failed while getting the ${facet} facet of ${pathToFile}`)
+    if ((await response.text()).includes(`<oc:${property}>`)) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  throw new Error(`Timed out waiting for the ${facet} facet of ${pathToFile}`)
+}
+
+export const waitForMotionPhotoFacet = async (args: {
+  user: User
+  pathToFile: string
+  timeoutMs?: number
+}): Promise<void> => {
+  await waitForFacet({ ...args, facet: 'motion-photo', property: 'video-size' })
+}
+
+export const waitForLivePhotoFacet = async (args: {
+  user: User
+  pathToFile: string
+  timeoutMs?: number
+}): Promise<void> => {
+  await waitForFacet({ ...args, facet: 'live-photo', property: 'content-id' })
+}
+
+export const getDataOfFileInsideSpace = async ({
+  user,
+  pathToFileName,
+  spaceType,
+  spaceName
+}: {
+  user: User
+  pathToFileName: string
+  spaceType: string
+  spaceName: string
+}) => {
+  const body =
+    '<?xml version="1.0"?>\n' +
+    '<d:propfind  xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">\n' +
+    '  <d:prop>\n' +
+    '    <oc:permissions />\n' +
+    '    <oc:favorite />\n' +
+    '    <oc:fileid />\n' +
+    '    <oc:file-parent />\n' +
+    '    <oc:name />\n' +
+    '    <oc:owner-id />\n' +
+    '    <oc:owner-display-name />\n' +
+    '    <oc:shareid />\n' +
+    '    <oc:shareroot />\n' +
+    '    <oc:share-types />\n' +
+    '    <oc:privatelink />\n' +
+    '    <d:getcontentlength />\n' +
+    '    <oc:size />\n' +
+    '    <d:getlastmodified />\n' +
+    '    <d:getetag />\n' +
+    '    <d:getcontenttype />\n' +
+    '    <d:resourcetype />\n' +
+    '    <oc:downloadURL />\n' +
+    '  </d:prop>\n' +
+    '</d:propfind>'
+  const response = await request({
+    method: 'PROPFIND',
+    path: urlJoin(
+      'remote.php',
+      'dav',
+      'spaces',
+      await getSpaceIdBySpaceName({ user, spaceType, spaceName }),
+      encodeWebDavPath(pathToFileName)
+    ),
+    body: body,
+    user: user
+  })
+  checkResponseStatus(response, `Failed while getting information of file ${pathToFileName}`)
+  const xmlParser = new XMLParser()
+  const fileData = xmlParser.parse(await response.text())
+  return _.get(fileData, '[d:multistatus][d:response]')
+}
+
+export const getIdOfFileInsideSpace = async ({
+  user,
+  pathToFileName,
+  spaceType,
+  spaceName
+}: {
+  user: User
+  pathToFileName: string
+  spaceType: string
+  spaceName: string
+}): Promise<string> => {
+  const fileDataResponse = await getDataOfFileInsideSpace({
+    user,
+    pathToFileName,
+    spaceType,
+    spaceName
+  })
+  // when there is a file inside the folder response comes as
+  // [ [Object], [Object] ], so handel this case
+  if (fileDataResponse.constructor.name === 'Array') {
+    for (const key in fileDataResponse) {
+      if (fileDataResponse[key]['d:propstat'][0]['d:prop']['oc:name'] === pathToFileName) {
+        return _.get(fileDataResponse[key], '[d:propstat][0][d:prop][oc:fileid]')
+      }
+    }
+  } else {
+    // extract file id form the response
+    return _.get(fileDataResponse, '[d:propstat][0][d:prop][oc:fileid]')
+  }
+}
+
+export const addTagToResource = async ({
+  user,
+  resource,
+  tags
+}: {
+  user: User
+  resource: string
+  tags: string
+}): Promise<void> => {
+  const resourceId = await getIdOfFileInsideSpace({
+    user,
+    pathToFileName: resource,
+    spaceType: 'personal',
+    spaceName: user.displayName
+  })
+  const tagNames = tags.split(',').map((tag) => tag.trim())
+  await createTagsForResource({ user, resourceId, tags: tagNames })
+}
+
+export const deleteFileInPersonalSpace = async ({
+  user,
+  pathToFile
+}: {
+  user: User
+  pathToFile: string
+}): Promise<void> => {
+  const webDavEndPathToRoot =
+    'spaces/' + (await getSpaceIdBySpaceName({ user, spaceType: 'personal' }))
+  await deleteFile({ user, pathToFile, webDavEndPathToRoot })
+}

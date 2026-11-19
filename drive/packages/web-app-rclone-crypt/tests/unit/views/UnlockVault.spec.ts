@@ -1,0 +1,439 @@
+import { flushPromises } from '@vue/test-utils'
+import { mock } from 'vitest-mock-extended'
+import { VaultEngine, useSpacesStore, useVaultStore } from '@opencloud-eu/web-pkg'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import UnlockVault from '../../../src/views/UnlockVault.vue'
+import { probeVaultNeedsSetup, unlockVault } from '../../../src/unlock'
+import { VAULT_CONTENT_TYPE } from '../../../src/vaultLocation'
+
+vi.mock('../../../src/unlock', () => ({
+  probeVaultNeedsSetup: vi.fn(),
+  unlockVault: vi.fn()
+}))
+
+const spaceId = 'space-1'
+const vaultRoot = '/my.vault'
+const passphrase = 'foobar'
+
+type Space = {
+  id: string
+  fileId?: string
+  driveType?: string
+  driveAlias?: string
+  name?: string
+  contentType?: string
+  getDriveAliasAndItem?: (resource: { path: string }) => string
+}
+
+function mountUnlockVault({
+  needsSetup = false,
+  spaces = [{ id: spaceId, driveType: 'personal', driveAlias: 'personal/admin', name: 'Admin' }],
+  spacesInitialized = true,
+  query = { spaceId, vaultRoot },
+  isGuestContext = false
+}: {
+  needsSetup?: boolean
+  spaces?: Space[]
+  spacesInitialized?: boolean
+  query?: Record<string, string>
+  isGuestContext?: boolean
+} = {}) {
+  vi.mocked(probeVaultNeedsSetup).mockResolvedValue(needsSetup)
+  vi.mocked(unlockVault).mockResolvedValue({
+    status: 'unlocked',
+    engine: mock<VaultEngine>()
+  })
+
+  const mocks = defaultComponentMocks({
+    currentRoute: { query, path: '/', meta: {} } as never
+  })
+
+  const wrapper = shallowMount(UnlockVault, {
+    global: {
+      plugins: [
+        ...defaultPlugins({
+          piniaOptions: {
+            spacesState: { spaces: spaces as never, spacesInitialized },
+            authState: { guestContextReady: isGuestContext }
+          }
+        })
+      ],
+      mocks,
+      provide: mocks,
+      stubs: { OcCard: false, OcButton: false }
+    }
+  })
+
+  return { wrapper, mocks, vaultStore: useVaultStore() }
+}
+
+type Wrapper = ReturnType<typeof mountUnlockVault>
+
+/** Mount and let the onMounted probe settle so `needsSetup` reflects the server. */
+async function mountProbed(options?: Parameters<typeof mountUnlockVault>[0]) {
+  const result = mountUnlockVault(options)
+  await flushPromises()
+  return result
+}
+
+async function submit(wrapper: Wrapper['wrapper'], password = passphrase) {
+  const vm = wrapper.vm as any
+  vm.password = password
+  await vm.onSubmit()
+}
+
+describe('UnlockVault', () => {
+  describe('wording', () => {
+    it('asks to set up a vault that has no passphrase committed yet', async () => {
+      const { wrapper } = await mountProbed({ needsSetup: true })
+      const vm = wrapper.vm as any
+
+      expect(vm.needsSetup).toBe(true)
+      expect(vm.cardTitle).toBe('Set up encrypted folder')
+      expect(vm.submitLabel).toBe('Set password')
+    })
+
+    it('asks to unlock a vault whose passphrase is already committed', async () => {
+      const { wrapper } = await mountProbed()
+      const vm = wrapper.vm as any
+
+      expect(vm.needsSetup).toBe(false)
+      expect(vm.cardTitle).toBe('Unlock folder')
+      expect(vm.submitLabel).toBe('Unlock')
+    })
+
+    it('falls back to unlock wording when the vault cannot be probed', async () => {
+      vi.mocked(probeVaultNeedsSetup).mockRejectedValue(new Error('network'))
+      const { wrapper } = await mountProbed()
+
+      expect((wrapper.vm as any).needsSetup).toBe(false)
+    })
+
+    it('does not probe a vault it cannot address', async () => {
+      const { wrapper } = await mountProbed({ spaces: [] })
+
+      expect(probeVaultNeedsSetup).not.toHaveBeenCalled()
+      expect(wrapper.find('no-content-message-stub').exists()).toBe(true)
+    })
+
+    it('shows neither panel until the probe answered', async () => {
+      const { wrapper } = mountUnlockVault({ needsSetup: true })
+
+      expect(wrapper.find('oc-spinner-stub').exists()).toBe(true)
+      expect(wrapper.find('form').exists()).toBe(false)
+
+      await flushPromises()
+
+      expect(wrapper.find('oc-spinner-stub').exists()).toBe(false)
+      expect(wrapper.find('vault-setup-stub').exists()).toBe(true)
+    })
+
+    it('shows the cleartext folder name rather than the whole path', async () => {
+      const { wrapper } = await mountProbed({
+        query: { spaceId, vaultRoot: '/some/where/my.vault' }
+      })
+
+      expect((wrapper.vm as any).vaultName).toBe('my.vault')
+    })
+  })
+
+  describe('submitting', () => {
+    it('stashes the engine for the session and leaves the unlock page', async () => {
+      const { wrapper, mocks, vaultStore } = await mountProbed()
+      await submit(wrapper)
+
+      expect((wrapper.vm as any).errorMessage).toBeNull()
+      expect(vaultStore.setEngine).toHaveBeenCalledWith(spaceId, vaultRoot, expect.anything())
+      expect(mocks.$router.replace).toHaveBeenCalledWith({
+        path: `/files/spaces/personal/admin${vaultRoot}`
+      })
+    })
+
+    it('returns to where the user was sent from', async () => {
+      const redirectUrl = '/files/spaces/personal/admin/my.vault/sub'
+      const { wrapper, mocks } = await mountProbed({ query: { spaceId, vaultRoot, redirectUrl } })
+      await submit(wrapper)
+
+      expect(mocks.$router.replace).toHaveBeenCalledWith(redirectUrl)
+    })
+
+    it('blames the passphrase only when it is cryptographically ruled out', async () => {
+      const { wrapper, mocks, vaultStore } = await mountProbed()
+      vi.mocked(unlockVault).mockResolvedValue({ status: 'wrong-passphrase' })
+      await submit(wrapper)
+
+      expect((wrapper.vm as any).errorMessage).toBe('Incorrect password.')
+      expect(vaultStore.setEngine).not.toHaveBeenCalled()
+      expect(mocks.$router.replace).not.toHaveBeenCalled()
+    })
+
+    it('offers a retry when unlocking fails for any other reason', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { wrapper, mocks, vaultStore } = await mountProbed()
+      vi.mocked(unlockVault).mockRejectedValue(new Error('network'))
+      await submit(wrapper)
+
+      expect((wrapper.vm as any).errorMessage).toBe('Unlocking failed. Please try again')
+      expect(vaultStore.setEngine).not.toHaveBeenCalled()
+      expect(mocks.$router.replace).not.toHaveBeenCalled()
+    })
+
+    it('skips the unlock page if the vault is already unlocked', async () => {
+      const { mocks, vaultStore } = mountUnlockVault()
+      vi.mocked(vaultStore.isUnlocked).mockReturnValue(true)
+      await flushPromises()
+
+      expect(probeVaultNeedsSetup).not.toHaveBeenCalled()
+      expect(mocks.$router.replace).toHaveBeenCalledWith({
+        path: `/files/spaces/personal/admin${vaultRoot}`
+      })
+    })
+
+    it('keeps the submit button disabled until a password is entered', async () => {
+      const { wrapper } = await mountProbed()
+      const vm = wrapper.vm as any
+
+      expect(vm.submitDisabled).toBe(true)
+
+      vm.password = passphrase
+      await flushPromises()
+      expect(vm.submitDisabled).toBe(false)
+    })
+
+    it('does not set a password that misses the password policy', async () => {
+      const { wrapper } = await mountProbed({ needsSetup: true })
+      const setup = wrapper.findComponent({ name: 'VaultSetup' })
+      setup.vm.$emit('update:modelValue', 'ab')
+      setup.vm.$emit('update:valid', false)
+      await flushPromises()
+
+      expect(wrapper.find('#vault-unlock-submit').attributes('disabled')).toBeDefined()
+
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(unlockVault).not.toHaveBeenCalled()
+
+      setup.vm.$emit('update:valid', true)
+      await flushPromises()
+      expect(wrapper.find('#vault-unlock-submit').attributes('disabled')).toBeUndefined()
+    })
+
+    it('does not apply the password policy when unlocking an existing vault', async () => {
+      const { wrapper } = await mountProbed()
+      ;(wrapper.vm as any).password = 'ab'
+      await flushPromises()
+
+      expect(wrapper.find('#vault-unlock-submit').attributes('disabled')).toBeUndefined()
+
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(unlockVault).toHaveBeenCalledWith(expect.anything(), 'ab')
+    })
+
+    it('keeps the submit button name and marks it busy while the password is checked', async () => {
+      const { wrapper } = await mountProbed()
+      vi.mocked(unlockVault).mockReturnValue(new Promise(() => undefined))
+      const vm = wrapper.vm as any
+      vm.password = passphrase
+      vm.onSubmit()
+      await flushPromises()
+
+      const button = wrapper.find('#vault-unlock-submit')
+      expect(button.attributes('aria-busy')).toBe('true')
+      expect(button.find('span').text()).toBe('Unlock')
+    })
+  })
+
+  describe('cancelling', () => {
+    it('returns to where the user came from', async () => {
+      // The vault may well have been opened from somewhere other than its parent
+      // folder - the search results, a favorites listing, …
+      const { wrapper, mocks } = await mountProbed({
+        query: { spaceId, vaultRoot, cancelUrl: '/files/search?term=secret' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith('/files/search?term=secret')
+    })
+
+    it('lands the user in the folder above the vault', async () => {
+      // Not inside the vault itself - clicking it would just kick them back here.
+      const { wrapper, mocks } = await mountProbed({
+        query: { spaceId, vaultRoot: '/some/where/my.vault' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith({
+        path: '/files/spaces/personal/admin/some/where'
+      })
+    })
+
+    it('keeps the share id when leaving a shared vault', async () => {
+      const { wrapper, mocks } = await mountProbed({
+        spaces: [{ id: spaceId, driveType: 'share', driveAlias: 'shares/my.vault' }],
+        query: { spaceId, vaultRoot: '/sub/my.vault' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith({
+        path: '/files/spaces/shares/my.vault/sub',
+        query: { shareId: spaceId }
+      })
+    })
+
+    it('falls back to the shares overview for a directly shared vault', async () => {
+      // A share space whose root *is* the vault has no parent folder to return to.
+      const { wrapper, mocks } = await mountProbed({
+        spaces: [{ id: spaceId, driveType: 'share', driveAlias: 'shares/my.vault' }],
+        query: { spaceId, vaultRoot: '/' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'files-shares-with-me' })
+      )
+    })
+
+    it('falls back to the guest shares list for a directly shared vault in guest context', async () => {
+      const { wrapper, mocks } = await mountProbed({
+        spaces: [{ id: spaceId, driveType: 'share', driveAlias: 'shares/my.vault' }],
+        query: { spaceId, vaultRoot: '/' },
+        isGuestContext: true
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'files-guest-shares' })
+      )
+    })
+
+    it('stays on the public link route when leaving a vault in a public link', async () => {
+      // The spaces route needs a user, an anonymous visitor would be asked to log in.
+      const { wrapper, mocks } = await mountProbed({
+        spaces: [
+          {
+            id: spaceId,
+            driveType: 'public',
+            driveAlias: 'public/token',
+            getDriveAliasAndItem: ({ path }) => `public/token${path}`
+          }
+        ],
+        query: { spaceId, vaultRoot: '/docs/my.vault' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'files-public-link',
+          params: { driveAliasAndItem: 'public/token/docs' }
+        })
+      )
+    })
+
+    it('falls back to the personal space when the space is unknown', async () => {
+      const { wrapper, mocks } = await mountProbed({ spaces: [] })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith('/files/spaces/personal')
+    })
+  })
+
+  describe('a vault space', () => {
+    const vaultSpace = (options: Parameters<typeof mountUnlockVault>[0] = {}) =>
+      mountProbed({
+        spaces: [
+          {
+            id: spaceId,
+            fileId: spaceId,
+            driveType: 'project',
+            driveAlias: 'project/secrets',
+            name: 'Secrets',
+            contentType: VAULT_CONTENT_TYPE
+          }
+        ],
+        query: { spaceId, vaultRoot: '/' },
+        ...options
+      })
+
+    it('talks about a space rather than a folder', async () => {
+      const { wrapper } = await vaultSpace()
+      const vm = wrapper.vm as any
+
+      expect(vm.cardTitle).toBe('Unlock space')
+      expect(vm.unlockHint).toContain('This space is end-to-end encrypted')
+      // no name marker to strip, the marker lives on the drive
+      expect(vm.vaultName).toBe('Secrets')
+    })
+
+    it('talks about a space while setting one up', async () => {
+      const { wrapper } = await vaultSpace({ needsSetup: true })
+
+      expect((wrapper.vm as any).cardTitle).toBe('Set up encrypted space')
+    })
+
+    it('opens the space itself once unlocked', async () => {
+      const { wrapper, mocks } = await vaultSpace()
+      await submit(wrapper)
+
+      expect(mocks.$router.replace).toHaveBeenCalledWith({
+        path: '/files/spaces/project/secrets',
+        query: { fileId: spaceId }
+      })
+    })
+
+    it('leaves for the spaces overview on cancel, never back into the space', async () => {
+      const { wrapper, mocks } = await vaultSpace()
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith({ name: 'files-spaces-projects' })
+    })
+
+    it('prefers where the user came from over the spaces overview', async () => {
+      const { wrapper, mocks } = await vaultSpace({
+        query: { spaceId, vaultRoot: '/', cancelUrl: '/files/search?term=secret' }
+      })
+      await (wrapper.vm as any).onCancel()
+
+      expect(mocks.$router.push).toHaveBeenCalledWith('/files/search?term=secret')
+    })
+  })
+
+  describe('spaces not loaded yet', () => {
+    const loading = (options: Parameters<typeof mountUnlockVault>[0] = {}) =>
+      mountProbed({
+        spacesInitialized: false,
+        spaces: [
+          {
+            id: spaceId,
+            fileId: spaceId,
+            driveType: 'project',
+            driveAlias: 'project/secrets',
+            name: 'Secrets',
+            contentType: VAULT_CONTENT_TYPE
+          }
+        ],
+        query: { spaceId, vaultRoot: '/' },
+        ...options
+      })
+
+    it('waits instead of claiming the vault does not exist', async () => {
+      const { wrapper } = await loading()
+
+      expect(wrapper.find('oc-spinner-stub').exists()).toBe(true)
+      expect(wrapper.find('no-content-message-stub').exists()).toBe(false)
+      expect(wrapper.find('form').exists()).toBe(false)
+      expect(probeVaultNeedsSetup).not.toHaveBeenCalled()
+    })
+
+    it('probes and picks the space wording once the spaces arrived', async () => {
+      const { wrapper } = await loading({ needsSetup: true })
+
+      useSpacesStore().spacesInitialized = true
+      await flushPromises()
+
+      expect(probeVaultNeedsSetup).toHaveBeenCalled()
+      expect((wrapper.vm as any).cardTitle).toBe('Set up encrypted space')
+      expect(wrapper.find('vault-setup-stub').exists()).toBe(true)
+    })
+  })
+})

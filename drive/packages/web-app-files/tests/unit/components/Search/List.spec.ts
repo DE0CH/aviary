@@ -1,0 +1,512 @@
+import { merge } from 'lodash-es'
+import { enableAutoUnmount, flushPromises, shallowMount } from '@vue/test-utils'
+import List from '../../../../src/components/Search/List.vue'
+import { useResourcesViewDefaults } from '../../../../src/composables'
+import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
+import {
+  createRouter,
+  createMemoryHistory,
+  RouteLocationNormalizedLoaded,
+  Router
+} from 'vue-router'
+
+import { defaultComponentMocks, defaultPlugins } from '@opencloud-eu/web-test-helpers'
+import {
+  AppBar,
+  ItemFilter,
+  ResourceTable,
+  ResourceTiles,
+  SearchResult,
+  SortField,
+  eventBus,
+  useResourcesStore
+} from '@opencloud-eu/web-pkg'
+import { Component, computed, defineComponent, h, Ref, ref, unref } from 'vue'
+import { Resource } from '@opencloud-eu/web-client'
+import { mock } from 'vitest-mock-extended'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
+
+vi.mock('../../../../src/composables')
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useAppDefaults: vi.fn(),
+  useFileActions: () => ({ triggerDefaultAction: vi.fn() })
+}))
+
+enableAutoUnmount(afterEach)
+
+const AppBarStub = defineComponent({
+  props: AppBar.props,
+  setup(_, { slots }) {
+    return () => h('app-bar-stub', {}, [slots.actions?.()])
+  }
+})
+
+const selectors = {
+  noContentMessageStub: 'no-content-message-stub',
+  noContentMessage: '.no-content-message',
+  resourceTableStub: 'resource-table-stub',
+  tagFilter: '.files-search-filter-tags',
+  lastModifiedFilter: '.files-search-filter-last-modified',
+  titleOnlyFilter: '.files-search-filter-title-only',
+  filter: '.files-search-result-filter'
+}
+
+describe('List component', () => {
+  it('should render no-content-message if no resources found', () => {
+    const { wrapper } = getWrapper()
+    expect(wrapper.find(selectors.noContentMessageStub).exists()).toBeTruthy()
+  })
+  it('shows "No results found" if only a tag filter is active', async () => {
+    const $router = createRouter({
+      routes: [{ name: 'files-common-search', path: '/files-common-search', redirect: null }],
+      history: createMemoryHistory()
+    })
+    const { wrapper } = getWrapper({
+      mocks: { $router },
+      stubs: { NoContentMessage: false }
+    })
+    await $router.push({ name: 'files-common-search', query: { q_tags: 'doesnotexist' } })
+    await flushPromises()
+    expect(wrapper.find(selectors.noContentMessage).text()).toContain('No results found')
+  })
+  it('should render resource table if resources found', () => {
+    const { wrapper } = getWrapper({ resources: [mock<Resource>()] })
+    expect(wrapper.find(selectors.resourceTableStub).exists()).toBeTruthy()
+  })
+  it('passes all sort fields to the tiles view', () => {
+    const sortFields = [
+      { name: 'name', sortable: true },
+      { name: 'size', sortable: true },
+      { name: 'mdate', sortable: true }
+    ]
+    const { wrapper } = getWrapper({
+      resources: [mock<Resource>()],
+      sortFields,
+      folderViewComponent: ResourceTiles
+    })
+    expect(wrapper.findComponent(ResourceTiles).props('sortFields')).toEqual(sortFields)
+  })
+  it('resets the initial store file state', () => {
+    getWrapper({ resources: [mock<Resource>()] })
+
+    const { clearResourceList } = useResourcesStore()
+    expect(clearResourceList).toHaveBeenCalled()
+  })
+  it('should emit search event on mount', async () => {
+    const { wrapper } = getWrapper()
+    await flushPromises()
+    expect(wrapper.emitted('search').length).toBeGreaterThan(0)
+  })
+  it('should emit search only if one of the queries changes', async () => {
+    const $router = createRouter({
+      routes: [{ name: 'files-common-search', path: '/files-common-search', redirect: null }],
+      history: createMemoryHistory()
+    })
+
+    const { wrapper } = getWrapper({
+      mocks: { $router }
+    })
+
+    let replacementCounter = 0
+    const queries = [{}, {}, {}, {}, {}, {}, {}, {}, { q_tags: 'foo' }, {}, {}, {}, {}]
+    for (const query of queries) {
+      await $router.replace({
+        name: 'files-common-search',
+        query: merge(
+          {
+            q_titleOnly: 'q_titleOnly',
+            q_tags: 'q_tags',
+            q_lastModified: 'q_lastModified',
+            useScope: 'useScope'
+          },
+          query
+        )
+      })
+
+      replacementCounter++
+    }
+
+    await flushPromises()
+    expect(replacementCounter).toBe(queries.length)
+    expect(wrapper.emitted('search').length).toBe(4)
+  })
+  it('clears the tag filter chip when the tags are removed from the route', async () => {
+    const $router = createRouter({
+      routes: [{ name: 'files-common-search', path: '/files-common-search', redirect: null }],
+      history: createMemoryHistory()
+    })
+    const { wrapper } = getWrapper({
+      availableTags: ['foo'],
+      mocks: { $router },
+      stubs: { ItemFilter: false }
+    })
+    await $router.push({ name: 'files-common-search', query: { q_tags: 'foo' } })
+    await flushPromises()
+    const tagFilter = wrapper.findComponent<typeof ItemFilter>(selectors.tagFilter)
+    expect((tagFilter.vm as any).selectedItems).toEqual([{ id: 'foo', label: 'foo' }])
+
+    await $router.replace({ name: 'files-common-search', query: {} })
+    await flushPromises()
+    expect((tagFilter.vm as any).selectedItems).toEqual([])
+  })
+  it('shows and hides hidden results when toggling hidden files without searching again', async () => {
+    const visible = mock<Resource>({ id: 'visible', name: 'visible' })
+    const hidden = mock<Resource>({ id: 'hidden', name: '.hidden' })
+    const { wrapper } = getWrapper({
+      paginatedResources: computed(() => useResourcesStore().activeResources),
+      resourcesStore: { resources: [visible, hidden], areHiddenFilesShown: false }
+    })
+    await flushPromises()
+    const searchCount = wrapper.emitted('search').length
+    const resourceIds = () => {
+      const table = wrapper.findComponent<typeof ResourceTable>(selectors.resourceTableStub)
+      return table.props('resources').map(({ id }) => id)
+    }
+    expect(resourceIds()).toEqual(['visible'])
+
+    const resourcesStore = useResourcesStore()
+    resourcesStore.areHiddenFilesShown = true
+    await flushPromises()
+    expect(resourceIds()).toEqual(['visible', 'hidden'])
+
+    resourcesStore.areHiddenFilesShown = false
+    await flushPromises()
+    expect(resourceIds()).toEqual(['visible'])
+
+    expect(wrapper.emitted('search').length).toBe(searchCount)
+  })
+  it('counts only the shown results in the search limit hint', async () => {
+    const resources = [
+      mock<Resource>({ id: 'file', name: 'file', type: 'file' }),
+      mock<Resource>({ id: 'folder', name: 'folder', type: 'folder' }),
+      mock<Resource>({ id: 'hidden-file', name: '.hidden-file', type: 'file' }),
+      mock<Resource>({ id: 'hidden-folder', name: '.hidden-folder', type: 'folder' })
+    ]
+    const { wrapper } = getWrapper({
+      searchResult: { totalResults: 500, values: [] },
+      resourcesStore: { resources, areHiddenFilesShown: false }
+    })
+    await flushPromises()
+    const limitText = () => (wrapper.vm as any).searchResultExceedsLimitText
+    expect(limitText()).toBe('Found 500, showing the 2 best matching results')
+
+    useResourcesStore().areHiddenFilesShown = true
+    await flushPromises()
+    expect(limitText()).toBe('Found 500, showing the 4 best matching results')
+  })
+  it('finds the resource to scroll to beyond the current page', async () => {
+    const resources = Array.from({ length: 25 }, (_, i) => mock<Resource>({ id: `${i + 1}` }))
+    const { wrapper, mocks } = getWrapper({
+      sortedResources: ref(resources),
+      paginatedResources: ref(resources.slice(0, 20))
+    })
+    await wrapper.setProps({ searchResult: { totalResults: 25, values: [] } })
+    await flushPromises()
+
+    const [scrollToResources] = vi.mocked(mocks.scrollToResourceFromRoute).mock.calls[0]
+    expect(scrollToResources).toContain(resources[24])
+  })
+  it('searches again when only the folder scope changes', async () => {
+    const $router = createRouter({
+      routes: [{ name: 'files-common-search', path: '/files-common-search', redirect: null }],
+      history: createMemoryHistory()
+    })
+    const { wrapper } = getWrapper({
+      mocks: { $router },
+      filesTags: false,
+      fullTextSearchEnabled: false
+    })
+    await flushPromises()
+
+    await $router.replace({
+      name: 'files-common-search',
+      query: { term: 'albert', useScope: 'true', scope: 'first-folder' }
+    })
+    await flushPromises()
+    expect(wrapper.emitted('search').at(-1)[0]).toBe('name:"*albert*" AND scope:first-folder')
+
+    await $router.replace({
+      name: 'files-common-search',
+      query: { term: 'albert', useScope: 'true', scope: 'second-folder' }
+    })
+    await flushPromises()
+    expect(wrapper.emitted('search').at(-1)[0]).toBe('name:"*albert*" AND scope:second-folder')
+  })
+  describe('submitted search', () => {
+    async function getSearchResultsWrapper() {
+      const $router = createRouter({
+        routes: [{ name: 'files-common-search', path: '/files-common-search', redirect: null }],
+        history: createMemoryHistory()
+      })
+      const { wrapper } = getWrapper({
+        mocks: { $router },
+        filesTags: false,
+        fullTextSearchEnabled: false
+      })
+      await $router.replace({
+        name: 'files-common-search',
+        query: { term: 'albert', useScope: 'false', provider: 'files.sdk', page: '2' }
+      })
+      await flushPromises()
+      return { wrapper, $router }
+    }
+
+    // the search bar publishes the submitted query and navigates to it afterwards
+    async function submitSearch($router: Router, query: Record<string, string>) {
+      eventBus.publish('app.search.submit', query)
+      await $router.push({ name: 'files-common-search', query })
+      await flushPromises()
+    }
+
+    it('searches again when the same search gets submitted', async () => {
+      const { wrapper, $router } = await getSearchResultsWrapper()
+      const searchCount = wrapper.emitted('search').length
+
+      const query = { term: 'albert', useScope: 'false', provider: 'files.sdk' }
+      await submitSearch($router, query)
+      expect(wrapper.emitted('search').length).toBe(searchCount + 1)
+      expect(wrapper.emitted('search').at(-1)[0]).toBe('name:"*albert*"')
+
+      await submitSearch($router, query)
+      expect(wrapper.emitted('search').length).toBe(searchCount + 2)
+    })
+    it('searches only once when a changed search gets submitted', async () => {
+      const { wrapper, $router } = await getSearchResultsWrapper()
+      const searchCount = wrapper.emitted('search').length
+
+      await submitSearch($router, { term: 'marie', useScope: 'false', provider: 'files.sdk' })
+      expect(wrapper.emitted('search').length).toBe(searchCount + 1)
+      expect(wrapper.emitted('search').at(-1)[0]).toBe('name:"*marie*"')
+    })
+  })
+  describe('breadcrumbs', () => {
+    it('show "Search" when no search term given', () => {
+      const { wrapper } = getWrapper()
+      const appBar = wrapper.findComponent<typeof AppBar>('app-bar-stub')
+      expect(appBar.props('breadcrumbs')[0].text).toEqual('Search')
+    })
+    it('include the search term if given', () => {
+      const searchTerm = 'term'
+      const { wrapper } = getWrapper({ searchTerm })
+      const appBar = wrapper.findComponent<typeof AppBar>('app-bar-stub')
+      expect(appBar.props('breadcrumbs')[0].text).toEqual(`Search results for "${searchTerm}"`)
+    })
+  })
+  describe('filter', () => {
+    describe('general', () => {
+      it('should not be rendered if no filtering is available', async () => {
+        const { wrapper } = getWrapper({ fullTextSearchEnabled: false, filesTags: false })
+        await flushPromises()
+        expect(wrapper.find(selectors.filter).exists()).toBeFalsy()
+      })
+    })
+    describe('tags', () => {
+      it('shows the tag filter with a hint if no tags exist yet', async () => {
+        const { wrapper } = getWrapper({ availableTags: [] })
+        await flushPromises()
+        const tagFilter = wrapper.findComponent<typeof ItemFilter>(selectors.tagFilter)
+        expect(tagFilter.exists()).toBeTruthy()
+        expect(tagFilter.props('noItemsMessage')).toBeTruthy()
+      })
+      it('should show all available tags sorted', async () => {
+        const { wrapper } = getWrapper({ availableTags: ['tag2', 'Tag10', 'tag1'] })
+        await flushPromises()
+        expect(wrapper.find(selectors.tagFilter).exists()).toBeTruthy()
+        expect(
+          wrapper.findComponent<typeof ItemFilter>(selectors.tagFilter).props('items')
+        ).toEqual([
+          { label: 'tag1', id: 'tag1' },
+          { label: 'tag2', id: 'tag2' },
+          { label: 'Tag10', id: 'Tag10' }
+        ])
+      })
+      it('should set initial filter when tags are given via query param', async () => {
+        const searchTerm = 'term'
+        const availableTags = ['tag1', 'tag2']
+        const { wrapper } = getWrapper({
+          availableTags,
+          searchTerm,
+          tagFilterQuery: availableTags.join('+')
+        })
+        await flushPromises()
+        expect(wrapper.emitted('search')[0][0]).toEqual(
+          `(name:"*${searchTerm}*" OR content:"${searchTerm}") AND tag:("${availableTags[0]}" OR "${availableTags[1]}")`
+        )
+      })
+    })
+
+    describe('last modified', () => {
+      it('should show available last modified values', async () => {
+        const expectation = [
+          { label: 'today', id: 'today' },
+          { label: 'yesterday', id: 'yesterday' },
+          { label: 'this week', id: 'this week' },
+          { label: 'last week', id: 'last week' },
+          { label: 'last 7 days', id: 'last 7 days' },
+          { label: 'this month', id: 'this month' },
+          { label: 'last month', id: 'last month' },
+          { label: 'last 30 days', id: 'last 30 days' },
+          { label: 'this year', id: 'this year' },
+          { label: 'last year', id: 'last year' }
+        ]
+        const lastModifiedValues = {
+          keywords: [
+            'today',
+            'yesterday',
+            'this week',
+            'last week',
+            'last 7 days',
+            'this month',
+            'last month',
+            'last 30 days',
+            'this year',
+            'last year'
+          ]
+        }
+        const { wrapper } = getWrapper({
+          availableLastModifiedValues: lastModifiedValues,
+          availableTags: ['tag']
+        })
+        await flushPromises()
+
+        expect(wrapper.find(selectors.lastModifiedFilter).exists()).toBeTruthy()
+        expect(
+          wrapper.findComponent<typeof ItemFilter>(selectors.lastModifiedFilter).props('items')
+        ).toEqual(expectation)
+      })
+      it('should set initial filter when last modified is given via query param', async () => {
+        const searchTerm = 'Screenshot'
+        const lastModifiedFilterQuery = 'today'
+        const { wrapper } = getWrapper({
+          searchTerm,
+          lastModifiedFilterQuery
+        })
+        await flushPromises()
+        expect(wrapper.emitted('search')[0][0]).toEqual(
+          `(name:"*${searchTerm}*" OR content:"${searchTerm}") AND mtime:${lastModifiedFilterQuery}`
+        )
+      })
+    })
+
+    describe('titleOnly', () => {
+      it('should render filter if enabled via capabilities', () => {
+        const { wrapper } = getWrapper({ fullTextSearchEnabled: true })
+        expect(wrapper.find(selectors.titleOnlyFilter).exists()).toBeTruthy()
+      })
+      it('should not render filter if not enabled via capabilities', () => {
+        const { wrapper } = getWrapper({ fullTextSearchEnabled: false })
+        expect(wrapper.find(selectors.titleOnlyFilter).exists()).toBeFalsy()
+      })
+      it('should set initial filter when titleOnly is set active via query param', async () => {
+        const searchTerm = 'term'
+        const { wrapper } = getWrapper({
+          searchTerm,
+          titleOnlyFilterQuery: 'true',
+          fullTextSearchEnabled: true
+        })
+        await flushPromises()
+        expect(wrapper.emitted('search')[0][0]).toEqual(`name:"*${searchTerm}*"`)
+      })
+    })
+  })
+})
+
+function getWrapper({
+  availableTags = [],
+  resources = [],
+  paginatedResources = undefined,
+  sortedResources = undefined,
+  resourcesStore = {},
+  searchTerm = '',
+  tagFilterQuery = null,
+  titleOnlyFilterQuery = null,
+  fullTextSearchEnabled = true,
+  filesTags = true,
+  availableLastModifiedValues = {},
+  lastModifiedFilterQuery = null,
+  mocks = {},
+  sortFields = [],
+  folderViewComponent = undefined,
+  stubs = {},
+  searchResult = undefined
+}: {
+  availableTags?: string[]
+  resources?: Resource[]
+  paginatedResources?: Ref<Resource[]>
+  sortedResources?: Ref<Resource[]>
+  resourcesStore?: { resources?: Resource[]; areHiddenFilesShown?: boolean }
+  searchTerm?: string
+  tagFilterQuery?: string
+  titleOnlyFilterQuery?: string
+  fullTextSearchEnabled?: boolean
+  filesTags?: boolean
+  availableLastModifiedValues?: Record<string, string[]>
+  lastModifiedFilterQuery?: string
+  mocks?: Record<string, unknown>
+  sortFields?: SortField[]
+  folderViewComponent?: Component
+  stubs?: Record<string, boolean | Component>
+  searchResult?: SearchResult
+} = {}) {
+  const resourcesViewDetailsMock = useResourcesViewDefaultsMock({
+    paginatedResources: paginatedResources || ref(resources),
+    sortedResources: sortedResources || ref(resources),
+    sortFields: ref(sortFields)
+  })
+  if (folderViewComponent) {
+    resourcesViewDetailsMock.folderView = computed(() => ({
+      ...unref(resourcesViewDetailsMock.folderView),
+      component: folderViewComponent
+    }))
+  }
+  vi.mocked(useResourcesViewDefaults).mockImplementation(() => resourcesViewDetailsMock)
+
+  const query = {
+    ...(searchTerm && { term: searchTerm }),
+    ...(titleOnlyFilterQuery && { q_titleOnly: titleOnlyFilterQuery }),
+    ...(tagFilterQuery && { q_tags: tagFilterQuery }),
+    ...(lastModifiedFilterQuery && { q_lastModified: lastModifiedFilterQuery })
+  }
+  const localMocks = {
+    ...defaultComponentMocks({
+      currentRoute: {
+        name: 'files-common-search',
+        path: '/',
+        query
+      } as unknown as RouteLocationNormalizedLoaded
+    }),
+    ...mocks
+  }
+  localMocks.$clientService.graphAuthenticated.tags.listTags.mockResolvedValue(availableTags)
+
+  const capabilities = {
+    files: { tags: filesTags },
+    search: {
+      property: {
+        mtime: availableLastModifiedValues,
+        content: { enabled: fullTextSearchEnabled },
+        tags: { enabled: true }
+      }
+    }
+  } satisfies Partial<Capabilities['capabilities']>
+
+  return {
+    mocks: { ...localMocks, ...resourcesViewDetailsMock },
+    wrapper: shallowMount(List, {
+      props: { searchResult },
+      global: {
+        mocks: localMocks,
+        provide: localMocks,
+        stubs: {
+          FilesViewWrapper: false,
+          AppBar: AppBarStub,
+          ...stubs
+        },
+        plugins: [
+          ...defaultPlugins({ piniaOptions: { capabilityState: { capabilities }, resourcesStore } })
+        ]
+      }
+    })
+  }
+}

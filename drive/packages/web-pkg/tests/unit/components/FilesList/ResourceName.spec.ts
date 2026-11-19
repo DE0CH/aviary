@@ -1,0 +1,195 @@
+import { mount, shallowMount } from '@opencloud-eu/web-test-helpers'
+
+import Name from '../../../../src/components/FilesList/ResourceName.vue'
+
+const fullPath = 'images/nature/forest.jpg'
+const name = 'forest.jpg'
+const extension = 'jpg'
+const type = 'file'
+
+describe('OcResourceName', () => {
+  it("doesn't add extension to hidden folder", () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: '.hidden',
+        name: '.hidden',
+        extension: '',
+        type: 'folder'
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.find('.oc-resource-basename').text()).toMatch('.hidden')
+    expect(wrapper.find('.oc-resource-extension').exists()).toBeFalsy()
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('renders folder names with dots completely in the basename', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'folder.with.dots',
+        name: 'folder.with.dots',
+        extension: '',
+        type: 'folder'
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.find('.oc-resource-basename').text()).toMatch('folder.with.dots')
+    expect(wrapper.find('.oc-resource-extension').exists()).toBeFalsy()
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('keeps folder names with extension-like suffix when file extensions are hidden', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'folder.with.dots',
+        name: 'folder.with.dots',
+        extension: 'dots',
+        type: 'folder',
+        isExtensionDisplayed: false
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.find('.oc-resource-basename').text()).toBe('folder.with.dots')
+    expect(wrapper.find('.oc-resource-extension').exists()).toBeFalsy()
+  })
+
+  it('has properties for resource path, name and type', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath,
+        name,
+        extension,
+        type
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    const node = wrapper.find('.oc-resource-name')
+    expect(node.attributes('data-test-resource-type')).toMatch(type)
+    expect(node.attributes('data-test-resource-name')).toMatch(name)
+    expect(node.attributes('data-test-resource-path')).toMatch('/' + name)
+  })
+
+  it('truncates very long name per default', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath:
+          'super-long-file-name-which-will-be-truncated-when-exceeding-the-screen-space-while-still-preserving-the-file-extension-at-the-end.txt',
+        name: '.super-long-file-name-which-will-be-truncated-when-exceeding-the-screen-space-while-still-preserving-the-file-extension-at-the-end.txt',
+        extension: 'txt',
+        type: 'file'
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('allows the basename to wrap anywhere when truncation is disabled', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'photos/PXL_20260703_163401420.jpg',
+        name: 'PXL_20260703_163401420.jpg',
+        extension: 'jpg',
+        type: 'file',
+        truncateName: false
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    const basename = wrapper.find('.oc-resource-basename')
+    expect(basename.text()).toBe('PXL_20260703_163401420.jpg')
+    expect(basename.classes()).toContain('wrap-anywhere')
+    expect(wrapper.find('.truncate').exists()).toBeFalsy()
+    expect(wrapper.find('.oc-resource-extension').text()).toBe('.jpg')
+  })
+
+  it('shows the name as HTML title if the path is not displayed', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'folder',
+        name: 'folder',
+        extension: '',
+        type: 'folder',
+        isPathDisplayed: false
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('does not show the name as HTML title if the path is being displayed', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'folder',
+        name: 'folder',
+        extension: '',
+        type: 'folder',
+        isPathDisplayed: true
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.html()).toMatchSnapshot()
+  })
+
+  it('highlights the filter term in the basename and the extension', async () => {
+    const wrapper = mount(Name, {
+      props: { fullPath, name, extension, type, term: 'ES' }
+    })
+
+    expect(wrapper.find('.oc-resource-basename .oc-filter-highlight-match').text()).toBe('es')
+    expect(wrapper.find('.oc-resource-basename').text()).toBe('forest')
+
+    await wrapper.setProps({ term: 'JP' })
+    expect(wrapper.find('.oc-resource-extension .oc-filter-highlight-match').text()).toBe('jp')
+    expect(wrapper.find('.oc-resource-extension').text()).toBe('.jpg')
+  })
+
+  it('does not highlight anything without a filter term', () => {
+    const wrapper = mount(Name, {
+      props: { fullPath, name, extension, type }
+    })
+
+    expect(wrapper.find('.oc-filter-highlight-match').exists()).toBeFalsy()
+    expect(wrapper.find('.oc-resource-basename').text()).toBe('forest')
+  })
+
+  it('does not add a trailing dot to the title for files without an extension', () => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: 'README',
+        name: 'README',
+        extension: '',
+        type: 'file',
+        isExtensionDisplayed: true
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.find('.oc-resource-name').attributes('title')).toBe('README')
+  })
+
+  it.each([
+    { name: 'forest.jpg', extension: 'jpg' },
+    { name: '.bashrc', extension: 'bashrc' },
+    { name: '.config.json', extension: 'json' }
+  ])('uses the full name as title for the file "$name"', ({ name, extension }) => {
+    const wrapper = shallowMount(Name, {
+      props: {
+        fullPath: name,
+        name,
+        extension,
+        type: 'file',
+        isExtensionDisplayed: true
+      },
+      global: { stubs: { OcFilterHighlight: false } }
+    })
+
+    expect(wrapper.find('.oc-resource-name').attributes('title')).toBe(name)
+  })
+})

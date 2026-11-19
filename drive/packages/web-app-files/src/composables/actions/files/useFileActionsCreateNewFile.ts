@@ -1,0 +1,215 @@
+import {
+  extractNameWithoutExtension,
+  isPublicSpaceResource,
+  isShareSpaceResource,
+  Resource,
+  SpaceResource
+} from '@opencloud-eu/web-client'
+import { DavPermission, WebDAV } from '@opencloud-eu/web-client/webdav'
+import { storeToRefs } from 'pinia'
+import { join } from 'path'
+import { computed, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import {
+  ApplicationFileExtension,
+  FileAction,
+  FileActionOptions,
+  markVaultStatus,
+  resolveFileNameDuplicate,
+  useAppsStore,
+  useClientService,
+  useEmbedMode,
+  useExtensionRegistry,
+  useFileActions,
+  useIsResourceNameValid,
+  useMessages,
+  useModals,
+  useResourcesStore,
+  useUserStore
+} from '@opencloud-eu/web-pkg'
+
+export const useFileActionsCreateNewFile = () => {
+  const { showMessage, showErrorMessage } = useMessages()
+  const userStore = useUserStore()
+  const { $gettext } = useGettext()
+  const { dispatchModal } = useModals()
+  const appsStore = useAppsStore()
+  const { isEnabled: isEmbedModeEnabled } = useEmbedMode()
+
+  const { openEditor } = useFileActions()
+  const clientService = useClientService()
+
+  const resourcesStore = useResourcesStore()
+  const { resources, currentFolder, areFileExtensionsShown } = storeToRefs(resourcesStore)
+  const extensionRegistry = useExtensionRegistry()
+
+  const { isFileNameValid } = useIsResourceNameValid()
+
+  const appNewFileMenuExtensions = computed(() =>
+    appsStore.fileExtensions.filter(({ newFileMenu }) => !!newFileMenu)
+  )
+
+  const openFile = (
+    space: SpaceResource,
+    resource: Resource,
+    appFileExtension: ApplicationFileExtension
+  ) => {
+    resourcesStore.upsertResource(resource)
+
+    return openEditor(appFileExtension, space, resource)
+  }
+
+  const handler = (
+    { space }: FileActionOptions,
+    extension: string,
+    appFileExtension: ApplicationFileExtension
+  ) => {
+    // Apps may override the default name shown in the create modal, e.g. to
+    // read "New notebook.ocnb" rather than "New file.ocnb". Fall back to the
+    // generic "New file" prefix when no override is set.
+    const baseName = appFileExtension.newFileMenu?.defaultName?.() ?? $gettext('New file')
+    let defaultName = `${baseName}.${extension}`
+
+    if (unref(resources).some((f) => f.name === defaultName)) {
+      defaultName = resolveFileNameDuplicate(defaultName, extension, unref(resources))
+    }
+
+    if (!areFileExtensionsShown.value) {
+      defaultName = extractNameWithoutExtension({ name: defaultName, extension } as Resource)
+    }
+
+    const inputSelectionRange = !areFileExtensionsShown.value
+      ? null
+      : ([0, defaultName.length - (extension.length + 1)] as [number, number])
+
+    dispatchModal({
+      title: $gettext('Create a new file'),
+      confirmText: $gettext('Create'),
+      hasInput: true,
+      inputValue: defaultName,
+      inputLabel: $gettext('File name'),
+      inputRequiredMark: true,
+      inputSelectionRange,
+      onConfirm: async (fileName: string) => {
+        if (!areFileExtensionsShown.value) {
+          fileName = `${fileName}.${extension}`
+        }
+
+        try {
+          let resource: Resource
+          if (appFileExtension.createFileHandler) {
+            resource = await appFileExtension.createFileHandler({
+              fileName,
+              space,
+              currentFolder: unref(currentFolder)
+            })
+          } else if (appFileExtension.type === 'folder') {
+            const path = join(unref(currentFolder).path, fileName)
+            resource = await (clientService.webdav as WebDAV).createFolder(space, { path })
+          } else {
+            const path = join(unref(currentFolder).path, fileName)
+            resource = await (clientService.webdav as WebDAV).putFileContents(space, {
+              path
+            })
+          }
+
+          if (isShareSpaceResource(space)) {
+            resource.remoteItemId = space.id
+          }
+
+          markVaultStatus(extensionRegistry, space, [resource])
+
+          resourcesStore.upsertResource(resource)
+
+          showMessage({
+            title: $gettext('»%{fileName}« was created successfully', { fileName: resource.name })
+          })
+
+          if (unref(isEmbedModeEnabled)) {
+            return
+          }
+
+          return openFile(space, resource, appFileExtension)
+        } catch (error) {
+          console.error(error)
+          showErrorMessage({
+            title: $gettext('Failed to create file'),
+            errors: [error]
+          })
+        }
+      },
+      onInput: (name: string, setError: (error: string) => void) => {
+        const newFileName = areFileExtensionsShown.value ? name : `${name}.${extension}`
+        const resource = {
+          path: join(unref(currentFolder).path, newFileName),
+          name: newFileName,
+          extension
+        } as Resource
+        const { isValid, error } = isFileNameValid(resource, newFileName, undefined, space)
+        setError(isValid ? null : error)
+      }
+    })
+  }
+
+  const actions = computed((): FileAction[] => {
+    const actions: FileAction[] = []
+    // make sure there is only one action for a file extension/mime-type
+    // if there are
+    // - multiple ApplicationFileExtensions with priority
+    // or
+    // - multiple ApplicationFileExtensions without priority (and none with)
+    // we do not guarantee which one is chosen
+    const defaultMapping: Record<string, ApplicationFileExtension> = {}
+    for (const appFileExtension of unref(appNewFileMenuExtensions) || []) {
+      if (appFileExtension.hasPriority) {
+        defaultMapping[appFileExtension.extension] = appFileExtension
+      } else {
+        defaultMapping[appFileExtension.extension] =
+          defaultMapping[appFileExtension.extension] || appFileExtension
+      }
+    }
+
+    for (const [, appFileExtension] of Object.entries(defaultMapping)) {
+      // Actions for external editor apps (Collabora, …) need to be disabled in vaults
+      // because those apps load the file server-side via the WOPI bridge - they'd see the
+      // encrypted blob, not the cleartext the user expects.
+      // evaluated lazily so the computed doesn't depend on currentFolder
+      const isExternalActionInVault = () =>
+        appFileExtension.app?.startsWith('external-') && !!unref(currentFolder)?.isInVault
+
+      actions.push({
+        name: 'create-new-file',
+        icon: 'add',
+        handler: (args) => handler(args, appFileExtension.extension, appFileExtension),
+        label: () => $gettext(appFileExtension.newFileMenu.menuTitle()),
+        isVisible: ({ space }) => {
+          // files created via an upload-only link or share couldn't be edited afterwards
+          if (
+            (isPublicSpaceResource(space) || isShareSpaceResource(space)) &&
+            !unref(currentFolder)?.permissions?.includes(DavPermission.Updateable)
+          ) {
+            return false
+          }
+          return unref(currentFolder)?.canUpload({ user: userStore.user })
+        },
+        isDisabled: isExternalActionInVault,
+        disabledTooltip: () => {
+          if (isExternalActionInVault()) {
+            return $gettext('This file type cannot be created inside vaults')
+          }
+          return undefined
+        },
+        class: 'oc-files-actions-create-new-file',
+        ext: appFileExtension.extension,
+        isExternal: appFileExtension.app?.startsWith('external-')
+      })
+    }
+
+    return actions
+  })
+
+  return {
+    actions,
+    openFile
+  }
+}

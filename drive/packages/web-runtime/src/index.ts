@@ -1,0 +1,318 @@
+import { loadDesignSystem, pages, supportedLanguages } from './defaults'
+import { router } from './router'
+import { setupVaultUnlockGuard } from './router/setupVaultUnlockGuard'
+import { abilitiesPlugin } from '@casl/vue'
+import { createMongoAbility } from '@casl/ability'
+
+import {
+  announceConfiguration,
+  initializeApplications,
+  announceApplicationsReady,
+  announceDefaults,
+  announceClientService,
+  announceTheme,
+  announcePiniaStores,
+  announceCustomStyles,
+  announceTranslations,
+  announceVersions,
+  announceUppyService,
+  announceAuthService,
+  announceCustomScripts,
+  announceLoadingService,
+  announcePreviewService,
+  announcePasswordPolicyService,
+  registerSSEEventListeners,
+  announceGuestContext,
+  setViewOptions,
+  announceGettext,
+  announceArchiverService,
+  announceAppProviderService,
+  announceUpdates,
+  announceGroupware,
+  announceCapabilities
+} from './container/bootstrap'
+import { applicationStore } from './container/store'
+import { PublicSpaceResource } from '@opencloud-eu/web-client'
+import { loadCustomTranslations } from './helpers/customTranslations'
+import { preloadCoreTranslations } from './helpers/language'
+import { createApp, watch } from 'vue'
+import { createPinia } from 'pinia'
+import { extensionPoints } from './extensionPoints'
+import { extensions } from './extensions'
+import { usePreferredDark } from '@vueuse/core'
+import { useThemeStore } from '@opencloud-eu/web-pkg'
+
+export const bootstrapApp = async (configurationPath: string, appsReadyCallback: () => void) => {
+  const pinia = createPinia()
+  const app = createApp(pages.success)
+  app.use(pinia)
+
+  const {
+    appsStore,
+    authStore,
+    configStore,
+    capabilityStore,
+    extensionRegistry,
+    spacesStore,
+    userStore,
+    resourcesStore,
+    messagesStore,
+    sharesStore,
+    webWorkersStore,
+    updatesStore,
+    groupwareConfigStore
+  } = announcePiniaStores()
+
+  app.provide('$router', router)
+
+  const [designSystem] = await Promise.all([
+    loadDesignSystem(),
+    announceConfiguration({ path: configurationPath, configStore })
+  ])
+
+  app.use(abilitiesPlugin, createMongoAbility([]), { useGlobalProperties: true })
+
+  const gettext = announceGettext({ app, availableLanguages: supportedLanguages })
+  preloadCoreTranslations(gettext.current)
+
+  const clientService = announceClientService({ app, configStore, authStore })
+
+  // Registered here (not at router module load) so the guard can receive the
+  // `clientService` it needs to lazy-load mount-point spaces. Registering it
+  // after `setupAuthGuard` keeps the guard order intact: auth context (and
+  // thus the access token) is ready before the vault guard runs.
+  setupVaultUnlockGuard(router, clientService)
+
+  announceAuthService({
+    app,
+    configStore,
+    router,
+    userStore,
+    authStore,
+    capabilityStore,
+    webWorkersStore,
+    spacesStore
+  })
+
+  const appProviderService = announceAppProviderService({
+    app,
+    serverUrl: configStore.serverUrl,
+    clientService
+  })
+
+  announceLoadingService({ app })
+  announceArchiverService({ app, configStore, userStore, authStore, capabilityStore })
+  announcePreviewService({
+    app,
+    configStore,
+    userStore,
+    authStore
+  })
+  announcePasswordPolicyService({ app })
+  announceUppyService({ app })
+
+  const [customTranslations] = await Promise.all([
+    loadCustomTranslations({ configStore }),
+    announceTheme({ app, designSystem, configStore }),
+    initializeApplications({
+      app,
+      configStore,
+      router,
+      appProviderService
+    }),
+    announceCapabilities({ capabilityStore, clientService }),
+    authStore.loadWebfingerDiscoveryData(configStore.serverUrl, clientService.httpUnAuthenticated),
+    ...(configStore.apps.includes('external') ? [appProviderService.loadData()] : [])
+  ])
+
+  app.config.globalProperties.passwordPolicyService.initialize(capabilityStore)
+
+  // Important: has to happen AFTER native applications are loaded.
+  // Reason: the `external` app serves as a blueprint for creating the app provider apps.
+  if (applicationStore.has('web-app-external')) {
+    await initializeApplications({
+      app,
+      configStore,
+      router,
+      appProviderService,
+      appProviderApps: true
+    })
+  }
+
+  await announceTranslations({ appsStore, gettext, customTranslations })
+  announceCustomStyles({ configStore })
+  announceCustomScripts({ configStore })
+  announceDefaults({ appsStore, router, extensionRegistry, configStore })
+
+  extensionRegistry.registerExtensionPoints(extensionPoints())
+  extensionRegistry.registerExtensions(extensions())
+
+  app.use(router)
+  app.mount('#opencloud')
+
+  setViewOptions({ resourcesStore })
+
+  const applications = Array.from(applicationStore.values())
+  applications.forEach((application) => application.mounted(app))
+
+  watch(
+    () =>
+      authStore.userContextReady ||
+      authStore.idpContextReady ||
+      authStore.publicLinkContextReady ||
+      authStore.guestContextReady,
+    async (newValue, oldValue) => {
+      if (!newValue || newValue === oldValue) {
+        return
+      }
+      announceVersions({ capabilityStore })
+      announceUpdates({ updatesStore, capabilityStore, configStore, clientService })
+
+      await announceApplicationsReady({
+        app,
+        appsStore,
+        applications
+      })
+      appsReadyCallback()
+    },
+    {
+      immediate: true
+    }
+  )
+
+  function registerSSE() {
+    return registerSSEEventListeners({
+      language: gettext,
+      resourcesStore,
+      spacesStore,
+      messageStore: messagesStore,
+      sharesStore,
+      clientService,
+      userStore,
+      previewService: app.config.globalProperties.$previewService,
+      configStore,
+      authStore,
+      router
+    })
+  }
+
+  watch(
+    () => authStore.userContextReady,
+    async (userContextReady) => {
+      if (!userContextReady) {
+        return
+      }
+
+      const clientService = app.config.globalProperties.$clientService
+
+      const [graphRoleDefinitions] = await Promise.all([
+        clientService.graphAuthenticated.permissions.listRoleDefinitions(),
+        spacesStore.loadSpaces({ graphClient: clientService.graphAuthenticated }),
+        announceConfiguration({
+          path: configurationPath,
+          configStore,
+          token: authStore.accessToken
+        }),
+        announceGroupware({
+          clientService,
+          configStore,
+          capabilityStore,
+          groupwareConfigStore
+        })
+      ])
+
+      if (capabilityStore.supportSSE) {
+        registerSSE()
+      }
+
+      sharesStore.setGraphRoles(graphRoleDefinitions)
+      spacesStore.setSpacesInitialized(true)
+    },
+    {
+      immediate: true
+    }
+  )
+  watch(
+    () => authStore.publicLinkContextReady,
+    async (publicLinkContextReady) => {
+      if (!publicLinkContextReady) {
+        return
+      }
+      // Create virtual space for public link
+      const publicLinkToken = authStore.publicLinkToken
+      const publicLinkPassword = authStore.publicLinkPassword
+      const publicLinkType = authStore.publicLinkType
+      const publicLinkName =
+        publicLinkType === 'ocm'
+          ? app.config.globalProperties.$gettext('OCM share')
+          : app.config.globalProperties.$gettext('Public files')
+
+      const { buildPublicSpaceResource } = await import('@opencloud-eu/web-client')
+      const space = buildPublicSpaceResource({
+        id: publicLinkToken,
+        name: publicLinkName,
+        ...(publicLinkPassword && { publicLinkPassword }),
+        serverUrl: configStore.serverUrl,
+        publicLinkType: publicLinkType
+      })
+
+      spacesStore.addSpaces([space])
+      spacesStore.setSpacesInitialized(true)
+    },
+    {
+      immediate: true
+    }
+  )
+  announceGuestContext({
+    authStore,
+    capabilityStore,
+    clientService,
+    sharesStore,
+    spacesStore,
+    registerSSE
+  })
+  watch(
+    // only needed if a public link gets re-resolved with a changed password prop (changed or removed).
+    // don't need to set { immediate: true } on the watcher.
+    () => authStore.publicLinkPassword,
+    (publicLinkPassword: string | undefined) => {
+      const publicLinkToken = authStore.publicLinkToken
+      const space = spacesStore.spaces.find((space) => {
+        return space.driveType === 'public' && space.id === publicLinkToken
+      })
+      if (!space) {
+        return
+      }
+      ;(space as PublicSpaceResource).publicLinkPassword = publicLinkPassword
+    }
+  )
+
+  const isDark = usePreferredDark()
+  const themeStore = useThemeStore()
+  watch(isDark, () => {
+    if (!themeStore.isCurrentThemeAutoSystem) {
+      return
+    }
+
+    themeStore.setAutoSystemTheme()
+  })
+}
+
+export const bootstrapErrorApp = async (err: Error): Promise<void> => {
+  const { capabilityStore, configStore } = announcePiniaStores()
+  announceVersions({ capabilityStore })
+  const app = createApp(pages.failure)
+  const designSystem = await loadDesignSystem()
+  try {
+    await announceTheme({ app, designSystem, configStore })
+  } catch {}
+
+  console.error(err)
+  const gettext = announceGettext({ app, availableLanguages: supportedLanguages })
+  await announceTranslations({ gettext })
+  app.mount('#opencloud')
+}
+;(window as any).runtimeLoaded({
+  bootstrapApp,
+  bootstrapErrorApp
+})

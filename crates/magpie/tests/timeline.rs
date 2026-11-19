@@ -1431,7 +1431,7 @@ async fn a_question_card_sits_where_it_was_asked_until_the_ai_reads_the_answer()
             ev::in_turn(
                 ev::ev(
                     "ask.pending",
-                    json!({"askId": "q-1", "toolName": "ask", "input": input}),
+                    json!({"askId": "q-1", "toolName": "ask", "input": input, "marksAnswers": true}),
                 ),
                 turn,
             ),
@@ -1549,7 +1549,7 @@ async fn a_declined_question_and_a_wait_are_cards_too() {
         ALICE,
         id,
         vec![
-            ev::ev("ask.pending", json!({"askId": "q-2", "toolName": "ask", "input": {"questions": [{"question": "Now?"}]}})),
+            ev::ev("ask.pending", json!({"askId": "q-2", "toolName": "ask", "marksAnswers": true, "input": {"questions": [{"question": "Now?"}]}})),
             ev::ev("ask.resolved", json!({"askId": "q-2", "resolution": {"behavior": "deny", "message": "later"}})),
             ev::ev(
                 "wait.pending",
@@ -1612,4 +1612,42 @@ async fn a_declined_question_and_a_wait_are_cards_too() {
     );
     // the declined question was never read by a result: it stays where it was asked
     assert_eq!(card(find(&p, "q-2")).read_by, None);
+}
+
+/// Rule 11 with an older supervisor: a question whose `ask` prints no marker (`marksAnswers` absent) is a card with no
+/// marker; answered, it stays where it was asked and is never read by a result, even one that prints its answer.
+#[tokio::test]
+async fn a_question_from_an_older_supervisor_stays_answered_where_it_was_asked() {
+    let db = common::fresh_db("person_card_unmarked").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::ev("ask.pending", json!({"askId": "q-3", "toolName": "ask", "input": {"questions": [{"question": "Which?"}]}})),
+            ev::ev("ask.resolved", json!({"askId": "q-3", "resolution": {"behavior": "allow", "updatedInput": {"answers": {"Which?": "B"}}}})),
+            ev::turn_started(turn),
+            ev::in_turn(ev::assistant("m1", json!([ev::tool_use("toolu_x", "Bash")])), turn),
+            ev::in_turn(ev::results(&[("toolu_x", "Which?\n→ B", false)]), turn),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let q = find(&p, "q-3");
+    assert_eq!(
+        (
+            card(q).marker.as_str(),
+            card(q).state.as_str(),
+            card(q).read_by.as_deref()
+        ),
+        ("", "answered", None)
+    );
+    assert!(tool(find(&p, "toolu_x")).person_read.is_none());
 }

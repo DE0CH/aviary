@@ -1,0 +1,233 @@
+import { Key, Modifier, useKeyboardActions } from '../../../../src/composables/keyboardActions'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
+import { ref } from 'vue'
+
+describe('useKeyboardActions', () => {
+  it('should be valid', () => {
+    expect(useKeyboardActions).toBeDefined()
+  })
+
+  it('should bind keys', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+
+    keyboardActions.bindKeyAction({ primary: Key.A }, () => undefined)
+    expect(keyboardActions.actions.value.length).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('should be possible remove keys', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+
+    const keyActionIndex = keyboardActions.bindKeyAction({ primary: Key.A }, () => undefined)
+
+    expect(keyboardActions.actions.value.length).toBe(1)
+
+    keyboardActions.removeKeyAction(keyActionIndex)
+    expect(keyboardActions.actions.value.length).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it('should be possible execute callback on key event', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+    const counter = ref(0)
+
+    const increment = () => {
+      counter.value += 1
+    }
+
+    // primary key
+    keyboardActions.bindKeyAction({ primary: Key.A }, increment)
+
+    const event = new KeyboardEvent('keydown', { key: 'a' })
+    document.dispatchEvent(event)
+
+    expect(counter.value).toBe(1)
+
+    // primary key + modifier
+    keyboardActions.bindKeyAction({ modifier: Modifier.Ctrl, primary: Key.A }, increment)
+
+    const eventWithModifier = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true })
+    document.dispatchEvent(eventWithModifier)
+
+    expect(counter.value).toBe(2)
+
+    wrapper.unmount()
+  })
+
+  it('should not execute callback on key event if disallowed modifier is present', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+    const counter = ref(0)
+
+    const increment = () => {
+      counter.value += 1
+    }
+
+    keyboardActions.bindKeyAction({ modifier: Modifier.Ctrl, primary: Key.A }, increment)
+
+    const eventWithModifier = new KeyboardEvent('keydown', {
+      key: 'a',
+      ctrlKey: true,
+      shiftKey: true
+    })
+    document.dispatchEvent(eventWithModifier)
+
+    expect(counter.value).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it.each([
+    '<input type="checkbox">',
+    '<button><span>Action</span></button>',
+    '<a href="/files">Files</a>',
+    '<div role="checkbox" tabindex="0">Select</div>'
+  ])('leaves Space on a focused control to its own handler: %s', (html) => {
+    const wrapper = getWrapper()
+    const callback = vi.fn()
+    wrapper.vm.keyboardActions.bindKeyAction({ primary: Key.Space }, callback)
+    const container = document.createElement('div')
+    container.innerHTML = html
+    document.body.appendChild(container)
+    const event = new KeyboardEvent('keydown', {
+      key: Key.Space,
+      bubbles: true,
+      cancelable: true
+    })
+
+    container.querySelector('span, input, a, [role]')?.dispatchEvent(event)
+
+    expect(callback).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(false)
+
+    container.remove()
+    wrapper.unmount()
+  })
+
+  it('still handles Space outside controls', () => {
+    const wrapper = getWrapper()
+    const callback = vi.fn()
+    wrapper.vm.keyboardActions.bindKeyAction({ primary: Key.Space }, callback)
+    const event = new KeyboardEvent('keydown', { key: Key.Space, bubbles: true, cancelable: true })
+
+    document.body.dispatchEvent(event)
+
+    expect(callback).toHaveBeenCalledWith(event)
+    expect(event.defaultPrevented).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it.each([
+    { result: undefined, defaultPrevented: true },
+    { result: true, defaultPrevented: true },
+    { result: false, defaultPrevented: false }
+  ])(
+    'prevents the default action if the callback returns $result: $defaultPrevented',
+    ({ result, defaultPrevented }) => {
+      const wrapper = getWrapper()
+      wrapper.vm.keyboardActions.bindKeyAction({ primary: Key.Esc }, () => result)
+      const event = new KeyboardEvent('keydown', { key: Key.Esc, cancelable: true })
+
+      document.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(defaultPrevented)
+
+      wrapper.unmount()
+    }
+  )
+
+  it('calls the callback before preventing the event, so it can check if an earlier handler did', () => {
+    const wrapper = getWrapper()
+    let defaultPreventedInCallback: boolean
+    wrapper.vm.keyboardActions.bindKeyAction({ primary: Key.Esc }, (event) => {
+      defaultPreventedInCallback = event.defaultPrevented
+    })
+    const event = new KeyboardEvent('keydown', { key: Key.Esc, cancelable: true })
+
+    document.dispatchEvent(event)
+
+    expect(defaultPreventedInCallback).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('still handles arrow keys on a focused checkbox', () => {
+    const wrapper = getWrapper()
+    const callback = vi.fn()
+    wrapper.vm.keyboardActions.bindKeyAction({ primary: Key.ArrowDown }, callback)
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    document.body.appendChild(checkbox)
+
+    checkbox.dispatchEvent(new KeyboardEvent('keydown', { key: Key.ArrowDown, bubbles: true }))
+
+    expect(callback).toHaveBeenCalledOnce()
+
+    checkbox.remove()
+    wrapper.unmount()
+  })
+
+  it('should not execute callback on key event while a modal is open', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+    const counter = ref(0)
+
+    const increment = () => {
+      counter.value += 1
+    }
+
+    keyboardActions.bindKeyAction({ primary: Key.A }, increment)
+
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    expect(counter.value).toBe(0)
+
+    modal.remove()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    expect(counter.value).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('should not execute callback if the event comes from an input that blurred itself', () => {
+    const wrapper = getWrapper()
+    const { keyboardActions } = wrapper.vm
+    const counter = ref(0)
+
+    keyboardActions.bindKeyAction({ primary: Key.Esc }, () => {
+      counter.value += 1
+    })
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    input.addEventListener('keydown', () => input.blur())
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(counter.value).toBe(0)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(counter.value).toBe(1)
+
+    input.remove()
+    wrapper.unmount()
+  })
+})
+
+function getWrapper() {
+  return getComposableWrapper(() => {
+    const keyboardActions = useKeyboardActions()
+    return { keyboardActions }
+  })
+}

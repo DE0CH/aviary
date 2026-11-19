@@ -1,0 +1,183 @@
+<template>
+  <div class="oc-resource inline-flex justify-start items-center max-w-full overflow-visible">
+    <motion-photo-overlay
+      v-if="isIconDisplayed"
+      :resource="resource"
+      class="inline-flex"
+      badge-size-class="size-3"
+      video-class="rounded-xs"
+    >
+      <resource-link
+        v-oc-tooltip="isResourceClickable ? tooltipLabelIcon : undefined"
+        :resource="resource"
+        :link="link"
+        :is-resource-clickable="isResourceClickable"
+        class="relative"
+        :class="{ 'hover:underline': isResourceClickable }"
+        :aria-label="
+          isResourceClickable
+            ? $gettext('Open »%{name}«', { name: resource?.name ?? '' })
+            : undefined
+        "
+        @click="emitClick"
+      >
+        <oc-image
+          v-if="hasThumbnail"
+          :key="thumbnail"
+          v-oc-tooltip="tooltipLabelIcon"
+          :src="thumbnail"
+          :data-test-thumbnail-resource-name="resource.name"
+          class="rounded-xs size-6 object-cover max-w-fit"
+          :aria-label="tooltipLabelIcon"
+          alt=""
+          decoding="async"
+        />
+        <resource-icon
+          v-else
+          v-oc-tooltip="tooltipLabelIcon"
+          :aria-label="tooltipLabelIcon"
+          aria-hidden="true"
+          :resource="resource"
+          size-class="size-6"
+          class="rounded-xs"
+        />
+      </resource-link>
+    </motion-photo-overlay>
+    <div
+      class="oc-resource-details block"
+      :class="[
+        { 'pl-2': isIconDisplayed },
+        $slots.nameAppend ? 'min-w-0 whitespace-nowrap' : 'truncate'
+      ]"
+    >
+      <div class="oc-resource-name-line" :class="{ 'flex items-center': $slots.nameAppend }">
+        <resource-link
+          :resource="resource"
+          :is-resource-clickable="isResourceClickable"
+          :link="link"
+          class="min-w-0 hover:outline-offset-0 focus:outline-offset-0"
+          :class="{ 'hover:underline': isResourceClickable, 'overflow-hidden': $slots.nameAppend }"
+          @click="emitClick"
+        >
+          <resource-name
+            :key="resource.name"
+            :name="resource.name"
+            :path-prefix="pathPrefix"
+            :extension="resource.extension"
+            :type="resource.type"
+            :full-path="resource.path"
+            :is-path-displayed="isPathDisplayed"
+            :is-extension-displayed="isExtensionDisplayed"
+            :is-favorite="resource.starred"
+            :is-favorite-displayed="isFavoriteDisplayed"
+            :term="term"
+          />
+        </resource-link>
+        <slot name="nameAppend" />
+      </div>
+      <div class="flex">
+        <component
+          :is="parentFolderComponentType"
+          v-if="isPathDisplayed"
+          :to="parentFolderLink"
+          class="parent-folder flex items-center truncate px-0.5 mr-2 -ml-0.5 hover:bg-transparent"
+          :class="{ 'cursor-pointer': parentFolderLink, 'cursor-default': !parentFolderLink }"
+        >
+          <oc-icon v-bind="parentFolderLinkIconAttrs" class="mr-1" size-class="size-4" />
+          <span
+            class="text truncate text-sm hover:underline"
+            :title="parentFolderName"
+            v-text="parentFolderName"
+          />
+        </component>
+      </div>
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { computed, unref } from 'vue'
+import { Resource } from '@opencloud-eu/web-client'
+import ResourceIcon from './ResourceIcon.vue'
+import ResourceLink from './ResourceLink.vue'
+import ResourceName from './ResourceName.vue'
+import MotionPhotoOverlay from './MotionPhotoOverlay.vue'
+import { RouteLocationRaw } from 'vue-router'
+import { useGettext } from 'vue3-gettext'
+
+const {
+  resource,
+  pathPrefix = '',
+  link = null,
+  isPathDisplayed = false,
+  parentFolderLink = null,
+  parentFolderName = '',
+  parentFolderLinkIconAdditionalAttributes = {},
+  isExtensionDisplayed = true,
+  isThumbnailDisplayed = true,
+  isIconDisplayed = true,
+  isResourceClickable = true,
+  isFavoriteDisplayed = true,
+  term = ''
+} = defineProps<{
+  resource: Resource
+  pathPrefix?: string
+  link?: RouteLocationRaw
+  isPathDisplayed?: boolean
+  parentFolderLink?: RouteLocationRaw
+  parentFolderName?: string
+  parentFolderLinkIconAdditionalAttributes?: Record<string, unknown>
+  isExtensionDisplayed?: boolean
+  isThumbnailDisplayed?: boolean
+  isIconDisplayed?: boolean
+  isResourceClickable?: boolean
+  isFavoriteDisplayed?: boolean
+  /**
+   * The filter term whose occurrences get highlighted in the resource names.
+   */
+  term?: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'click', event: MouseEvent): void
+}>()
+
+defineSlots<{
+  /**
+   * Content rendered right after the name, e.g. actions. Stays next to the name when the path line is wider.
+   */
+  nameAppend?: () => unknown
+}>()
+
+const { $gettext } = useGettext()
+
+const parentFolderComponentType = computed(() => {
+  return parentFolderLink ? 'router-link' : 'span'
+})
+
+const parentFolderLinkIconAttrs = computed(() => {
+  return {
+    'fill-type': 'line' as const,
+    name: 'folder-2',
+    sizeClass: 'size-4' as const,
+    ...parentFolderLinkIconAdditionalAttributes
+  }
+})
+
+const thumbnail = computed(() => resource.thumbnail)
+
+const hasThumbnail = computed(() => isThumbnailDisplayed && !!unref(thumbnail))
+
+const tooltipLabelIcon = computed(() => {
+  if (resource.locked) {
+    return $gettext('This item is locked')
+  }
+  return null
+})
+
+const emitClick = (e: MouseEvent) => {
+  if (!e || typeof e.stopPropagation !== 'function') {
+    return
+  }
+  emit('click', e)
+}
+</script>

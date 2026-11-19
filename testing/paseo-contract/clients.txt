@@ -1,4 +1,5 @@
-# Client builds that may be connected (pigeon spec 18.1, cutover 13.1): DE0CH/claudecodeui commits.
+# Client builds that may be connected (pigeon spec 18.1, cutover 13.1): DE0CH/aviary commits (the app in app/) and,
+# before the monorepo (docs/DEPLOY.md), DE0CH/claudecodeui commits.
 #
 #   <commit> <kinds> <commit time, UTC>
 #
@@ -147,3 +148,7 @@ d4541842c70f1d50b4abd1d800cee49510067264 web        2026-11-18T16:14:30Z
 1a3299ad935215adfd9095820f6b8515086d4710 web        2026-11-19T02:43:39Z
 bd467705fcd6101b2cc9ad1e588a104afca71dfa web        2026-11-19T02:52:15Z
 e16021c49bc8498215319faea50d94ee6e024314 web        2026-11-19T03:19:23Z
+c22c84e9d54b74816b0ad10b8725ba98eb4ae276 web        2026-11-19T03:48:41Z
+305be7e0b052f1dc2693de886c31af6927c01ece web        2026-11-19T04:50:24Z
+0bd896559608b8a2493703b139fb34208029ac62 web        2026-11-19T07:44:00Z
+1cf4c38c3db65a86475892b675ddb8dc193cecbe web        2026-11-19T08:32:18Z

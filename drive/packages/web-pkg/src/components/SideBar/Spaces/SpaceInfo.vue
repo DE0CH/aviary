@@ -1,0 +1,27 @@
+<template>
+  <div v-if="currentSpace" class="flex items-center min-w-0 ml-2">
+    <resource-icon :resource="currentSpace" size-class="size-4" class="mr-2 shrink-0 rounded-xs" />
+    <h2
+      data-testid="space-info-name"
+      class="font-semibold m-0 text-base min-w-0 flex-1 wrap-anywhere"
+      v-text="currentSpace.name"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, inject, unref } from 'vue'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import ResourceIcon from '../../FilesList/ResourceIcon.vue'
+
+const { spaceResource = null } = defineProps<{
+  spaceResource?: SpaceResource | null
+}>()
+
+const resource = inject<SpaceResource | null>('resource', null)
+const space = inject<SpaceResource | null>('space', null)
+
+const currentSpace = computed(() => {
+  return spaceResource || unref(resource) || unref(space)
+})
+</script>

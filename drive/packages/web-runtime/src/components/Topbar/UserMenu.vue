@@ -1,0 +1,256 @@
+<template>
+  <nav :aria-label="$gettext('Account menu')">
+    <oc-button
+      id="_userMenuButton"
+      v-oc-tooltip="$gettext('My Account')"
+      appearance="raw"
+      no-hover
+      :aria-label="$gettext('My Account')"
+    >
+      <user-avatar
+        v-if="user?.onPremisesSamAccountName"
+        class="oc-topbar-avatar oc-topbar-personal-avatar inline-flex justify-center items-center"
+        :user-id="user.id"
+        :user-name="user.displayName"
+        background-color="var(--oc-role-on-chrome)"
+        color="var(--oc-role-chrome)"
+      />
+      <oc-avatar
+        v-else-if="authStore.isGuestContext && authStore.guestEmail"
+        class="oc-topbar-avatar oc-topbar-guest-avatar inline-flex justify-center items-center"
+        :user-name="guestAvatarName"
+        :width="36"
+        background-color="var(--oc-role-on-chrome)"
+        color="var(--oc-role-chrome)"
+      />
+      <oc-avatar-item
+        v-else
+        class="oc-topbar-avatar inline-flex justify-center items-center"
+        :name="$gettext('User Menu login')"
+        :width="32"
+        icon="user"
+        icon-fill-type="line"
+        icon-color="var(--oc-role-on-surface)"
+        background="var(--oc-role-surface)"
+      />
+    </oc-button>
+    <oc-drop
+      :title="$gettext('Account')"
+      drop-id="account-info-container"
+      toggle="#_userMenuButton"
+      mode="click"
+      close-on-click
+      padding-size="small"
+      class="overflow-hidden"
+    >
+      <oc-list class="user-menu-list">
+        <template v-if="!user?.onPremisesSamAccountName">
+          <li
+            v-if="authStore.isGuestContext"
+            id="oc-topbar-account-guest"
+            class="flex items-center pl-2 min-h-10.5 gap-4"
+          >
+            <oc-avatar
+              v-if="authStore.guestEmail"
+              :user-name="guestAvatarName"
+              :width="36"
+              color="var(--oc-role-on-chrome)"
+              background-color="var(--oc-role-chrome)"
+            />
+            <oc-icon v-else name="user" fill-type="line" class="p-1" />
+            <span :class="{ 'py-1': !authStore.guestEmail }">
+              <span class="block" v-text="$gettext('Guest')" />
+              <span
+                v-if="authStore.guestEmail"
+                class="text-sm wrap-anywhere"
+                v-text="authStore.guestEmail"
+              />
+            </span>
+          </li>
+          <li class="flex items-center">
+            <oc-button
+              id="oc-topbar-account-manage"
+              type="router-link"
+              :to="accountPageRoute"
+              justify-content="left"
+              appearance="raw"
+            >
+              <oc-icon name="settings-4" fill-type="line" class="p-1" />
+              <span v-text="$gettext('Preferences')" />
+            </oc-button>
+          </li>
+          <li v-if="authStore.isGuestContext" class="flex items-center">
+            <oc-button
+              id="oc-topbar-account-logout"
+              appearance="raw"
+              justify-content="left"
+              @click="authService.logoutGuest()"
+            >
+              <oc-icon name="logout-box-r" fill-type="line" class="p-1" />
+              <span v-text="$gettext('Log out')" />
+            </oc-button>
+          </li>
+          <li v-else class="flex items-center">
+            <oc-button
+              id="oc-topbar-account-login"
+              appearance="raw"
+              justify-content="left"
+              type="router-link"
+              :to="loginLink"
+            >
+              <oc-icon name="login-box" fill-type="line" class="p-1" />
+              <span v-text="$gettext('Log in')" />
+            </oc-button>
+          </li>
+        </template>
+        <template v-else>
+          <li class="flex items-center pl-2 min-h-10.5 gap-4">
+            <user-avatar
+              :user-id="user.id"
+              :user-name="user.displayName"
+              color="var(--oc-role-on-chrome)"
+              background-color="var(--oc-role-chrome)"
+            />
+            <span :class="{ 'py-1': !user.mail }">
+              <span class="block wrap-anywhere" v-text="user.displayName" />
+              <span v-if="user.mail" class="text-sm wrap-anywhere" v-text="user.mail" />
+              <quota-information v-if="quota" :quota="quota" class="text-sm mt-1" />
+            </span>
+          </li>
+          <li class="flex items-center">
+            <oc-button
+              id="oc-topbar-account-manage"
+              type="router-link"
+              justify-content="left"
+              :to="accountPageRoute"
+              appearance="raw"
+            >
+              <oc-icon name="settings-4" fill-type="line" />
+              <span v-text="$gettext('Preferences')" />
+            </oc-button>
+          </li>
+          <li class="flex items-center">
+            <oc-button
+              id="oc-topbar-account-logout"
+              appearance="raw"
+              justify-content="left"
+              @click="authService.logoutUser()"
+            >
+              <oc-icon name="logout-box-r" fill-type="line" />
+              <span v-text="$gettext('Log out')" />
+            </oc-button>
+          </li>
+        </template>
+      </oc-list>
+      <div v-if="showFooter" class="imprint-footer py-2 mt-4 text-center bg-role-surface-container">
+        <oc-button
+          v-if="imprintUrl"
+          type="a"
+          appearance="raw-inverse"
+          color-role="surface"
+          :href="imprintUrl"
+          target="_blank"
+          no-hover
+        >
+          <span v-text="$gettext('Imprint')" />
+        </oc-button>
+        <template v-if="privacyUrl">
+          <span>·</span>
+          <oc-button
+            type="a"
+            appearance="raw-inverse"
+            color-role="surface"
+            :href="privacyUrl"
+            target="_blank"
+            no-hover
+          >
+            <span v-text="$gettext('Privacy')" />
+          </oc-button>
+        </template>
+        <template v-if="accessibilityUrl">
+          <span>·</span>
+          <oc-button
+            type="a"
+            appearance="raw-inverse"
+            color-role="surface"
+            :href="accessibilityUrl"
+            target="_blank"
+            no-hover
+          >
+            <span v-text="$gettext('Accessibility')" />
+          </oc-button>
+        </template>
+      </div>
+    </oc-drop>
+  </nav>
+</template>
+
+<script setup lang="ts">
+import { storeToRefs } from 'pinia'
+import { computed, unref } from 'vue'
+import { RouteLocationRaw } from 'vue-router'
+import {
+  contextRouteNameKey,
+  contextRouteParamsKey,
+  useAuthService,
+  useAuthStore,
+  UserAvatar,
+  useRoute,
+  useSpacesStore,
+  useThemeStore,
+  useUserStore
+} from '@opencloud-eu/web-pkg'
+import QuotaInformation from '../Account/QuotaInformation.vue'
+
+const route = useRoute()
+const userStore = useUserStore()
+const themeStore = useThemeStore()
+const spacesStore = useSpacesStore()
+const authService = useAuthService()
+const authStore = useAuthStore()
+
+const { user } = storeToRefs(userStore)
+
+const guestAvatarName = computed(() => authStore.guestEmail?.split('@')[0].replace(/[._]/g, ' '))
+
+const accountPageRoute = computed<RouteLocationRaw>(() => {
+  if (authStore.userContextReady) {
+    return { name: 'account-information', query: {} }
+  }
+
+  if (authStore.isGuestContext) {
+    return { name: 'account-preferences', query: { [contextRouteNameKey]: 'files-guest-link' } }
+  }
+
+  if (!authStore.publicLinkContextReady) {
+    return { name: 'account-preferences', query: {} }
+  }
+
+  // the public link token needs to be part of the url, otherwise the context can't be restored on reload
+  const linkPrefix = authStore.publicLinkType === 'ocm' ? 'ocm' : 'public'
+  const contextQuery: Record<string, any> = {
+    [contextRouteNameKey]: 'files-public-link',
+    [contextRouteParamsKey]: { driveAliasAndItem: `${linkPrefix}/${authStore.publicLinkToken}` }
+  }
+  return { name: 'account-preferences', query: contextQuery }
+})
+
+const loginLink = computed(() => {
+  return {
+    name: 'login',
+    query: { redirectUrl: unref(route).fullPath }
+  }
+})
+
+const imprintUrl = computed(() => themeStore.currentTheme.urls.imprint)
+const privacyUrl = computed(() => themeStore.currentTheme.urls.privacy)
+const accessibilityUrl = computed(() => themeStore.currentTheme.urls.accessibility)
+
+const showFooter = computed(() => {
+  return !!(unref(imprintUrl) || unref(privacyUrl) || unref(accessibilityUrl))
+})
+
+const quota = computed(() => {
+  return spacesStore.personalSpace?.spaceQuota
+})
+</script>

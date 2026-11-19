@@ -1,0 +1,665 @@
+<template>
+  <oc-mobile-drop
+    v-if="useBottomDrawer"
+    ref="bottomDrawerRef"
+    :drawer-id="dropId"
+    :toggle="toggle"
+    :close-on-click="closeOnClick"
+    :title="title"
+    :register-click-handler="mode !== 'manual'"
+    @show="onDropShow"
+    @hide="onDropHide"
+  >
+    <slot />
+  </oc-mobile-drop>
+  <template v-else>
+    <Transition name="oc-drop">
+      <Teleport :disabled="!teleport" :to="teleport ? teleport : undefined">
+        <div
+          v-if="isOpen"
+          v-bind="attrs"
+          :id="dropId"
+          ref="drop"
+          class="oc-drop shadow-sm/10 rounded-xl bg-role-surface border border-role-surface-container-highest"
+          data-custom-key-bindings-disabled="true"
+          :class="attrs?.class"
+          :tabindex="-1"
+          @click="onClick"
+        >
+          <oc-card v-if="$slots.default" :body-class="[getTailwindPaddingClass(paddingSize)]">
+            <slot />
+          </oc-card>
+          <slot v-else name="special" />
+        </div>
+      </Teleport>
+    </Transition>
+  </template>
+</template>
+
+<script setup lang="ts">
+import {
+  computePosition,
+  offset as offsetFn,
+  flip,
+  Placement,
+  shift,
+  size,
+  VirtualElement
+} from '@floating-ui/dom'
+import { getTailwindPaddingClass, SizeType, uniqueId } from '../../helpers'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  unref,
+  useAttrs,
+  useTemplateRef,
+  watch
+} from 'vue'
+import { useIsMobile } from '../../composables'
+import OcMobileDrop from './OcMobileDrop.vue'
+import OcCard from '../OcCard/OcCard.vue'
+import { useEventListeners } from './useEventListeners'
+import {
+  hideAncestorDrops,
+  isInDropChain,
+  registerOpenDrop,
+  unregisterOpenDrop
+} from './dropRegistry'
+import { getFocusableItems } from '../../helpers/getFocusableElements'
+
+export interface Props {
+  /**
+   * @docs The title of the drop. This is only being displayed in the bottom drawer in the mobile view.
+   */
+  title?: string
+  /**
+   * @docs Determines if the drop should close when clicked.
+   * @default false
+   */
+  closeOnClick?: boolean
+  /**
+   * @docs The element ID of the drop.
+   */
+  dropId?: string
+  /**
+   * @docs Determines the event that triggers the drop. `manual` can be used to control the drop programmatically via the exposed `show` and `hide` methods.
+   * @default 'click'
+   */
+  mode?: 'click' | 'hover' | 'manual'
+  /**
+   * @docs The vertical offset of the drop.
+   * @default 5
+   */
+  offset?: number
+  /**
+   * @docs The padding size of the drop.
+   * @default 'medium'
+   */
+  paddingSize?: SizeType | 'remove'
+  /**
+   * @docs The maximum width of the drop in pixels. It never grows beyond the available space.
+   * @default 400
+   */
+  maxWidth?: number
+  /**
+   * @docs The position of the drop. Check the floating-ui documentation for more details on the type.
+   * @default 'bottom-start'
+   */
+  position?: Placement
+  /**
+   * @docs CSS selector for the element to be used as toggle. By default, the preceding element is used. Note that a toggle is mandatory for the bottom drawer in mobile view.
+   */
+  toggle?: string
+  /**
+   * @docs Enforce the drop to be displayed even on mobile devices where usually a bottom drawer is used.
+   * @default false
+   */
+  enforceDropOnMobile?: boolean
+  /**
+   * @docs Teleport the drop to a different DOM element. This can be useful to prevent overflow issues.
+   */
+  teleport?: string
+  /**
+   * @docs Enables navigation through the drop with arrow keys. Use this if the drop only contains menu items. Disabling this disables arrow key navigation but enables regular tab navigation.
+   * @default true
+   */
+  isMenu?: boolean
+  /**
+   * @docs The `aria-haspopup` value of the toggle, e.g. `listbox` for the suggestions of a combobox. The bottom drawer always uses `dialog`.
+   * @default 'true'
+   */
+  popupType?: 'true' | 'menu' | 'listbox' | 'tree' | 'grid' | 'dialog'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the drop has been hidden.
+   */
+  (e: 'hideDrop'): void
+
+  /**
+   * @docs Emitted when the drop has been displayed.
+   */
+  (e: 'showDrop'): void
+}
+
+export interface Slots {
+  /**
+   * @docs Content of the drop that is displayed in a card-style.
+   */
+  default?: () => unknown
+  /**
+   * @docs This slot can be used if you don't want the drop to be displayed in a card-style.
+   */
+  special?: () => unknown
+}
+
+const {
+  closeOnClick = false,
+  dropId = uniqueId('oc-drop-'),
+  maxWidth = 400,
+  mode = 'click',
+  offset = 5,
+  paddingSize = 'medium',
+  position = 'bottom-start',
+  toggle = '',
+  title = '',
+  enforceDropOnMobile = false,
+  teleport = '',
+  isMenu = true,
+  popupType = 'true'
+} = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
+
+// Suppress Vue's auto-inheritance — OcDrop's root is a fragment
+// (oc-mobile-drop OR Transition+Teleport). Without this, every parent
+// pass-through (class, role, ...) flushes a console.warn per render.
+// `attrs.class` is forwarded manually to the inner div below.
+defineOptions({ inheritAttrs: false })
+
+const attrs = useAttrs()
+const { registerEventListener, unregisterEventListeners } = useEventListeners()
+const { isMobile } = useIsMobile()
+const isOpen = ref(false)
+
+const useBottomDrawer = computed(() => unref(isMobile) && !enforceDropOnMobile)
+const bottomDrawerRef = useTemplateRef<typeof OcMobileDrop>('bottomDrawerRef')
+const drop = useTemplateRef('drop')
+
+const anchor = computed<HTMLElement | null>(() => {
+  if (!toggle) {
+    return null
+  }
+  return document.querySelector<HTMLButtonElement>(toggle)
+})
+let activeAnchorElement: HTMLElement | VirtualElement | null = null
+
+const getAnchorElement = (): HTMLElement | null => {
+  const anchorEl = activeAnchorElement || unref(anchor)
+  if (anchorEl instanceof HTMLElement) {
+    return anchorEl
+  }
+  return (anchorEl?.contextElement as HTMLElement) || null
+}
+
+const resetDropSize = () => {
+  Object.assign(unref(drop).style, { maxWidth: '', maxHeight: '' })
+}
+
+const show = async ({
+  anchorElement = undefined,
+  noFocus = false
+}: {
+  anchorElement?: HTMLElement | VirtualElement
+  noFocus?: boolean
+} = {}) => {
+  if (unref(useBottomDrawer)) {
+    unref(bottomDrawerRef).show()
+    return
+  }
+  if (unref(isOpen)) {
+    return
+  }
+  showDrop({ anchorElement })
+
+  if (!noFocus) {
+    // usually, opening the drop should also focus it to allow for keyboard navigation within the drop.
+    // however, in certain situations (e.g. when typing opens a drop), this may be unwanted behavior.
+    await nextTick()
+    unref(drop).focus({ preventScroll: true })
+  }
+}
+const hide = ({ includeAncestors = false }: { includeAncestors?: boolean } = {}) => {
+  if (unref(useBottomDrawer)) {
+    unref(bottomDrawerRef).hide({ includeAncestors })
+    return
+  }
+  if (includeAncestors && unref(drop)) {
+    hideAncestorDrops(unref(drop))
+  }
+  hideDrop()
+}
+
+const update = async ({
+  anchorElement = undefined
+}: {
+  anchorElement?: HTMLElement | VirtualElement
+} = {}) => {
+  if (!unref(isOpen) || !unref(drop)) {
+    return
+  }
+  const anchorEl = anchorElement || unref(anchor)
+  if (!anchorEl) {
+    return
+  }
+  activeAnchorElement = anchorEl
+  resetDropSize()
+  const { x, y } = await computePosition(anchorEl, unref(drop), {
+    placement: position,
+    middleware: [
+      offsetFn(offset),
+      flip(),
+      shift({ padding: 5 }),
+      size({
+        apply({ availableWidth, availableHeight, elements }) {
+          Object.assign(elements.floating.style, {
+            maxWidth: `${Math.min(maxWidth, availableWidth - 10)}px`,
+            maxHeight: `${Math.max(0, availableHeight - 10)}px`
+          })
+        }
+      })
+    ]
+  })
+  // the drop might have been hidden while its position was being computed
+  if (!unref(drop)) {
+    return
+  }
+  Object.assign(unref(drop).style, { left: `${x}px`, top: `${y}px` })
+}
+
+defineExpose({ show, hide, update })
+
+const onClick = (event: Event) => {
+  const isNestedDropToggle = (event.target as HTMLElement)
+    .closest('.oc-button')
+    ?.hasAttribute('aria-expanded')
+
+  if (closeOnClick && !isNestedDropToggle) {
+    // a drop that closes itself also closes the drops it was opened from
+    hideAncestorDrops(unref(drop))
+    hideDrop()
+  }
+}
+
+const awaitAnimationFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+
+const showDrop = async ({
+  anchorElement
+}: { anchorElement?: HTMLElement | VirtualElement } = {}) => {
+  if (unref(isOpen)) {
+    hideDrop()
+    return
+  }
+
+  const anchorEl: HTMLElement | VirtualElement | null = anchorElement || unref(anchor)
+  activeAnchorElement = anchorEl
+  isOpen.value = true
+  await nextTick()
+  if (!anchorEl) {
+    console.warn('OcDrop cannot be opened: anchor element not found')
+    return
+  }
+
+  // fixes a timing issue with the rendering of the drop
+  await awaitAnimationFrame()
+
+  if (!unref(drop)) {
+    // closed again, or unmounted, while we were waiting for the render
+    return
+  }
+
+  if (isMenu) {
+    // if drop is a menu, set role="menu" on all ul elements in the drop for better screen reader support
+    const uls = unref(drop)?.getElementsByTagName('ul')
+    Array.from(uls || []).forEach((ul) => ul.setAttribute('role', 'menu'))
+
+    // li elements sit between role="menu" and role="menuitem"; marking them as role="none" removes
+    // them from the accessibility tree so the required parent-child relationship is satisfied
+    const lis = unref(drop)?.querySelectorAll('ul li')
+    Array.from(lis || []).forEach((li) => li.setAttribute('role', 'none'))
+
+    const menuItems = unref(drop)?.querySelectorAll('ul li button, ul li a')
+    Array.from(menuItems || []).forEach((item) => {
+      item.setAttribute('role', 'menuitem') // menu items should have role="menuitem" for better screen reader support
+      item.setAttribute('tabindex', '-1') // menu items should not be focussable via tabs
+    })
+  }
+
+  resetDropSize()
+  const { x, y } = await computePosition(anchorEl, unref(drop), {
+    placement: position,
+    middleware: [
+      offsetFn(offset),
+      flip(),
+      shift({ padding: 5 }),
+      size({
+        apply({ availableWidth, availableHeight, elements }) {
+          Object.assign(elements.floating.style, {
+            maxWidth: `${Math.min(maxWidth, availableWidth - 10)}px`,
+            maxHeight: `${Math.max(0, availableHeight - 10)}px`
+          })
+        }
+      })
+    ]
+  })
+
+  Object.assign(unref(drop).style, { left: `${x}px`, top: `${y}px` })
+  unref(anchor)?.setAttribute('aria-expanded', 'true')
+  emit('showDrop')
+
+  registerOpenDrop(unref(drop), { getAnchor: getAnchorElement, hide: hideDrop })
+
+  registerEventListener(document, 'click', handleDropClickOutside, 'document', {
+    capture: true
+  })
+  registerEventListener(document, 'contextmenu', handleDropClickOutside, 'document', {
+    capture: true
+  })
+  registerEventListener(unref(drop), 'keydown', handleDropKeydown, 'drop')
+
+  if (!isMenu) {
+    // when the drop is not a menu, we need to close it when the user leaves the drop after tabbing through it
+    registerEventListener(unref(drop), 'focusout', handleDropFocusOut, 'drop')
+  }
+
+  if (mode === 'hover') {
+    registerEventListener(unref(drop), 'mouseenter', handleDropMouseEnter, 'drop')
+    registerEventListener(unref(drop), 'mouseleave', handleDropMouseLeave, 'drop')
+  }
+}
+
+const hideDrop = () => {
+  const focusWasInDrop = unref(drop)?.contains(document.activeElement)
+
+  if (unref(drop)) {
+    unregisterOpenDrop(unref(drop))
+  }
+  unregisterEventListeners(['drop', 'document'])
+  activeAnchorElement = null
+  isOpen.value = false
+  unref(anchor)?.setAttribute('aria-expanded', 'false')
+
+  // The drop takes the focused element with it when it goes. Without handing
+  // focus back, it falls to the body - and inside a focus trap that means it
+  // jumps to the first field of the dialog instead of the toggle.
+  if (focusWasInDrop) {
+    unref(anchor)?.focus()
+  }
+
+  emit('hideDrop')
+}
+
+const isFocusEvent = (event: Event): event is FocusEvent => event instanceof FocusEvent
+const isKeyboardEvent = (event: Event): event is KeyboardEvent => event instanceof KeyboardEvent
+
+const handleDropFocusOut = (event: Event) => {
+  if (!isFocusEvent(event)) {
+    return
+  }
+  const focusLeft = event.relatedTarget && !unref(drop)?.contains(event.relatedTarget as Node)
+  if (focusLeft) {
+    hideDrop()
+  }
+}
+
+const handleDropClickOutside = async (event: Event) => {
+  const target = event.target as Node
+  const clickedOutsideDrop = unref(drop) && !isInDropChain(unref(drop), target)
+  if (clickedOutsideDrop) {
+    const clickedOnAnchor = getAnchorElement()?.contains(target)
+    if (!clickedOnAnchor) {
+      await awaitAnimationFrame()
+      hideDrop()
+    }
+  }
+}
+
+const handleDropKeydown = (event: Event) => {
+  if (!isKeyboardEvent(event)) {
+    return
+  }
+
+  if (['ArrowLeft', 'ArrowRight'].includes(event.code)) {
+    // arrow left/right are used to open sub drops
+    if (mode === 'hover') {
+      hideDrop()
+      unref(anchor)?.focus()
+    }
+    return
+  }
+
+  if (event.code === 'Escape') {
+    // close drop on escape
+    event.stopPropagation()
+    hideDrop()
+    unref(anchor)?.focus()
+    return
+  }
+
+  if (event.code === 'Space' && event.target instanceof HTMLAnchorElement) {
+    // make space click work for anchor elements inside a drop
+    event.target.click()
+    return
+  }
+
+  if (!isMenu) {
+    // everything below goes for arrow navigation only, hence early return if this is disabled
+    return
+  }
+
+  event.stopPropagation()
+
+  if (event.code === 'Tab') {
+    // hide drop on tab because the focus now went from the anchor to the next element
+    hideDrop()
+    return
+  }
+
+  if (['ArrowDown', 'ArrowUp'].includes(event.code)) {
+    // navigate through focusable items in the drop with arrow up/down
+    event.preventDefault()
+    const items = getFocusableItems(unref(drop))
+    if (!items.length) {
+      return
+    }
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement)
+    if (event.code === 'ArrowDown') {
+      const next = currentIndex === -1 || currentIndex === items.length - 1 ? 0 : currentIndex + 1
+      items[next].focus()
+    } else if (event.code === 'ArrowUp') {
+      const prev = currentIndex <= 0 ? items.length - 1 : currentIndex - 1
+      items[prev].focus()
+    }
+  }
+}
+
+const handleAnchorKeydown = async (event: Event) => {
+  if (!isKeyboardEvent(event)) {
+    return
+  }
+
+  const openDropAndFocusFirstEl = async () => {
+    showDrop()
+    await nextTick()
+    const focusTarget = getFocusableItems(unref(drop))[0] || unref(drop)
+    focusTarget.focus()
+  }
+
+  if (event.code === 'Enter') {
+    // enter should open a drop
+    event.preventDefault()
+    await openDropAndFocusFirstEl()
+    return
+  }
+
+  if (mode === 'hover') {
+    if (['ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+      // sub drops that open on hover can be opened via arrow left/right or space
+      event.preventDefault()
+      await openDropAndFocusFirstEl()
+    }
+  }
+}
+
+let hoverCloseTimeout: ReturnType<typeof setTimeout> | null = null
+
+const clearHoverTimeout = () => {
+  if (hoverCloseTimeout !== null) {
+    clearTimeout(hoverCloseTimeout)
+    hoverCloseTimeout = null
+  }
+}
+
+const handleDropMouseEnter = () => {
+  clearHoverTimeout()
+}
+
+const handleDropMouseLeave = () => {
+  hoverCloseTimeout = setTimeout(hideDrop, 100)
+}
+
+const handleAnchorClick = async () => {
+  showDrop({})
+  if (unref(isOpen)) {
+    await nextTick()
+    unref(drop).focus({ preventScroll: true })
+  }
+}
+
+const handleAnchorMouseEnter = () => {
+  clearHoverTimeout()
+  if (!unref(isOpen)) {
+    showDrop({})
+  }
+}
+
+const handleAnchorMouseLeave = () => {
+  hoverCloseTimeout = setTimeout(hideDrop, 100)
+}
+
+const setupAriaAttributes = () => {
+  unref(anchor)?.setAttribute('aria-haspopup', unref(useBottomDrawer) ? 'dialog' : popupType)
+  unref(anchor)?.setAttribute('aria-expanded', 'false')
+}
+
+const onDropShow = () => {
+  unref(anchor)?.setAttribute('aria-expanded', 'true')
+  emit('showDrop')
+}
+
+const onDropHide = () => {
+  unref(anchor)?.setAttribute('aria-expanded', 'false')
+  emit('hideDrop')
+}
+
+const setupAnchorEvents = () => {
+  const anchorEl = unref(anchor)
+  if (!anchorEl || unref(useBottomDrawer)) {
+    return
+  }
+
+  switch (mode) {
+    case 'click':
+      registerEventListener(anchorEl, 'click', handleAnchorClick, 'anchor')
+      registerEventListener(anchorEl, 'keydown', handleAnchorKeydown, 'anchor')
+      break
+    case 'hover':
+      registerEventListener(anchorEl, 'keydown', handleAnchorKeydown, 'anchor')
+      registerEventListener(anchorEl, 'mouseenter', handleAnchorMouseEnter, 'anchor')
+      registerEventListener(anchorEl, 'mouseleave', handleAnchorMouseLeave, 'anchor')
+      break
+    case 'manual':
+      break
+  }
+}
+
+watch(useBottomDrawer, () => {
+  setupAriaAttributes()
+  if (unref(useBottomDrawer)) {
+    unregisterEventListeners()
+  } else {
+    setupAnchorEvents()
+  }
+})
+
+onMounted(() => {
+  setupAnchorEvents()
+  setupAriaAttributes()
+})
+
+onBeforeUnmount(() => {
+  clearHoverTimeout()
+  if (unref(drop)) {
+    unregisterOpenDrop(unref(drop))
+  }
+  unregisterEventListeners()
+  activeAnchorElement = null
+
+  unref(anchor)?.removeAttribute('aria-expanded')
+  unref(anchor)?.removeAttribute('aria-haspopup')
+})
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .oc-drop {
+    @apply w-xs absolute top-[-9999px] left-[-9999px] overflow-y-auto;
+    /* Drops teleport to the body, so they have to outrank the modal layer to
+       stay visible when they are opened from within a modal. */
+    z-index: calc(var(--z-index-modal) + 1);
+  }
+
+  .oc-drop-enter-active {
+    transition: opacity 250ms ease;
+  }
+
+  .oc-drop-enter-from,
+  .oc-drop-leave-to {
+    opacity: 0;
+  }
+
+  .oc-mobile-drop li a,
+  .oc-mobile-drop li button,
+  .oc-mobile-drop li .oc-button,
+  .oc-drop li a,
+  .oc-drop li button,
+  .oc-drop li .oc-button {
+    @apply p-1.5 w-full;
+  }
+
+  .oc-mobile-drop li,
+  .oc-drop li {
+    @apply mb-1;
+  }
+
+  .oc-mobile-drop li:first-child,
+  .oc-drop li:first-child {
+    @apply mt-0;
+  }
+
+  .oc-mobile-drop li:last-child,
+  .oc-drop li:last-child {
+    @apply mb-0;
+  }
+}
+
+.oc-drop:focus-visible {
+  @apply shadow-md/20 outline-0;
+}
+</style>

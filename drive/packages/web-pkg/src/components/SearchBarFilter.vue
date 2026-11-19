@@ -1,0 +1,156 @@
+<template>
+  <div
+    class="z-[var(--z-index-modal)] absolute top-[50%] transform-[translateY(-50%)] right-0 ml-4 mb-4 mt-0 mr-[38px] float-right"
+    data-testid="search-bar-filter"
+    @click.stop
+  >
+    <div v-if="currentSelection">
+      <oc-filter-chip
+        :is-toggle="false"
+        :is-toggle-active="false"
+        :filter-label="$gettext('Location filter')"
+        :selected-item-names="[currentSelectionTitle]"
+        class="oc-search-bar-filter [&_button]:items-center [&_.oc-drop]:w-45"
+        size="small"
+        :has-active-state="false"
+        raw
+        close-on-click
+      >
+        <template #default>
+          <oc-list>
+            <li v-for="(option, index) in locationOptions" :key="index">
+              <oc-button
+                :appearance="option.id === currentSelection.id ? 'filled' : 'raw-inverse'"
+                :color-role="option.id === currentSelection.id ? 'secondaryContainer' : 'surface'"
+                :no-hover="option.id === currentSelection.id"
+                size="medium"
+                class="flex items-center w-full py-1 px-2"
+                justify-content="space-between"
+                :disabled="!option.enabled"
+                :data-test-id="option.id"
+                @click="onOptionSelected(option)"
+              >
+                <span>{{ option.title }}</span>
+                <div v-if="option.id === currentSelection.id" class="flex">
+                  <oc-icon name="check" />
+                </div>
+              </oc-button>
+            </li>
+          </oc-list>
+        </template>
+      </oc-filter-chip>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, Ref, unref, watch } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { SearchLocationFilterConstants, useRouteQuery } from '../composables'
+
+type LocationOption = {
+  id: string
+  title: string
+  enabled: Ref<boolean> | boolean
+}
+
+const { currentFolderAvailable = false, currentFolderIsInVault = false } = defineProps<{
+  currentFolderAvailable?: boolean
+  /**
+   * Search inside a vault is currently not supported on the server side,
+   * (it'd search ciphertext blobs), so the "Current folder" option makes
+   * no sense when the user is sitting inside a vault - force-route to
+   * "All files" and disable the toggle.
+   */
+  currentFolderIsInVault?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', payload: { value: LocationOption }): void
+  (e: 'select', payload: { value: LocationOption }): void
+}>()
+
+const { $gettext } = useGettext()
+const useScopeQueryValue = useRouteQuery('useScope')
+
+const currentFolderUsable = computed(() => currentFolderAvailable && !currentFolderIsInVault)
+
+const currentSelection = ref<LocationOption>()
+const userSelection = ref<LocationOption>()
+const locationOptions = computed<LocationOption[]>(() => [
+  {
+    id: SearchLocationFilterConstants.currentFolder,
+    title: $gettext('Current folder'),
+    enabled: unref(currentFolderUsable)
+  },
+  {
+    id: SearchLocationFilterConstants.allFiles,
+    title: $gettext('All files'),
+    enabled: true
+  }
+])
+
+const currentSelectionTitle = computed(
+  () => unref(locationOptions).find(({ id }) => id === unref(currentSelection)?.id)?.title
+)
+
+watch(
+  currentSelection,
+  (selection) => {
+    if (!selection) {
+      return
+    }
+    emit('update:modelValue', { value: selection })
+  },
+  // Synchronize the search scope before handling an explicit selection.
+  { flush: 'sync' }
+)
+
+watch(
+  [() => currentFolderAvailable, () => currentFolderIsInVault, useScopeQueryValue],
+  () => {
+    if (unref(useScopeQueryValue)) {
+      const useScope = unref(useScopeQueryValue).toString() === 'true'
+      // The scope query may force "Current folder" via deeplink even
+      // when `currentFolderAvailable` is false (existing behavior).
+      // The only override is being inside a vault - searching ciphertext
+      // makes no sense.
+      if (useScope && !currentFolderIsInVault) {
+        currentSelection.value = unref(locationOptions).find(
+          ({ id }) => id === SearchLocationFilterConstants.currentFolder
+        )
+        return
+      }
+      currentSelection.value = unref(locationOptions).find(
+        ({ id }) => id === SearchLocationFilterConstants.allFiles
+      )
+      return
+    }
+
+    if (!unref(currentFolderUsable)) {
+      currentSelection.value = unref(locationOptions).find(
+        ({ id }) => id === SearchLocationFilterConstants.allFiles
+      )
+      return
+    }
+
+    if (unref(userSelection)) {
+      currentSelection.value = unref(locationOptions).find(
+        ({ id }) => id === unref(userSelection).id
+      )
+      return
+    }
+
+    currentSelection.value = unref(locationOptions).find(
+      ({ id }) => id === SearchLocationFilterConstants.allFiles
+    )
+  },
+  { immediate: true }
+)
+
+function onOptionSelected(option: LocationOption) {
+  userSelection.value = option
+  currentSelection.value = option
+  emit('select', { value: option })
+}
+</script>

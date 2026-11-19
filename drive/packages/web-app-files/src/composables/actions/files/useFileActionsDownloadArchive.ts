@@ -1,0 +1,133 @@
+import {
+  isProjectSpaceResource,
+  isPublicSpaceResource,
+  isTrashResource,
+  Resource
+} from '@opencloud-eu/web-client'
+import { computed, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import {
+  FileAction,
+  FileActionOptions,
+  formatFileSize,
+  getVaultClaim,
+  useArchiverService,
+  useAuthStore,
+  useExtensionRegistry,
+  useMessages
+} from '@opencloud-eu/web-pkg'
+
+export const useFileActionsDownloadArchive = () => {
+  const { showErrorMessage } = useMessages()
+  const archiverService = useArchiverService()
+  const { $ngettext, $gettext, current } = useGettext()
+  const authStore = useAuthStore()
+  const extensionRegistry = useExtensionRegistry()
+
+  const handler = ({ space, resources }: FileActionOptions) => {
+    if (resources.length > 1) {
+      // the handler can be triggered successfully if project spaces are selected along with other files.
+      // but we must filter out the project spaces in such a case (only the other selected files are allowed for download).
+      resources = resources.filter((r) => r.canDownload() && !isProjectSpaceResource(r))
+    }
+
+    return archiverService
+      .triggerDownload({
+        fileIds: resources.map((resource) => resource.fileId),
+        ...(space &&
+          isPublicSpaceResource(space) && {
+            publicToken: space.id,
+            publicLinkPassword: authStore.publicLinkPassword
+          })
+      })
+      .catch((e) => {
+        console.error(e)
+        showErrorMessage({
+          title: $ngettext(
+            'Failed to download the selected folder.', // on single selection only available for folders
+            'Failed to download the selected files.', // on multi selection available for files+folders
+            resources.length
+          ),
+          errors: [e]
+        })
+      })
+  }
+
+  const areArchiverLimitsExceeded = (resources: Resource[]) => {
+    const archiverCapabilities = unref(archiverService.capability)
+    if (!archiverCapabilities) {
+      return
+    }
+
+    const selectedFilesSize = resources.reduce(
+      (accumulator, currentValue) => accumulator + parseInt(`${currentValue.size}`),
+      0
+    )
+
+    return selectedFilesSize > parseInt(archiverCapabilities.max_size)
+  }
+
+  const actions = computed((): FileAction[] => {
+    return [
+      {
+        name: 'download-archive',
+        icon: 'inbox-archive',
+        handler: (args) => {
+          handler(args)
+        },
+        label: () => $gettext('Download'),
+        disabledTooltip: ({ resources }) => {
+          return areArchiverLimitsExceeded(resources)
+            ? $gettext('The selection exceeds the allowed archive size (max. %{maxSize})', {
+                maxSize: formatFileSize(unref(archiverService.capability).max_size, current)
+              })
+            : ''
+        },
+        isDisabled: ({ resources }) => areArchiverLimitsExceeded(resources),
+        isVisible: ({ space, resources }) => {
+          if (!unref(archiverService.available)) {
+            return false
+          }
+
+          if (resources.length === 0) {
+            return false
+          }
+          if (resources.some(isTrashResource)) {
+            return false
+          }
+          // The archive is zipped server-side from the raw (ciphertext) blobs
+          // under their encrypted names - we can't decrypt that client-side,
+          // so hide archive download whenever a vault resource is involved.
+          // A vault root however can be downloaded (with encrypted contents).
+          if (
+            resources.some((r) => {
+              const claim = getVaultClaim(extensionRegistry, space, r.path)
+              return r.isInVault && claim?.vaultRoot !== r.path
+            })
+          ) {
+            return false
+          }
+          if (resources.length === 1 && !resources[0].isFolder) {
+            return false
+          }
+          if (resources.length > 1 && resources.every((r) => isProjectSpaceResource(r))) {
+            return false
+          }
+          if (isProjectSpaceResource(resources[0]) && resources[0].disabled) {
+            return false
+          }
+
+          const downloadDisabled = resources.some((resource) => {
+            return !resource.canDownload()
+          })
+          return !downloadDisabled
+        },
+        class: 'oc-files-actions-download-archive-trigger'
+      }
+    ]
+  })
+
+  return {
+    actions
+  }
+}

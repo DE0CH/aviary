@@ -1,0 +1,240 @@
+name: egress
+# egress (YYC AI's sandbox gateway: the model and web route) and tools (REST), one image (egress/, egress/CHAT.md):
+# typecheck and tests against a real Postgres; egress, the image under test, against aviary's gateway and model
+# conformance suites built from this commit (aviary platform spec 17.3); then ghcr.io/de0ch/egress (linux/amd64 and
+# linux/arm64), smoke-tested, pushed (any branch) as :<sha12> (the last commit that changed egress/, docs/DEPLOY.md) when
+# the tests and both suites pass and the tag is not there yet. The image is built once (job image-amd64) and that same
+# image, passed on as an artifact, is what conformance checks and push smoke-tests and pushes (the pushed image id is
+# checked against the built one).
+on:
+  push:
+    branches: ['**']  # every branch: the gate waits for it
+    paths: ["egress/**", "crates/hermit/fixtures/catalogue-cases.json", "testing/conformance/**", "testing/mock-model/**",
+            "deploy/images.json", ".github/workflows/egress.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: egress-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE: ghcr.io/de0ch/egress
+
+permissions:
+  contents: read
+
+jobs:
+  part:
+    # the image's tag: the last commit that changed egress/ (deploy/images.json "egress"), and whether it exists
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      have: ${{ steps.p.outputs.have }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+      - id: p
+        run: |
+          # shellcheck disable=SC2046 # a list of paths
+          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '.egress.paths | join(" ")' deploy/images.json))
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/egress:pull" | jq -r .token)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/de0ch/egress/manifests/${sha::12}")
+          echo "egress:${sha::12}: HTTP $code"
+          if [ "$code" = 200 ]; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_USER: claude
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U claude" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://claude:dev@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: egress/package-lock.json
+      - name: the catalogue cases are hermit's
+        # tools validates the staff catalogue by hermit's rules (src/tools/catalogue.ts); the shared cases are a
+        # byte-for-byte copy of hermit's, so a change to hermit's rules turns this red until tools follows
+        run: cmp crates/hermit/fixtures/catalogue-cases.json egress/test/fixtures/catalogue-cases.json
+      - name: typecheck and tests
+        working-directory: egress
+        # egress's mirror test runs the real pip and npm (python3 -m pip is on the runner image)
+        run: |
+          python3 -m pip --version
+          npm ci
+          npm test
+
+  image-amd64:
+    # the image, built once: conformance checks it and push pushes it, so what ships is what was tested
+    needs: part
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      id: ${{ steps.load.outputs.id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build time
+        id: built
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: build the image
+        run: |
+          docker buildx build egress --tag egress:test \
+            --output "type=docker,dest=$RUNNER_TEMP/egress-image.tar" \
+            --build-arg CHAT_COMMIT=${{ needs.part.outputs.sha }} --build-arg CHAT_BUILT_AT=${{ steps.built.outputs.at }} \
+            --cache-from type=gha,scope=egress-image --cache-to type=gha,mode=max,scope=egress-image
+      - name: image id
+        id: load
+        run: |
+          set -euo pipefail
+          docker load -q -i "$RUNNER_TEMP/egress-image.tar"
+          id=$(docker image inspect egress:test --format '{{.Id}}')
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "egress image $id (built ${{ steps.built.outputs.at }})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: egress-image
+          path: ${{ runner.temp }}/egress-image.tar
+          retention-days: 1
+          compression-level: 1
+
+  conformance:
+    # egress as a sandbox gateway, checked from outside (aviary platform spec 8.2, 8.3, 17.3): the image built once
+    # with test configs (egress/test/conformance/), the suites' fakes at the fixed names, the drain last. The suites
+    # (aviary-conformance, mock-model) are built from this very commit, so egress and the contract it serves are
+    # checked together
+    runs-on: ubuntu-24.04
+    needs: [image-amd64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {shared-key: egress-conformance}
+      - name: aviary-conformance and mock-model of this commit
+        run: |
+          cargo build --locked --release -p aviary-conformance -p mock-model
+          mkdir -p conformance-bin
+          cp target/release/aviary-conformance target/release/mock-model conformance-bin/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: egress-image
+          path: ${{ runner.temp }}
+      - name: load the image under test
+        run: |
+          set -euo pipefail
+          docker load -q -i "$RUNNER_TEMP/egress-image.tar"
+          test "$(docker image inspect egress:test --format '{{.Id}}')" = "${{ needs.image-amd64.outputs.id }}"
+      - name: aviary-conformance gateway and model
+        run: egress/test/conformance/run.sh egress:test conformance-bin "$RUNNER_TEMP/conformance"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: conformance
+          path: ${{ runner.temp }}/conformance
+
+  image-arm64:
+    # the image for linux/arm64 (YYC's cluster's workers are ARM), built natively on an ARM runner from the same commit
+    # and smoke-tested there; push puts it beside the amd64 image under one multi-platform tag. The code is plain
+    # JavaScript (no native modules), so conformance on amd64 covers it
+    needs: part
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: build the arm64 image
+        run: |
+          docker buildx build egress --platform linux/arm64 --tag egress:test-arm64 \
+            --output "type=docker,dest=$RUNNER_TEMP/egress-image-arm64.tar" \
+            --build-arg CHAT_COMMIT=${{ needs.part.outputs.sha }} \
+            --cache-from type=gha,scope=egress-image-arm64 --cache-to type=gha,mode=max,scope=egress-image-arm64
+      - name: smoke test
+        run: |
+          set -euo pipefail
+          docker load -q -i "$RUNNER_TEMP/egress-image-arm64.tar"
+          test "$(docker image inspect egress:test-arm64 --format '{{.Architecture}}')" = arm64
+          docker run --rm --entrypoint sh egress:test-arm64 -c 'test "$(id -u)" = 1000 && test -s egress-allowlist/allow.txt && node -e "require(\"pg\")"'
+          if docker run --rm egress:test-arm64 nope; then exit 1; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: egress-image-arm64
+          path: ${{ runner.temp }}/egress-image-arm64.tar
+          retention-days: 1
+          compression-level: 1
+
+  push:
+    # once per tag, on any branch (as ci's images: the yyc check and the deploy find it by its tag): the tested image
+    # retagged (no rebuild)
+    if: needs.part.outputs.have == 'false'
+    runs-on: ubuntu-24.04
+    needs: [part, test, image-amd64, image-arm64, conformance]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: egress-image
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: egress-image-arm64
+          path: ${{ runner.temp }}/arm64
+      - name: load the image conformance checked
+        run: |
+          set -euo pipefail
+          docker load -q -i "$RUNNER_TEMP/egress-image.tar"
+          test "$(docker image inspect egress:test --format '{{.Id}}')" = "${{ needs.image-amd64.outputs.id }}"
+      - name: smoke test
+        run: |
+          set -euo pipefail
+          docker image inspect egress:test --format '{{.Size}}' | awk '{printf "egress:test unpacked: %.0f MB\n", $1/1e6}' | tee -a "$GITHUB_STEP_SUMMARY"
+          docker run --rm --entrypoint sh egress:test -c 'test "$(id -u)" = 1000 && test -s egress-allowlist/allow.txt'
+          # an unknown role refuses to start (the role is the first argument)
+          if docker run --rm egress:test nope; then exit 1; fi
+      - name: log in to GHCR
+        env:
+          TOKEN: ${{ github.token }}
+        run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+      - name: push the image
+        env:
+          TAG: ${{ env.IMAGE }}:${{ needs.part.outputs.sha }}
+        run: |
+          set -euo pipefail
+          t=${TAG::${#IMAGE}+13}  # ghcr.io/de0ch/egress:<sha12>
+          docker load -q -i "$RUNNER_TEMP/arm64/egress-image-arm64.tar"
+          docker tag egress:test "$t-amd64"
+          docker push -q "$t-amd64"
+          docker tag egress:test-arm64 "$t-arm64"
+          docker push -q "$t-arm64"
+          docker buildx imagetools create -t "$t" "$t-amd64" "$t-arm64"
+          test "$(docker image inspect "$t-amd64" --format '{{.Id}}')" = "${{ needs.image-amd64.outputs.id }}"
+          amd64=$(docker image inspect "$t-amd64" --format '{{index .RepoDigests 0}}')
+          # the index's amd64 entry is the pushed tested image
+          docker buildx imagetools inspect "$t" --raw \
+            | jq -e --arg d "${amd64#*@}" 'any(.manifests[]; .platform.architecture == "amd64" and .digest == $d)' >/dev/null
+          echo "egress image ${{ needs.image-amd64.outputs.id }} = $amd64 (amd64), index $t" | tee -a "$GITHUB_STEP_SUMMARY"

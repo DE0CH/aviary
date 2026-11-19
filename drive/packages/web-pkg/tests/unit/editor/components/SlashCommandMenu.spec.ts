@@ -1,0 +1,178 @@
+import { mount } from '@vue/test-utils'
+import { createGettext } from 'vue3-gettext'
+import { exitSuggestion } from '@tiptap/suggestion'
+import { OcDrop } from '@opencloud-eu/design-system/components'
+import SlashCommandMenu from '../../../../src/editor/components/SlashCommandMenu.vue'
+import type { FlatSlashCommandItem } from '../../../../src/editor/extensions'
+
+vi.mock('@tiptap/suggestion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tiptap/suggestion')>()),
+  exitSuggestion: vi.fn()
+}))
+
+function makeItem(
+  id: string,
+  groupId: string,
+  groupTitle: string,
+  extras: Partial<FlatSlashCommandItem> = {}
+): FlatSlashCommandItem {
+  return {
+    id,
+    title: `Item ${id}`,
+    icon: 'test-icon',
+    groupId,
+    groupTitle,
+    ...extras
+  }
+}
+
+const defaultClientRect = () =>
+  ({
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    toJSON: () => ({})
+  }) as DOMRect
+
+function mountMenu(items: FlatSlashCommandItem[], command = vi.fn(), editor = {} as any) {
+  return mount(SlashCommandMenu, {
+    props: {
+      items,
+      command,
+      editor,
+      range: { from: 0, to: 0 },
+      query: '',
+      text: '/',
+      decorationNode: null,
+      clientRect: defaultClientRect,
+      placement: 'bottom-start',
+      offset: { mainAxis: 4, crossAxis: 0 },
+      flip: true,
+      floatingUi: {} as any,
+      mount: () => () => undefined,
+      loading: false
+    },
+    global: {
+      plugins: [createGettext({ translations: {}, silent: true })],
+      renderStubDefaultSlot: true,
+      stubs: {
+        OcDrop: true,
+        'oc-button': { template: '<button v-bind="$attrs"><slot /></button>' },
+        'oc-icon': true
+      }
+    }
+  })
+}
+
+function keyEvent(key: string): KeyboardEvent {
+  return { key, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as KeyboardEvent
+}
+
+describe('SlashCommandMenu', () => {
+  it('renders grouped items', () => {
+    const items = [
+      makeItem('a', 'basic', 'Basic'),
+      makeItem('b', 'basic', 'Basic'),
+      makeItem('c', 'lists', 'Lists')
+    ]
+    const wrapper = mountMenu(items)
+    const groupTitles = wrapper
+      .findAll('.text-editor-slash-menu__group-title')
+      .map((el) => el.text())
+    expect(groupTitles).toEqual(['Basic', 'Lists'])
+    const itemTitles = wrapper.findAll('.text-editor-slash-menu__item-title').map((el) => el.text())
+    expect(itemTitles).toEqual(['Item a', 'Item b', 'Item c'])
+  })
+
+  it('renders the empty state when there are no items', () => {
+    const wrapper = mountMenu([])
+    expect(wrapper.find('.text-editor-slash-menu__empty').exists()).toBe(true)
+  })
+
+  it('executes command when an item is clicked', async () => {
+    const command = vi.fn()
+    const items = [makeItem('a', 'g', 'G')]
+    const wrapper = mountMenu(items, command)
+    await wrapper.find('.text-editor-slash-menu__item').trigger('click')
+    expect(command).toHaveBeenCalledWith(items[0])
+  })
+
+  it('exits the suggestion when the drop closes', () => {
+    const editor = { isDestroyed: false, view: {} } as any
+    const wrapper = mountMenu([makeItem('a', 'g', 'G')], vi.fn(), editor)
+
+    wrapper.findComponent<typeof OcDrop>('oc-drop-stub').vm.$emit('hideDrop')
+
+    expect(exitSuggestion).toHaveBeenCalledWith(editor.view)
+  })
+
+  it('does not exit the suggestion after the editor has been destroyed', () => {
+    const editor = { isDestroyed: true, view: {} } as any
+    const wrapper = mountMenu([makeItem('a', 'g', 'G')], vi.fn(), editor)
+
+    wrapper.findComponent<typeof OcDrop>('oc-drop-stub').vm.$emit('hideDrop')
+
+    expect(exitSuggestion).not.toHaveBeenCalled()
+  })
+
+  it('ArrowDown moves selection forward with wrap-around', async () => {
+    const items = [makeItem('a', 'g', 'G'), makeItem('b', 'g', 'G')]
+    const wrapper = mountMenu(items)
+
+    expect(wrapper.vm.onKeyDown(keyEvent('ArrowDown'))).toBe(true)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.text-editor-slash-menu__item')[1].classes()).toContain(
+      'text-editor-slash-menu__item--selected'
+    )
+
+    wrapper.vm.onKeyDown(keyEvent('ArrowDown'))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.text-editor-slash-menu__item')[0].classes()).toContain(
+      'text-editor-slash-menu__item--selected'
+    )
+  })
+
+  it('ArrowUp moves selection backward with wrap-around', async () => {
+    const items = [makeItem('a', 'g', 'G'), makeItem('b', 'g', 'G')]
+    const wrapper = mountMenu(items)
+
+    wrapper.vm.onKeyDown(keyEvent('ArrowUp'))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.text-editor-slash-menu__item')[1].classes()).toContain(
+      'text-editor-slash-menu__item--selected'
+    )
+  })
+
+  it('Enter executes the selected item and returns true', () => {
+    const command = vi.fn()
+    const items = [makeItem('a', 'g', 'G'), makeItem('b', 'g', 'G')]
+    const wrapper = mountMenu(items, command)
+
+    wrapper.vm.onKeyDown(keyEvent('ArrowDown'))
+    const handled = wrapper.vm.onKeyDown(keyEvent('Enter'))
+    expect(handled).toBe(true)
+    expect(command).toHaveBeenCalledWith(items[1])
+  })
+
+  it('stops Escape from propagating while leaving it to the suggestion plugin', () => {
+    const items = [makeItem('a', 'g', 'G')]
+    const wrapper = mountMenu(items)
+    const event = keyEvent('Escape')
+    const handled = wrapper.vm.onKeyDown(event)
+    expect(handled).toBe(false)
+    expect(event.stopPropagation).toHaveBeenCalled()
+  })
+
+  it('Enter on an empty list returns false and does not call command', () => {
+    const command = vi.fn()
+    const wrapper = mountMenu([], command)
+    const handled = wrapper.vm.onKeyDown(keyEvent('Enter'))
+    expect(handled).toBe(false)
+    expect(command).not.toHaveBeenCalled()
+  })
+})

@@ -95,6 +95,9 @@ pub struct Conversation {
     /// conversation list shows as needing the person (Deyao, 2026-11-18).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub waiting_on_person: bool,
+    /// When the person pinned the conversation to the top of their list (M5 `pinned`); absent while not pinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<Timestamp>,
 }
 
 /// A message sent while a turn ran, still waiting.
@@ -373,8 +376,8 @@ pub struct CreateResponse {
     pub turn: Option<TurnStarted>,
 }
 
-/// M5 `PATCH /v1/conversations/{id}`: a rename, a model pick, a thinking level pick, or several (400 `bad_request`
-/// with none).
+/// M5 `PATCH /v1/conversations/{id}`: a rename, a model pick, a thinking level pick, a pin, or several (400
+/// `bad_request` with none).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameRequest {
@@ -392,6 +395,9 @@ pub struct RenameRequest {
     /// With `model`: that model's harness (the caller reads it from the models route); absent: Claude Code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<Harness>,
+    /// Pinned to the top of the person's list (`pinnedAt`: now, or kept when it already was) or unpinned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 impl RenameRequest {
@@ -409,6 +415,15 @@ impl RenameRequest {
     pub fn model(model: impl Into<String>) -> Self {
         Self {
             model: Some(model.into()),
+            ..Self::default()
+        }
+    }
+
+    /// A pin (`true`) or an unpin.
+    #[must_use]
+    pub fn pinned(pinned: bool) -> Self {
+        Self {
+            pinned: Some(pinned),
             ..Self::default()
         }
     }

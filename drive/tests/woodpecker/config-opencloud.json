@@ -1,0 +1,15 @@
+{
+  "server": "https://opencloud:9200",
+  "theme": "https://opencloud:9200/themes/opencloud/theme.json",
+  "apps": [
+    "files",
+    "text-editor",
+    "preview",
+    "pdf-viewer",
+    "search",
+    "admin-settings",
+    "ocm",
+    "app-store",
+    "rclone-crypt"
+  ]
+}

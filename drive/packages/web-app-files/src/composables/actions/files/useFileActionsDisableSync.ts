@@ -1,0 +1,110 @@
+import {
+  createLocationShares,
+  FileAction,
+  FileActionOptions,
+  isLocationSpacesActive,
+  useAuthStore,
+  useClientService,
+  useConfigStore,
+  useLoadingService,
+  useMessages,
+  useResourcesStore,
+  useRouter
+} from '@opencloud-eu/web-pkg'
+import PQueue from 'p-queue'
+import { IncomingShareResource, isIncomingShareResource } from '@opencloud-eu/web-client'
+import { computed } from 'vue'
+import { useGettext } from 'vue3-gettext'
+
+export const useFileActionsDisableSync = () => {
+  const { showMessage, showErrorMessage } = useMessages()
+  const router = useRouter()
+  const { $gettext, $ngettext } = useGettext()
+
+  const clientService = useClientService()
+  const loadingService = useLoadingService()
+  const configStore = useConfigStore()
+  const authStore = useAuthStore()
+  const resourcesStore = useResourcesStore()
+  const { updateResourceField } = resourcesStore
+
+  const handler = async ({ resources }: FileActionOptions<IncomingShareResource>) => {
+    const errors: Error[] = []
+    const triggerPromises: Promise<void>[] = []
+    const triggerQueue = new PQueue({
+      concurrency: configStore.options.concurrentRequests.resourceBatchActions
+    })
+    const resourcesToUnsync = resources.filter((resource) => resource.syncEnabled)
+    resourcesToUnsync.forEach((resource) => {
+      triggerPromises.push(
+        triggerQueue.add(async () => {
+          try {
+            const { graphAuthenticated } = clientService
+            await graphAuthenticated.driveItems.deleteDriveItem(resource.driveId, resource.id)
+
+            updateResourceField<IncomingShareResource>({
+              id: resource.id,
+              field: 'syncEnabled',
+              value: false
+            })
+          } catch (error) {
+            console.error(error)
+            errors.push(error)
+          }
+        })
+      )
+    })
+    await Promise.all(triggerPromises)
+
+    if (errors.length === 0) {
+      resourcesStore.resetSelection()
+
+      if (isLocationSpacesActive(router, 'files-spaces-generic')) {
+        showMessage({
+          title: $ngettext(
+            'Sync for the selected share was disabled successfully',
+            'Sync for the selected shares was disabled successfully',
+            resourcesToUnsync.length
+          )
+        })
+        router.push(createLocationShares('files-shares-with-me'))
+      }
+
+      return
+    }
+
+    showErrorMessage({
+      title: $ngettext(
+        'Failed to disable sync for the the selected share',
+        'Failed to disable sync for the selected shares',
+        resourcesToUnsync.length
+      ),
+      errors
+    })
+  }
+
+  const actions = computed((): FileAction<IncomingShareResource>[] => [
+    {
+      name: 'disable-sync',
+      icon: 'spam-3',
+      handler: (args) => loadingService.addTask(() => handler(args)),
+      label: () => $gettext('Disable sync'),
+      isVisible: ({ resources }) => {
+        if (resources.length === 0 || authStore.isGuestContext) {
+          return false
+        }
+
+        if (resources.some((r) => !isIncomingShareResource(r))) {
+          return false
+        }
+
+        return resources.some((resource) => resource.syncEnabled)
+      },
+      class: 'oc-files-actions-disable-sync-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

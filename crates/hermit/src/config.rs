@@ -277,12 +277,12 @@ pub struct AwsJson {
     pub subnet: String,
     pub tags: BTreeMap<String, String>,
     pub fallback_host: FallbackHost,
-    /// The hosts' disk, GiB (gp3): the launch template's volume, which `fabric/aws/infra.sh` writes (40 when
+    /// The hosts' disk, GiB (gp3): the launch template's volume, which `fabric-aws` writes (40 when
     /// absent). It must hold every sandbox of a host at `sandbox.tmpGiB` in full, plus the system and the image.
     #[serde(default, rename = "diskGiB")]
     pub disk_gib: Option<u32>,
     /// The S3 bucket (in `region`) that holds the sandbox images as `images/<digest>.tar.zst`, which
-    /// `fabric/aws/infra.sh publish-image` puts there: hosts fetch an image they lack from it and the gateway serves
+    /// `fabric-aws publish-image` puts there: hosts fetch an image they lack from it and the gateway serves
     /// none. Absent: the gateway is the hosts' image server.
     #[serde(default)]
     pub image_bucket: Option<String>,
@@ -799,7 +799,7 @@ mod tests {
         assert_eq!((c.tmp_bytes, c.file.fabric.aws.disk_gib), (100 << 30, Some(216)));
         let e = sized(215).unwrap_err().to_string();
         assert!(e.contains("2 sandboxes") && e.contains("216 GiB"), "{e}");
-        // no disk named: nothing to check (the template keeps infra.sh's default)
+        // no disk named: nothing to check (the template keeps fabric-aws's default)
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 100.into()).is_ok());
         // sandboxd refuses a scratch outside [1 GiB, 1 TiB]
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 0.into()).is_err());

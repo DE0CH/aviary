@@ -14,7 +14,8 @@
           ]
         }
       ]
-    }
+    },
+    "marksAnswers": true
   },
   "responses": [
     {

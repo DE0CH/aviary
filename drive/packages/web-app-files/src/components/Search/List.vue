@@ -1,0 +1,465 @@
+<template>
+  <div class="flex">
+    <files-view-wrapper>
+      <app-bar :breadcrumbs="breadcrumbs" :has-bulk-actions="true" :view-modes="viewModes">
+        <template #actions>
+          <div v-if="displayFilter" class="files-search-result-filter flex flex-wrap gap-2 my-2">
+            <item-filter
+              v-if="availableMediaTypeValues.length"
+              :allow-multiple="true"
+              :filter-label="$gettext('Type')"
+              :filterable-attributes="['label']"
+              :items="availableMediaTypeValues"
+              display-name-attribute="label"
+              filter-name="mediaType"
+            >
+              <template #image="{ item }">
+                <div
+                  class="flex items-center"
+                  :data-test-id="`media-type-${item.id.toLowerCase()}`"
+                >
+                  <resource-icon
+                    :resource="getFakeResourceForIcon(item as SearchMediaTypeFilterOption)"
+                  />
+                  <span class="ml-2">{{ item.label }}</span>
+                </div>
+              </template>
+            </item-filter>
+            <item-filter
+              v-if="capabilityStore.filesTags"
+              :allow-multiple="true"
+              :filter-label="$gettext('Tags')"
+              :filterable-attributes="['label']"
+              :items="availableTags"
+              :loading="loadAvailableTagsTask.isRunning || !loadAvailableTagsTask.last"
+              :option-filter-label="$gettext('Filter tags')"
+              :show-option-filter="true"
+              :no-items-message="
+                $gettext(
+                  'No tags yet. Add tags to files and folders in the details panel to filter by them.'
+                )
+              "
+              class="files-search-filter-tags"
+              display-name-attribute="label"
+              filter-name="tags"
+            >
+              <template #image>
+                <oc-icon name="price-tag-3" size-class="size-4" class="flex" />
+              </template>
+              <template #item="{ item, term }">
+                <span class="ml-2"><oc-filter-highlight :text="item.label" :term="term" /></span>
+              </template>
+            </item-filter>
+            <item-filter
+              v-if="availableLastModifiedValues.length"
+              :filter-label="$gettext('Last Modified')"
+              :filterable-attributes="['label']"
+              :items="availableLastModifiedValues"
+              :show-option-filter="false"
+              :close-on-click="true"
+              class="files-search-filter-last-modified"
+              display-name-attribute="label"
+              filter-name="lastModified"
+            >
+              <template #item="{ item }">
+                <span v-text="item.label" />
+              </template>
+            </item-filter>
+
+            <item-filter-toggle
+              v-if="fullTextSearchEnabled"
+              :filter-label="$gettext('Title only')"
+              filter-name="titleOnly"
+              class="files-search-filter-title-only"
+            />
+          </div>
+        </template>
+      </app-bar>
+      <app-loading-spinner v-if="loading" />
+      <template v-else>
+        <no-content-message
+          v-if="!paginatedResources.length"
+          img-src="images/illustrations/search-results.svg"
+        >
+          <template #message>
+            <p class="text-role-on-surface-variant">
+              <span
+                v-text="hasFilter ? $gettext('No results found') : $gettext('Search for files')"
+              />
+            </p>
+          </template>
+          <template #callToAction>
+            <span
+              v-text="
+                hasFilter
+                  ? $gettext('Try refining the search term or filters to get results')
+                  : $gettext('Adjust the search term or filters to get results')
+              "
+            />
+          </template>
+        </no-content-message>
+        <component
+          :is="folderView.component"
+          v-else
+          :header-position="fileListHeaderY"
+          :resources="paginatedResources"
+          :are-paths-displayed="true"
+          :has-actions="true"
+          :is-selectable="true"
+          :sort-by="sortBy"
+          :sort-dir="sortDir"
+          :fields-displayed="['name', 'size', 'tags', 'mdate']"
+          :sort-fields="sortFields"
+          :view-mode="viewMode"
+          :view-size="viewSize"
+          :term="searchTerm"
+          @file-click="triggerDefaultAction"
+          @item-visible="
+            loadPreview({
+              space: getMatchingSpace($event),
+              resource: $event,
+              ...(isProjectSpaceResource($event) && { processor: ProcessorType.enum.fit })
+            })
+          "
+          @item-hidden="dropPreview($event)"
+          @sort="handleSort"
+          @update:selected-ids="selectedResourcesIds = $event"
+        >
+          <template #additionalResourceContent="{ resource }">
+            <search-highlights
+              :resource="resource as SearchResource"
+              :term="searchTerm"
+              :filter-tags="selectedTags"
+            />
+          </template>
+          <template #contextMenu="{ resource }">
+            <context-actions
+              v-if="isResourceInSelection(resource)"
+              :action-options="{ space: getMatchingSpace(resource), resources: selectedResources }"
+            />
+          </template>
+          <template #footer>
+            <pagination :pages="paginationPages" :current-page="paginationPage" />
+            <div
+              v-if="searchResultExceedsLimit"
+              class="text-center w-full my-2"
+              v-text="searchResultExceedsLimitText"
+            />
+            <list-info v-else-if="paginatedResources.length > 0" class="w-full my-2" />
+          </template>
+        </component>
+      </template>
+    </files-view-wrapper>
+    <file-side-bar :space="selectedResourceSpace" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { useResourcesViewDefaults } from '../../composables'
+import {
+  AppLoadingSpinner,
+  SearchHighlights,
+  SearchResult,
+  useCapabilityStore,
+  useSpacesStore,
+  useResourcesStore,
+  useSearch
+} from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { ContextActions, FileSideBar } from '@opencloud-eu/web-pkg'
+import { useGettext } from 'vue3-gettext'
+import { AppBar, sortTags } from '@opencloud-eu/web-pkg'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, unref, watch } from 'vue'
+import ListInfo from '../FilesList/ListInfo.vue'
+import { Pagination } from '@opencloud-eu/web-pkg'
+import { useFileActions } from '@opencloud-eu/web-pkg'
+import { searchLimit } from '../../search/sdk/list'
+import { isProjectSpaceResource, Resource, SearchResource, call } from '@opencloud-eu/web-client'
+import FilesViewWrapper from '../FilesViewWrapper.vue'
+import {
+  queryItemAsString,
+  useClientService,
+  ProcessorType,
+  useFileListHeaderPosition,
+  useGetMatchingSpace,
+  getLastModifiedFilterOptions,
+  getMediaTypeFilterOptions,
+  SearchMediaTypeFilterOption,
+  useRoute,
+  useRouteQuery,
+  useRouter,
+  useLoadPreview,
+  LocationQuery
+} from '@opencloud-eu/web-pkg'
+import { onBeforeRouteLeave } from 'vue-router'
+import { useTask } from 'vue-concurrency'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { ItemFilter } from '@opencloud-eu/web-pkg'
+import { isLocationCommonActive } from '@opencloud-eu/web-pkg'
+import { ItemFilterToggle } from '@opencloud-eu/web-pkg'
+import { useKeyboardActions, ResourceIcon } from '@opencloud-eu/web-pkg'
+import {
+  useKeyboardFileNavigation,
+  useKeyboardFileMouseActions,
+  useKeyboardFileActions
+} from '../../composables/keyboardActions'
+import { storeToRefs } from 'pinia'
+import { folderViewsSearchExtensionPoint } from '../../extensionPoints'
+import { OcFilterHighlight } from '@opencloud-eu/design-system/components'
+
+type Tag = {
+  id: string
+  label: string
+}
+
+const { searchResult = { totalResults: null, values: [] }, loading = false } = defineProps<{
+  searchResult?: SearchResult
+  loading?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'search', query: string): void
+}>()
+
+const capabilityStore = useCapabilityStore()
+const { loadGraphPermissions } = useSpacesStore()
+const router = useRouter()
+const route = useRoute()
+const language = useGettext()
+const { $gettext } = language
+const { y: fileListHeaderY } = useFileListHeaderPosition()
+const clientService = useClientService()
+const { getMatchingSpace } = useGetMatchingSpace()
+const { buildSearchTermFromQuery } = useSearch()
+
+const resourcesStore = useResourcesStore()
+const { initResourceList, clearResourceList, setAncestorMetaData } = resourcesStore
+const { totalResourcesCount, areHiddenFilesShown } = storeToRefs(resourcesStore)
+
+const searchTermQuery = useRouteQuery('term')
+
+const { triggerDefaultAction } = useFileActions()
+
+const {
+  folderView,
+  sortedResources,
+  paginatedResources,
+  paginationPage,
+  paginationPages,
+  selectedResources,
+  selectedResourcesIds,
+  selectedResourceSpace,
+  sortBy,
+  sortDir,
+  sortFields,
+  viewMode,
+  viewModes,
+  viewSize,
+  handleSort,
+  isResourceInSelection,
+  scrollToResourceFromRoute
+} = useResourcesViewDefaults<SearchResource, any, any[]>({
+  folderViewExtensionPoint: folderViewsSearchExtensionPoint
+})
+
+const { loadPreview, dropPreview } = useLoadPreview(viewMode)
+const keyActions = useKeyboardActions()
+useKeyboardFileNavigation(keyActions, paginatedResources, viewMode)
+useKeyboardFileMouseActions(keyActions, viewMode)
+useKeyboardFileActions(keyActions)
+
+const searchTerm = computed(() => {
+  return queryItemAsString(unref(searchTermQuery))
+})
+
+const availableTags = ref<Tag[]>([])
+
+const tagParam = useRouteQuery('q_tags')
+const selectedTags = computed(() => queryItemAsString(unref(tagParam))?.split('+') || [])
+const lastModifiedParam = useRouteQuery('q_lastModified')
+const mediaTypeParam = useRouteQuery('q_mediaType')
+const titleOnlyParam = useRouteQuery('q_titleOnly')
+
+const fullTextSearchEnabled = computed(() => capabilityStore.searchContent?.enabled)
+
+const displayFilter = computed(() => {
+  return (
+    unref(fullTextSearchEnabled) ||
+    capabilityStore.filesTags ||
+    capabilityStore.searchLastMofifiedDate?.enabled
+  )
+})
+
+const loadAvailableTagsTask = useTask(function* (signal) {
+  const tags = sortTags(
+    yield* call(clientService.graphAuthenticated.tags.listTags({ signal })),
+    language.current
+  )
+  availableTags.value = tags.map((t) => ({ id: t, label: t }))
+})
+
+onBeforeRouteLeave(() => {
+  eventBus.publish('app.search.term.clear')
+})
+
+const availableLastModifiedValues = computed(() => {
+  return getLastModifiedFilterOptions(capabilityStore.searchLastMofifiedDate.keywords, $gettext)
+})
+
+const availableMediaTypeValues = computed(() => {
+  return getMediaTypeFilterOptions(capabilityStore.searchMediaType.keywords, $gettext)
+})
+
+function getFakeResourceForIcon(item: SearchMediaTypeFilterOption) {
+  return { type: 'file', extension: item.icon, isFolder: item.icon == 'folder' } as Resource
+}
+
+const hasFilter = computed(() => {
+  return (
+    !!unref(tagParam) ||
+    !!unref(lastModifiedParam) ||
+    !!unref(mediaTypeParam) ||
+    !!unref(titleOnlyParam) ||
+    !!unref(searchTermQuery)
+  )
+})
+
+function isSameSearch(query: LocationQuery, otherQuery: LocationQuery) {
+  return [
+    'term',
+    'q_titleOnly',
+    'q_tags',
+    'q_lastModified',
+    'q_mediaType',
+    'scope',
+    'useScope'
+  ].every((key) => query?.[key] === otherQuery?.[key])
+}
+
+const doSearch = () => {
+  return buildSearchTermFromQuery(unref(route).query)
+}
+
+const breadcrumbs = computed(() => {
+  return [
+    {
+      text: unref(searchTerm)
+        ? $gettext('Search results for "%{searchTerm}"', { searchTerm: unref(searchTerm) })
+        : $gettext('Search'),
+      onClick: () => emit('search', doSearch())
+    }
+  ]
+})
+
+const itemCount = computed(() => {
+  const { files, folders, hiddenFiles, hiddenFolders } = unref(totalResourcesCount)
+  if (unref(areHiddenFilesShown)) {
+    return files + folders
+  }
+  return files + folders - hiddenFiles - hiddenFolders
+})
+const rangeSupported = computed(() => {
+  return searchResult.totalResults
+})
+const searchResultExceedsLimit = computed(() => {
+  return (
+    !unref(rangeSupported) || (searchResult.totalResults && searchResult.totalResults > searchLimit)
+  )
+})
+const searchResultExceedsLimitText = computed(() => {
+  if (!unref(rangeSupported)) {
+    return $gettext('Showing up to %{searchLimit} results', {
+      searchLimit: searchLimit.toString()
+    })
+  }
+
+  return $gettext('Found %{totalResults}, showing the %{itemCount} best matching results', {
+    itemCount: unref(itemCount).toString(),
+    totalResults: searchResult.totalResults.toString()
+  })
+})
+
+onMounted(async () => {
+  // Store resources are shared across table views, therefore
+  // the store state needs a reset to prevent the old list of resources
+  // from being rendered while the request retrieves the new resources from the server.
+  clearResourceList()
+  setAncestorMetaData({})
+
+  if (capabilityStore.filesTags) {
+    await loadAvailableTagsTask.perform()
+  }
+  emit('search', doSearch())
+})
+
+watch(
+  () => unref(route).query,
+  (newVal, oldVal) => {
+    // return early if this view is not active, no search needed
+    {
+      const isSearchViewActive = isLocationCommonActive(router, 'files-common-search')
+      if (!isSearchViewActive) {
+        return
+      }
+    }
+
+    // return early if the search term or filter has not changed, no search needed
+    if (isSameSearch(newVal, oldVal)) {
+      return
+    }
+
+    emit('search', doSearch())
+  },
+  { deep: true }
+)
+
+// submitting the current search again doesn't change the search query of the route,
+// so the watcher above doesn't search again
+const submitSearchEvent = eventBus.subscribe('app.search.submit', (query: LocationQuery) => {
+  if (!isSameSearch(query, unref(route).query)) {
+    return
+  }
+  emit('search', doSearch())
+})
+
+onBeforeUnmount(() => {
+  eventBus.unsubscribe('app.search.submit', submitSearchEvent)
+})
+
+watch(
+  () => searchResult,
+  async () => {
+    if (!searchResult) {
+      return
+    }
+
+    clearResourceList()
+    initResourceList<SearchResource>({
+      currentFolder: null,
+      resources: searchResult.values.length
+        ? searchResult.values.map((searchResult) => searchResult.data as SearchResource)
+        : []
+    })
+    await nextTick()
+    scrollToResourceFromRoute(unref(sortedResources), 'files-app-bar')
+  }
+)
+
+watch(selectedResourcesIds, async (ids) => {
+  if (!ids.length) {
+    return
+  }
+
+  const projectSpaceIds = unref(selectedResources)
+    .filter(isProjectSpaceResource)
+    .map((space) => space.id)
+  if (!projectSpaceIds.length) {
+    return
+  }
+
+  await loadGraphPermissions({
+    ids: projectSpaceIds,
+    graphClient: clientService.graphAuthenticated
+  })
+})
+</script>

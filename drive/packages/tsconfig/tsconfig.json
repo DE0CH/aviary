@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    "strict": true,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+
+    "module": "preserve",
+    "sourceMap": true,
+
+    "lib": ["ESNext", "es2022", "dom", "dom.iterable"],
+
+    "types": ["vitest/globals"]
+  },
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,408 @@
+<template>
+  <div :class="[{ 'flex items-center': inlineLabel }, $attrs.class]">
+    <slot name="label">
+      <label
+        class="inline-block"
+        :class="{ 'mr-2': inlineLabel, 'mb-0.5': !inlineLabel }"
+        :for="id"
+      >
+        {{ label }}
+        <span v-if="requiredMark" class="text-role-error" aria-hidden="true">*</span>
+      </label>
+    </slot>
+    <div class="relative" :class="{ 'grow-1': inlineLabel }">
+      <oc-icon v-if="readOnly" name="lock" size-class="size-4" class="mt-2 ml-2 absolute" />
+      <component
+        :is="inputComponent"
+        :id="id"
+        v-bind="additionalAttributes"
+        ref="inputRef"
+        :aria-invalid="ariaInvalid"
+        class="oc-text-input oc-input h-9"
+        :class="{
+          'oc-text-input-danger border-role-error': !!showErrorMessage,
+          'pl-6': !!readOnly,
+          'pr-6': showClearButton,
+          'border-none outline-none bg-transparent': !hasBorder
+        }"
+        :type="type"
+        :value="modelValue"
+        :disabled="disabled || readOnly"
+        :teleport-id="teleportId"
+        v-on="additionalListeners"
+        @change="onChange(($event.target as HTMLInputElement).value)"
+        @input="onInput(($event.target as HTMLInputElement).value)"
+        @password-challenge-completed="$emit('passwordChallengeCompleted')"
+        @password-challenge-failed="$emit('passwordChallengeFailed')"
+        @focus="onFocus($event.target)"
+        @pointerdown="onUserInteraction"
+      />
+      <oc-button
+        v-if="showClearButton"
+        :aria-label="clearButtonAccessibleLabelValue"
+        class="pr-2 absolute top-[50%] transform-[translateY(-50%)] right-0 oc-text-input-btn-clear"
+        appearance="raw"
+        no-hover
+        @click="onClear"
+      >
+        <oc-icon name="close" size-class="size-4" />
+      </oc-button>
+    </div>
+    <div
+      v-if="showMessageLine"
+      class="oc-text-input-message flex align-center text-sm mt-1 min-h-4.5"
+      :class="{
+        'oc-text-input-description text-role-on-surface-variant relative': showDescriptionMessage,
+        'oc-text-input-danger text-role-error focus:text-role-error border-role-error':
+          showErrorMessage
+      }"
+    >
+      <template v-if="showErrorMessage">
+        <oc-icon
+          v-if="showErrorMessage"
+          name="error-warning"
+          size-class="size-4"
+          fill-type="line"
+          aria-hidden="true"
+          class="mr-1 shrink-0"
+        />
+        <span
+          v-if="showErrorMessage"
+          :id="messageId"
+          class="oc-text-input-danger text-role-error focus:text-role-error border-role-error min-w-0 wrap-anywhere"
+          v-text="errorMessage"
+        />
+      </template>
+      <span
+        v-else-if="showDescriptionMessage"
+        :id="messageId"
+        class="oc-text-input-description text-role-on-surface-variant flex items-center relative min-w-0 wrap-anywhere"
+        v-text="descriptionMessage"
+      />
+    </div>
+    <div :id="teleportId" />
+    <oc-hidden-announcer :announcement="errorAnnouncement" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, ref, unref, useAttrs, useId, useTemplateRef, watch } from 'vue'
+import { PasswordPolicy, uniqueId } from '../../helpers'
+import OcButton from '../OcButton/OcButton.vue'
+import OcHiddenAnnouncer from '../OcHiddenAnnouncer/OcHiddenAnnouncer.vue'
+import OcIcon from '../OcIcon/OcIcon.vue'
+import OcTextInputPassword from '../OcTextInputPassword/OcTextInputPassword.vue'
+import { debounce } from 'lodash-es'
+
+defineOptions({
+  inheritAttrs: false
+})
+
+export interface Props {
+  /**
+   * @docs The element ID of the input.
+   */
+  id?: string
+  /**
+   * @docs The type of the input.
+   * @default text
+   */
+  type?: 'text' | 'number' | 'email' | 'password' | 'date'
+  /**
+   * @docs The value of the input.
+   */
+  modelValue?: string
+  /**
+   * @docs Determines if the value gets selected when the input gets focused before the user interacted with it, e.g. so a suggested name can be typed over right away when a modal opens. Once the user clicked, tapped or typed into it, focus changes keep the browser default.
+   * @default false
+   */
+  preselect?: boolean
+  /**
+   * @docs The part of the value to preselect, also applied whenever it changes. Implies `preselect`.
+   */
+  selectionRange?: [number, number]
+  /**
+   * @docs Determines if the input should have a clear button.
+   * @default false
+   */
+  clearButtonEnabled?: boolean
+  /**
+   * @docs The accessible label of the clear button.
+   */
+  clearButtonAccessibleLabel?: string
+  /**
+   * @docs The default value of the input.
+   */
+  defaultValue?: string
+  /**
+   * @docs Determines if the input is disabled.
+   * @default false
+   */
+  disabled?: boolean
+  /**
+   * @docs The label of the input element.
+   */
+  label: string
+  /**
+   * @docs Determines if the label will be displayed next to the input field.
+   * @default false
+   * */
+  inlineLabel?: boolean
+  /**
+   * @docs The error message to be displayed below the input.
+   */
+  errorMessage?: string
+  /**
+   * @docs Determines if the message line should be fixed.
+   * @default false
+   */
+  errorMessageDebouncedTime?: number
+  /**
+   * @docs The time in milliseconds to debounce the error message visibility.
+   * @default 500
+   */
+  fixMessageLine?: boolean
+  /**
+   * @docs The description message to be displayed below the input.
+   */
+  descriptionMessage?: string
+  /**
+   * @docs Determines if the input is read-only.
+   * @default false
+   */
+  readOnly?: boolean
+  /**
+   * @docs Determines if a required mark (*) should be displayed next to the label.
+   * @default false
+   */
+  requiredMark?: boolean
+  /**
+   * @docs The password policy if the `type` is set to `password`. Please refer to the component source for the `PasswordPolicy` type definition.
+   */
+  passwordPolicy?: PasswordPolicy
+  /**
+   * @docs The method to generate a password if the `type` is set to `password`.
+   */
+  generatePasswordMethod?: (...args: unknown[]) => string
+  /**
+   * @docs Determines if the input field has a surrounding border.
+   * @default true
+   */
+  hasBorder?: boolean
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the value of the input has changed after the user confirms or leaves the focus.
+   */
+  (e: 'change', value: string): void
+
+  /**
+   * @docs Emitted when the value of the input has updated.
+   */
+  (e: 'update:modelValue', value: string): void
+
+  /**
+   * @docs Emitted when the input has been focused.
+   */
+  (e: 'focus', value: string): void
+
+  /**
+   * @docs Emitted when the password challenge has been completed successfully.
+   */
+  (e: 'passwordChallengeCompleted'): void
+
+  /**
+   * @docs Emitted when the password challenge has failed.
+   */
+  (e: 'passwordChallengeFailed'): void
+}
+
+export interface Slots {
+  /**
+   * @docs Can be used to overwrite the default rendering of the label.
+   */
+  label?: () => unknown
+}
+
+const {
+  id = uniqueId('oc-textinput-'),
+  type = 'text',
+  modelValue = '',
+  preselect = false,
+  selectionRange,
+  clearButtonEnabled = false,
+  clearButtonAccessibleLabel = '',
+  defaultValue,
+  disabled = false,
+  label,
+  inlineLabel = false,
+  errorMessage,
+  errorMessageDebouncedTime = 500,
+  fixMessageLine = false,
+  descriptionMessage,
+  readOnly = false,
+  requiredMark = false,
+  hasBorder = true,
+  passwordPolicy = {},
+  generatePasswordMethod
+} = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
+
+const teleportId = useId()
+
+const showErrorMessage = ref(false)
+const showDescriptionMessage = computed(() => {
+  return !!descriptionMessage
+})
+const showMessageLine = computed(() => {
+  return fixMessageLine || unref(showErrorMessage) || unref(showDescriptionMessage)
+})
+// the message appears while typing, without a focus change that would make screen readers read it
+const errorAnnouncement = computed(() => (unref(showErrorMessage) ? errorMessage : ''))
+const ariaInvalid = computed(() => {
+  return unref(showErrorMessage).toString()
+})
+
+const messageId = computed(() => `${id}-message`)
+
+const additionalListeners = computed(() => {
+  if (type === 'password') {
+    return { passwordGenerated: onInput }
+  }
+  return {}
+})
+
+const tmpAttrs = useAttrs()
+const additionalAttributes = computed(() => {
+  const additionalAttrs: Record<string, unknown> = {}
+  if (unref(showErrorMessage) || unref(showDescriptionMessage)) {
+    additionalAttrs['aria-describedby'] = messageId.value
+  }
+  if (defaultValue) {
+    additionalAttrs['placeholder'] = defaultValue
+  }
+  if (requiredMark) {
+    additionalAttrs['aria-required'] = 'true'
+  }
+  if (type === 'password') {
+    additionalAttrs['password-policy'] = passwordPolicy
+    additionalAttrs['generate-password-method'] = generatePasswordMethod
+    additionalAttrs['has-error'] = unref(showErrorMessage)
+  }
+  // note: we spread out the attrs we don't want to be present in the resulting object
+  const { change, input, focus, class: classes, ...attrs } = tmpAttrs
+  return { ...attrs, ...additionalAttrs }
+})
+
+const showClearButton = computed(() => {
+  return !disabled && clearButtonEnabled && !!modelValue
+})
+
+const clearButtonAccessibleLabelValue = computed(() => {
+  return clearButtonAccessibleLabel || 'Clear input'
+})
+
+const inputComponent = computed(() => {
+  return type === 'password' ? OcTextInputPassword : 'input'
+})
+
+const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
+const focus = () => {
+  unref(inputRef).focus()
+}
+defineExpose({ focus })
+
+function onClear() {
+  focus()
+  onInput('')
+  onChange(null)
+}
+
+const onChange = (value: string) => {
+  emit('change', value)
+}
+
+const onInput = (value: string) => {
+  onUserInteraction()
+  emit('update:modelValue', value)
+}
+
+// re-applied on every focus until the user interacts, because a focus trap can return the focus
+// later on and select the whole value
+let hasUserInteracted = false
+function onUserInteraction() {
+  hasUserInteracted = true
+}
+const onFocus = async (target: HTMLInputElement) => {
+  if ((preselect || selectionRange) && !hasUserInteracted) {
+    await nextTick()
+    unref(inputRef).select()
+    setSelectionRange()
+  }
+  emit('focus', target.value)
+}
+const setSelectionRange = () => {
+  if (selectionRange && selectionRange.length > 1) {
+    unref(inputRef).setSelectionRange(selectionRange[0], selectionRange[1])
+  }
+}
+
+watch(
+  [() => selectionRange, inputRef],
+  async () => {
+    if (!unref(inputRef)) {
+      return
+    }
+    await nextTick()
+    setSelectionRange()
+  },
+  { immediate: true }
+)
+
+const onStopTyping = debounce(() => {
+  showErrorMessage.value = !!errorMessage
+}, errorMessageDebouncedTime)
+
+watch(
+  () => modelValue,
+  () => {
+    onStopTyping()
+  }
+)
+
+watch(
+  () => errorMessage,
+  () => {
+    if (!errorMessage) {
+      showErrorMessage.value = false
+      onStopTyping.cancel?.()
+    } else {
+      onStopTyping()
+    }
+  }
+)
+</script>
+<style>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer components {
+  .oc-input {
+    @apply inline-block align-middle text-role-on-surface bg-role-surface w-full max-w-full rounded-sm p-1.5 leading-4 border border-role-outline outline-0 overflow-visible appearance-none;
+  }
+
+  .oc-input:focus {
+    @apply border border-role-outline outline-1 outline-role-secondary -outline-offset-2;
+  }
+
+  .oc-input:disabled {
+    @apply bg-role-surface-container cursor-not-allowed;
+  }
+
+  .oc-input::placeholder {
+    @apply text-role-on-surface-variant;
+  }
+}
+</style>

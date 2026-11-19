@@ -1,0 +1,240 @@
+<template>
+  <div class="flex">
+    <files-view-wrapper>
+      <app-bar :view-modes="viewModes" :breadcrumbs="breadcrumbs" has-bulk-actions>
+        <template #navigation>
+          <SharesNavigation />
+        </template>
+        <template #actions>
+          <div class="flex justify-end w-full mt-2 mb-4 items-center">
+            <oc-search-bar
+              v-model="filterTerm"
+              is-filter
+              class="search-filter w-full sm:w-3xs"
+              :label="$gettext('Search')"
+              :placeholder="$gettext('Search for shares')"
+              button-hidden
+              :is-rounded="false"
+            />
+          </div>
+        </template>
+      </app-bar>
+      <app-loading-spinner v-if="areResourcesLoading" />
+      <template v-else>
+        <template v-if="isEmpty">
+          <no-content-message
+            v-if="!storeItems.length"
+            id="files-shared-via-link-empty"
+            img-src="images/illustrations/shared-via-link.svg"
+          >
+            <template #message>
+              <span v-text="$gettext('Nothing shared, yet')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('All your links will show up here')" />
+            </template>
+          </no-content-message>
+          <no-content-message
+            v-else
+            id="files-shared-via-link-no-results"
+            img-src="images/illustrations/shared-via-link.svg"
+          >
+            <template #message>
+              <span v-text="$gettext('No shares found')" />
+            </template>
+            <template #callToAction>
+              <span v-text="$gettext('Try refining the search term or filters to get results')" />
+            </template>
+          </no-content-message>
+        </template>
+        <component
+          :is="folderView.component"
+          v-else
+          :fields-displayed="['name', 'sdate']"
+          :are-paths-displayed="true"
+          :resources="paginatedResources"
+          :header-position="fileListHeaderY"
+          :sort-by="sortBy"
+          :sort-dir="sortDir"
+          :sort-fields="sortFields.filter((field) => field.name === 'name')"
+          :view-mode="viewMode"
+          :view-size="viewSize"
+          :term="filterTerm"
+          @file-click="triggerDefaultAction"
+          @item-visible="loadPreview({ space: getMatchingSpace($event), resource: $event })"
+          @item-hidden="dropPreview($event)"
+          @sort="handleSort"
+          @update:selected-ids="selectedResourcesIds = $event"
+        >
+          <template #contextMenu="{ resource }">
+            <context-actions
+              v-if="isResourceInSelection(resource)"
+              :action-options="{ space: getMatchingSpace(resource), resources: selectedResources }"
+            />
+          </template>
+          <template #footer>
+            <pagination :pages="paginationPages" :current-page="paginationPage" />
+            <list-info
+              v-if="paginatedResources.length > 0"
+              class="w-full my-2"
+              :matching-count="matchingCount"
+            />
+          </template>
+        </component>
+      </template>
+    </files-view-wrapper>
+    <file-side-bar :space="selectedResourceSpace" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import {
+  defaultFuseOptions,
+  escapeFuseQuery,
+  FileSideBar,
+  useFileActions,
+  useLoadPreview,
+  useResourcesStore,
+  useRoute,
+  useRouter,
+  AppLoadingSpinner,
+  NoContentMessage,
+  AppBar,
+  Pagination,
+  useGetMatchingSpace,
+  ContextActions,
+  useKeyboardActions,
+  eventBus
+} from '@opencloud-eu/web-pkg'
+import ListInfo from '../../components/FilesList/ListInfo.vue'
+import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
+import { useResourcesViewDefaults } from '../../composables'
+import {
+  useKeyboardFileNavigation,
+  useKeyboardFileMouseActions
+} from '../../composables/keyboardActions'
+import { computed, onBeforeUnmount, onMounted, ref, unref, watch } from 'vue'
+import SharesNavigation from '../../../src/components/AppBar/SharesNavigation.vue'
+import { OutgoingShareResource } from '@opencloud-eu/web-client'
+import { folderViewsSharedViaLinkExtensionPoint } from '../../extensionPoints'
+import { v4 as uuidV4 } from 'uuid'
+import { useGettext } from 'vue3-gettext'
+import Fuse from 'fuse.js'
+
+const { $gettext } = useGettext()
+
+const { getMatchingSpace } = useGetMatchingSpace()
+
+const resourcesStore = useResourcesStore()
+const router = useRouter()
+const route = useRoute()
+
+const filterTerm = ref('')
+
+function filterShares(shares: OutgoingShareResource[]) {
+  if (!unref(filterTerm)) {
+    return shares
+  }
+  const searchEngine = new Fuse(shares, { ...defaultFuseOptions, keys: ['name'] })
+  return searchEngine.search(escapeFuseQuery(unref(filterTerm))).map((r) => r.item)
+}
+
+const {
+  storeItems,
+  sortedResources,
+  paginatedResources,
+  selectedResources,
+  selectedResourcesIds,
+  viewMode,
+  viewModes,
+  areResourcesLoading,
+  sortBy,
+  sortDir,
+  sortFields,
+  viewSize,
+  folderView,
+  fileListHeaderY,
+  paginationPages,
+  paginationPage,
+  loadResourcesTask,
+  loadResources,
+  selectedResourceSpace,
+  handleSort,
+  isResourceInSelection,
+  scrollToResourceFromRoute
+} = useResourcesViewDefaults<OutgoingShareResource, any, any[]>({
+  folderViewExtensionPoint: folderViewsSharedViaLinkExtensionPoint,
+  filterResources: filterShares
+})
+
+const matchingCount = computed(() => {
+  const isFiltered = !!unref(filterTerm)
+  return isFiltered ? unref(sortedResources).length : undefined
+})
+
+const { triggerDefaultAction } = useFileActions()
+
+const { loadPreview, dropPreview } = useLoadPreview(viewMode)
+
+watch(filterTerm, async () => {
+  await router.push({ ...unref(route), query: { ...unref(route).query, page: '1' } })
+})
+
+const keyActions = useKeyboardActions()
+useKeyboardFileNavigation(keyActions, paginatedResources, viewMode)
+useKeyboardFileMouseActions(keyActions, viewMode)
+
+resourcesStore.$onAction(async (action) => {
+  if (action.name !== 'updateResourceField') {
+    return
+  }
+
+  // only share type changes (e.g. adding or removing a link) affect this list. reacting to
+  // other fields like thumbnails, which get set after the reload, would cause a reload loop.
+  if (action.args[0]?.field !== 'shareTypes') return
+  if (loadResourcesTask.isRunning) return
+
+  if (unref(selectedResourcesIds).length !== 1) return
+  const id = unref(selectedResourcesIds)[0]
+
+  const match = unref(paginatedResources).find((r) => {
+    return r.id === id
+  })
+  if (!match) return
+
+  await loadResources()
+
+  const matchedNewResource = unref(paginatedResources).find((r) => r.fileId === match.fileId)
+  if (!matchedNewResource) return
+
+  selectedResourcesIds.value = [matchedNewResource.id]
+})
+
+const breadcrumbs = computed(() => {
+  return [
+    {
+      id: uuidV4(),
+      text: $gettext('Shares'),
+      onClick: () => loadResources(),
+      isStaticNav: true
+    }
+  ]
+})
+
+const isEmpty = computed(() => {
+  return unref(paginatedResources).length < 1
+})
+
+let loadResourcesEventToken: string
+onMounted(async () => {
+  loadResourcesEventToken = eventBus.subscribe('app.files.list.load', () =>
+    loadResourcesTask.perform()
+  )
+  await loadResources()
+  scrollToResourceFromRoute(unref(sortedResources), 'files-app-bar')
+})
+
+onBeforeUnmount(() => {
+  eventBus.unsubscribe('app.files.list.load', loadResourcesEventToken)
+})
+</script>

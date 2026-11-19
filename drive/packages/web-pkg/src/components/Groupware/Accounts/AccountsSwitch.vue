@@ -1,0 +1,83 @@
+<template>
+  <oc-button
+    id="account-list-toggle"
+    class="w-auto m-2"
+    appearance="filled"
+    color-role="surface"
+    justify-content="space-between"
+    no-hover
+  >
+    <oc-spinner v-if="isLoading" :aria-label="$gettext('Loading accounts')" />
+    <div v-else class="flex justify-between items-center w-full">
+      <div class="flex items-center truncate">
+        <oc-avatar :user-name="currentAccount?.name || ''" />
+        <div class="flex flex-col items-start ml-5 truncate">
+          <span
+            class="font-bold max-w-full truncate"
+            :title="currentAccount?.name || ''"
+            v-text="currentAccount?.name || ''"
+          />
+          <span
+            v-if="currentAccount?.identities?.[0]?.email"
+            class="max-w-full truncate"
+            :title="currentAccount.identities[0].email"
+            v-text="currentAccount.identities[0].email"
+          />
+        </div>
+      </div>
+      <oc-icon class="ml-2" name="more-2" />
+    </div>
+  </oc-button>
+  <oc-drop :title="$gettext('Accounts')" class="w-md" toggle="#account-list-toggle" close-on-click>
+    <oc-list>
+      <li v-for="account in accounts" :key="account.accountId" class="oc-list">
+        <oc-button
+          class="p-2"
+          :appearance="account.accountId === currentAccount.accountId ? 'filled' : 'raw-inverse'"
+          :color-role="
+            account.accountId === currentAccount.accountId ? 'secondaryContainer' : 'surface'
+          "
+          @click="onSelectAccount(account)"
+        >
+          <div class="flex justify-between items-center w-full">
+            <div class="flex items-center truncate">
+              <oc-avatar :user-name="account.name" />
+              <div class="flex flex-col items-start ml-5 truncate">
+                <span
+                  class="font-bold max-w-full truncate"
+                  :title="account.name"
+                  v-text="account.name"
+                />
+                <span
+                  v-if="account.identities?.[0]?.email"
+                  class="max-w-full truncate"
+                  :title="account.identities[0].email"
+                  v-text="account.identities[0].email"
+                />
+              </div>
+            </div>
+            <oc-icon
+              v-if="account.accountId === currentAccount.accountId"
+              class="ml-2"
+              name="check"
+            />
+          </div>
+        </oc-button>
+      </li>
+    </oc-list>
+  </oc-drop>
+</template>
+
+<script setup lang="ts">
+import type { GroupwareAccount } from '../../../composables/piniaStores/groupware'
+import { useGroupwareAccountsStore } from '../../../composables/piniaStores/groupware/accounts'
+import { storeToRefs } from 'pinia'
+
+const accountsStore = useGroupwareAccountsStore()
+const { accounts, currentAccount, isLoading } = storeToRefs(accountsStore)
+const { setCurrentAccount } = accountsStore
+
+const onSelectAccount = (account: GroupwareAccount) => {
+  setCurrentAccount(account)
+}
+</script>

@@ -2,6 +2,12 @@
 
 pigeon, magpie, hermit and the sandbox supervisor: an AI chat runtime with Claude Code in per-conversation sandboxes.
 
+This repository holds everything YYC AI and Jarvis chat run, and each deployment's own configuration, so a push to
+main is the deploy ([docs/DEPLOY.md](docs/DEPLOY.md)): `crates/`, `images/`, `fabric/` (aviary), `app/` (the Paseo
+app: web, iOS, Android), `egress/` (egress and tools), `harness/qwen-code/` (the Qwen Code fork), `drive/` (YYC Drive),
+`jarvis/` (Jarvis chat: hermit-jarvis and its manifests) and `yyc/` (YYC AI's deployment). A branch merges once every
+part's checks on it are green; main deploys Jarvis chat, then YYC AI.
+
 | Service | Crate | What it does |
 |---|---|---|
 | pigeon | `crates/pigeon` | the app-facing front end: speaks the Paseo app protocol, signs people in, streams conversations |

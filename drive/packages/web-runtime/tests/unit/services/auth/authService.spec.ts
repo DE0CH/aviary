@@ -1,0 +1,1348 @@
+import {
+  ClientService,
+  ConfigStore,
+  useAuthStore,
+  useConfigStore,
+  useSpacesStore
+} from '@opencloud-eu/web-pkg'
+import { mock } from 'vitest-mock-extended'
+import { DavHttpError } from '@opencloud-eu/web-client'
+import {
+  createMemoryHistory,
+  createRouter as createVueRouter,
+  isNavigationFailure,
+  Router
+} from 'vue-router'
+import { AxiosError, AxiosResponse } from 'axios'
+import { ErrorResponse, ErrorTimeout } from 'oidc-client-ts'
+import { AuthService } from '../../../../src/services/auth/authService'
+import { UserManager } from '../../../../src/services/auth/userManager'
+import { GuestSessionManager } from '../../../../src/services/auth/guestSessionManager'
+import { RouteLocation, createRouter, createTestingPinia } from '@opencloud-eu/web-test-helpers'
+
+const mockUpdateContext = vi.fn()
+console.debug = vi.fn()
+
+vi.mock('../../../../src/services/auth/userManager')
+
+const initAuthService = ({
+  authService,
+  configStore = null,
+  clientService = null,
+  router = null
+}: {
+  authService: AuthService
+  configStore?: ConfigStore
+  clientService?: ClientService
+  router?: Router
+}) => {
+  // stubActions: false so the guest session actions actually mutate the store
+  createTestingPinia({ stubActions: false })
+  const authStore = useAuthStore()
+  configStore = configStore || useConfigStore()
+
+  authService.initialize(
+    configStore,
+    clientService,
+    router,
+    null,
+    null,
+    null,
+    authStore,
+    null,
+    null,
+    useSpacesStore()
+  )
+
+  return { authStore }
+}
+
+describe('AuthService', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  describe('signInCallback', () => {
+    const parentWindow = {} as Window
+
+    beforeEach(() => {
+      vi.spyOn(window, 'parent', 'get').mockReturnValue(parentWindow)
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    function dispatchTokenMessage({
+      source,
+      origin = 'https://host.example',
+      data
+    }: {
+      source: unknown
+      origin?: string
+      data: Record<string, string>
+    }) {
+      const event = new MessageEvent('message', {
+        origin,
+        data: { name: 'opencloud-embed:update-token', data }
+      })
+      Object.defineProperty(event, 'source', { value: source })
+      window.dispatchEvent(event)
+    }
+
+    async function signInWithDelegatedToken({
+      delegateAuthenticationOrigin
+    }: { delegateAuthenticationOrigin?: string } = {}) {
+      const authService = new AuthService()
+      const updateContext = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: {
+          updateContext,
+          getAndClearPostLoginRedirectUrl: () => '/'
+        }
+      })
+
+      const configStore = useConfigStore()
+      configStore.options = {
+        embed: { enabled: true, delegateAuthentication: true, delegateAuthenticationOrigin }
+      }
+      initAuthService({ authService, configStore, router: createRouter() })
+      await authService.signInCallback('initial-token', 'session-id')
+      updateContext.mockClear()
+
+      return { updateContext }
+    }
+
+    it.each([
+      ['/', '/', {}],
+      ['/?details=sharing', '/', { details: 'sharing' }],
+      [
+        '/external?contextRouteName=files-spaces-personal&fileId=0f897576',
+        '/external',
+        {
+          contextRouteName: 'files-spaces-personal',
+          fileId: '0f897576'
+        }
+      ]
+    ])(
+      'parses query params and passes them explicitly to router.replace: %s => %s %s',
+      async (url, path, query: Record<string, string>) => {
+        const authService = new AuthService()
+
+        Object.defineProperty(authService, 'userManager', {
+          value: {
+            signinRedirectCallback: vi.fn(),
+            getAndClearPostLoginRedirectUrl: () => url
+          }
+        })
+
+        const router = createRouter()
+        const replaceSpy = vi.spyOn(router, 'replace')
+
+        initAuthService({ authService, router })
+        await authService.signInCallback()
+
+        expect(replaceSpy).toHaveBeenCalledWith({
+          path,
+          query
+        })
+      }
+    )
+
+    it('navigates to the access denied page when the sign-in response has no matching state', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: {
+          signinRedirectCallback: vi
+            .fn()
+            .mockRejectedValue(new Error('No matching state found in storage'))
+        }
+      })
+
+      const router = createRouter({
+        routes: [
+          {
+            path: '/web-oidc-callback',
+            name: 'oidcCallback',
+            component: {},
+            meta: { authContext: 'anonymous' }
+          }
+        ]
+      })
+      await router.push('/web-oidc-callback?code=code&state=unknown-state')
+      const replaceSpy = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+
+      initAuthService({ authService, router })
+      await authService.signInCallback()
+
+      expect(replaceSpy).toHaveBeenCalledWith({ name: 'accessDenied' })
+    })
+
+    it('applies delegated token updates received after sign-in', async () => {
+      const { updateContext } = await signInWithDelegatedToken()
+
+      dispatchTokenMessage({
+        source: parentWindow,
+        data: { access_token: 'new-token', session_id: 'session-id' }
+      })
+
+      expect(updateContext).toHaveBeenCalledWith('new-token', 'session-id', false)
+    })
+
+    it.each([
+      ['a different window', {}],
+      ['no window', null]
+    ])('ignores delegated token updates sent by %s', async (_, source) => {
+      const { updateContext } = await signInWithDelegatedToken()
+
+      dispatchTokenMessage({ source, data: { access_token: 'forged-token' } })
+
+      expect(updateContext).not.toHaveBeenCalled()
+    })
+
+    it('ignores delegated token updates when the app is not embedded', async () => {
+      const { updateContext } = await signInWithDelegatedToken()
+      vi.spyOn(window, 'parent', 'get').mockReturnValue(window)
+
+      dispatchTokenMessage({ source: window, data: { access_token: 'forged-token' } })
+
+      expect(updateContext).not.toHaveBeenCalled()
+    })
+
+    it('ignores delegated token updates from an origin other than the configured one', async () => {
+      const { updateContext } = await signInWithDelegatedToken({
+        delegateAuthenticationOrigin: 'https://host.example'
+      })
+
+      dispatchTokenMessage({
+        source: parentWindow,
+        origin: 'https://attacker.example',
+        data: { access_token: 'forged-token' }
+      })
+
+      expect(updateContext).not.toHaveBeenCalled()
+    })
+
+    it('applies delegated token updates from the configured origin', async () => {
+      const { updateContext } = await signInWithDelegatedToken({
+        delegateAuthenticationOrigin: 'https://host.example'
+      })
+
+      dispatchTokenMessage({
+        source: parentWindow,
+        origin: 'https://host.example',
+        data: { access_token: 'new-token', session_id: 'session-id' }
+      })
+
+      expect(updateContext).toHaveBeenCalledWith('new-token', 'session-id', false)
+    })
+
+    it('ignores delegated token updates without an access token', async () => {
+      const { updateContext } = await signInWithDelegatedToken()
+
+      dispatchTokenMessage({ source: parentWindow, data: { session_id: 'session-id' } })
+
+      expect(updateContext).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('initializeContext', () => {
+    it('when embed mode is disabled and access_token is present, should call updateContext', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ access_token: 'access-token', profile: { sid: 'session-id' } }),
+          updateContext: mockUpdateContext
+        })
+      })
+
+      initAuthService({ authService })
+
+      await authService.initializeContext(mock<RouteLocation>({}))
+
+      expect(mockUpdateContext).toHaveBeenCalledWith('access-token', 'session-id', true)
+    })
+
+    it('when embed mode is disabled and access_token is not present, should not call updateContext', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ access_token: null, profile: { sid: null } }),
+          updateContext: mockUpdateContext
+        })
+      })
+
+      initAuthService({ authService })
+
+      await authService.initializeContext(mock<RouteLocation>({}))
+
+      expect(mockUpdateContext).not.toHaveBeenCalled()
+    })
+
+    it('when embed mode is enabled, access_token is present but auth is not delegated, should call updateContext', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ access_token: 'access-token', profile: { sid: 'session-id' } }),
+          updateContext: mockUpdateContext
+        })
+      })
+
+      initAuthService({ authService })
+
+      await authService.initializeContext(mock<RouteLocation>({}))
+
+      expect(mockUpdateContext).toHaveBeenCalledWith('access-token', 'session-id', true)
+    })
+
+    it('when embed mode is enabled, access_token is present and auth is delegated, should not call updateContext', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ access_token: 'access-token', profile: { sid: 'session-id' } }),
+          updateContext: mockUpdateContext
+        })
+      })
+
+      const configStore = useConfigStore()
+      configStore.options = { embed: { enabled: true, delegateAuthentication: true } }
+      initAuthService({ authService, configStore })
+
+      await authService.initializeContext(mock<RouteLocation>({}))
+
+      expect(mockUpdateContext).not.toHaveBeenCalled()
+    })
+
+    it('when embed mode is disabled, access_token is present and auth is delegated, should call updateContext', async () => {
+      const authService = new AuthService()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ access_token: 'access-token', profile: { sid: 'session-id' } }),
+          updateContext: mockUpdateContext
+        })
+      })
+
+      initAuthService({ authService })
+
+      await authService.initializeContext(mock<RouteLocation>({}))
+
+      expect(mockUpdateContext).toHaveBeenCalledWith('access-token', 'session-id', true)
+    })
+  })
+
+  describe('handleAuthError', () => {
+    const userContextRoute = mock<RouteLocation>({ meta: { authContext: 'user' } })
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('retries a transient silent renewal and does not log the user out on eventual success', async () => {
+      const authService = new AuthService()
+      const signinSilent = vi
+        .fn()
+        .mockRejectedValueOnce(new ErrorTimeout('timeout'))
+        .mockResolvedValueOnce(undefined)
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ expired: true }),
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+
+      const promise = authService.handleAuthError(userContextRoute)
+      await vi.runAllTimersAsync()
+      await promise
+
+      expect(signinSilent).toHaveBeenCalledTimes(2)
+      expect(removeUser).not.toHaveBeenCalled()
+    })
+
+    it('logs the user out once transient retries are exhausted', async () => {
+      const authService = new AuthService()
+      const signinSilent = vi.fn().mockRejectedValue(new ErrorTimeout('timeout'))
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ expired: true }),
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+
+      const promise = authService.handleAuthError(userContextRoute)
+      await vi.runAllTimersAsync()
+
+      await expect(promise).resolves.toBe(false)
+      expect(signinSilent).toHaveBeenCalledTimes(5)
+      expect(removeUser).toHaveBeenCalledWith('authError')
+    })
+
+    it('attempts a silent renewal before logging out on a 401 even when the token is not client-side expired', async () => {
+      const authService = new AuthService()
+      const signinSilent = vi.fn().mockResolvedValue(undefined)
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ expired: false }),
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+
+      const promise = authService.handleAuthError(userContextRoute)
+      await vi.runAllTimersAsync()
+
+      await expect(promise).resolves.toBe(true)
+      expect(signinSilent).toHaveBeenCalledTimes(1)
+      expect(removeUser).not.toHaveBeenCalled()
+    })
+
+    it('logs the user out without attempting a renewal when no user is present', async () => {
+      const authService = new AuthService()
+      const signinSilent = vi.fn()
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue(null),
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+
+      await authService.handleAuthError(userContextRoute)
+
+      expect(signinSilent).not.toHaveBeenCalled()
+      expect(removeUser).toHaveBeenCalledWith('authError')
+    })
+
+    it('does not retry a non-transient silent renewal error and logs the user out immediately', async () => {
+      const authService = new AuthService()
+      const signinSilent = vi.fn().mockRejectedValue(new ErrorResponse({ error: 'invalid_grant' }))
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ expired: true }),
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+
+      const promise = authService.handleAuthError(userContextRoute)
+      await vi.runAllTimersAsync()
+      await promise
+
+      expect(signinSilent).toHaveBeenCalledTimes(1)
+      expect(removeUser).toHaveBeenCalledWith('authError')
+    })
+
+    it('logs the user out when updating the context fails for the renewed token', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const authService = new AuthService()
+      let onUserLoaded: (user: unknown) => Promise<void>
+      const removeUser = vi.fn()
+      const updateContext = vi.fn().mockRejectedValue(new Error('network error'))
+      const signinSilent = vi
+        .fn()
+        .mockImplementation(() =>
+          onUserLoaded({ access_token: 'renewed-token', profile: { sid: 'session-id' } })
+        )
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi.fn().mockResolvedValue({ expired: false }),
+          areEventHandlersRegistered: false,
+          events: mock<UserManager['events']>({
+            addAccessTokenExpired: vi.fn(),
+            addAccessTokenExpiring: vi.fn(),
+            addUserLoaded: vi.fn().mockImplementation((cb) => (onUserLoaded = cb)),
+            addUserUnloaded: vi.fn(),
+            addSilentRenewError: vi.fn()
+          }),
+          updateContext,
+          signinSilent,
+          removeUser
+        })
+      })
+
+      initAuthService({ authService, router: createRouter() })
+      await authService.initializeContext(userContextRoute)
+
+      const promise = authService.handleAuthError(userContextRoute)
+      await vi.runAllTimersAsync()
+      await promise
+
+      // the failing context update must not trigger another renewal, otherwise the
+      // nested call would wait for the renewal it is running in and deadlock
+      expect(signinSilent).toHaveBeenCalledTimes(1)
+      expect(updateContext).toHaveBeenCalledTimes(1)
+      expect(removeUser).toHaveBeenCalledWith('authError')
+    })
+
+    const storedRenewal = JSON.stringify({ permissionId: 'permission-id', renewedAt: Date.now() })
+    const guestLinkRoute = {
+      name: 'files-guest-link',
+      fullPath: '/files/guest/share/folder',
+      meta: { authContext: 'guest' },
+      params: {},
+      query: {}
+    } as unknown as RouteLocation
+    const guestEndpointUnauthorizedError = () =>
+      new DavHttpError(
+        '',
+        undefined,
+        { url: 'https://cloud.test/dav/spaces/share-id' } as Response,
+        401
+      )
+
+    it('clears an expired guest context instead of logging out', async () => {
+      const authService = new AuthService()
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null), removeUser })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      localStorage.setItem('oc.guestLinkRenewal', storedRenewal)
+
+      await authService.handleAuthError(
+        guestLinkRoute,
+        new DavHttpError('', undefined, undefined, 401, 'session_expired')
+      )
+
+      expect(removeUser).not.toHaveBeenCalled()
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+      expect(localStorage.getItem('oc.guestLinkRenewal')).toEqual(storedRenewal)
+      expect(replace).toHaveBeenCalledWith({
+        name: 'renewGuestLink',
+        params: { permissionId: 'permission-id' },
+        query: { redirectUrl: '/files/guest/share/folder' }
+      })
+    })
+
+    it('renews with the permission id of a session_expired response', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+
+      const error = new AxiosError('', '401', undefined, undefined, {
+        status: 401,
+        data: { error_type: 'session_expired', permissionId: 'expired-permission-id' }
+      } as AxiosResponse)
+      await expect(authService.handleAuthError(guestLinkRoute, error)).resolves.toBe(false)
+
+      expect(replace).toHaveBeenCalledWith({
+        name: 'renewGuestLink',
+        params: { permissionId: 'expired-permission-id' },
+        query: { redirectUrl: '/files/guest/share/folder' }
+      })
+    })
+
+    it('clears the guest context on a 401 from an endpoint the guest session authenticates', async () => {
+      const authService = new AuthService()
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null), removeUser })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+
+      await authService.handleAuthError(guestLinkRoute, guestEndpointUnauthorizedError())
+
+      expect(removeUser).not.toHaveBeenCalled()
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+      expect(replace).toHaveBeenCalledWith({
+        name: 'renewGuestLink',
+        params: { permissionId: 'permission-id' },
+        query: { redirectUrl: '/files/guest/share/folder' }
+      })
+    })
+
+    it('does not pass a redirect url outside of guest routes', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+
+      await authService.handleAuthError(
+        {
+          name: 'other',
+          fullPath: '/other',
+          meta: { authContext: 'anonymous' },
+          params: {},
+          query: {}
+        } as unknown as RouteLocation,
+        guestEndpointUnauthorizedError()
+      )
+
+      expect(replace).toHaveBeenCalledWith({
+        name: 'renewGuestLink',
+        params: { permissionId: 'permission-id' }
+      })
+    })
+
+    it('redirects a private link opened as a guest to the login', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+
+      await authService.handleAuthError(
+        {
+          name: 'resolvePrivateLink',
+          fullPath: '/f/file-id',
+          meta: { authContext: 'user' },
+          params: { fileId: 'file-id' },
+          query: {}
+        } as unknown as RouteLocation,
+        guestEndpointUnauthorizedError()
+      )
+
+      expect(replace).toHaveBeenCalledWith({ path: '/login', query: { redirectUrl: '/f/file-id' } })
+      expect(authStore.guestContextReady).toBeFalsy()
+    })
+
+    it('does not redirect without a permission id to renew', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      initAuthService({ authService, router })
+
+      await authService.handleAuthError(guestLinkRoute, guestEndpointUnauthorizedError())
+
+      expect(replace).not.toHaveBeenCalled()
+      expect(authService.hasAuthErrorOccurred).toBeFalsy()
+    })
+
+    it('keeps the guest context on a 401 from an endpoint the guest session does not cover', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({ authService, router: createRouter() })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+
+      await authService.handleAuthError(
+        guestLinkRoute,
+        new DavHttpError(
+          '',
+          undefined,
+          { url: 'https://cloud.test/graph/v1.0/me' } as Response,
+          401
+        )
+      )
+
+      expect(authStore.guestContextReady).toBeTruthy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+      expect(authService.hasAuthErrorOccurred).toBeFalsy()
+    })
+
+    it('does not flag an auth error for failures that follow an already cleared guest session', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const replace = vi.spyOn(router, 'replace').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+
+      await Promise.all([
+        authService.handleAuthError(guestLinkRoute, guestEndpointUnauthorizedError()),
+        authService.handleAuthError(guestLinkRoute, guestEndpointUnauthorizedError())
+      ])
+
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(authService.hasAuthErrorOccurred).toBeFalsy()
+      expect(replace).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the guest context on errors that are not a 401', async () => {
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({ authService, router: createRouter() })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+
+      await authService.handleAuthError(guestLinkRoute, new Error('network'))
+
+      expect(authStore.guestContextReady).toBeTruthy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+
+    it("treats a signed-in user's auth error as a user error even with a guest record around", async () => {
+      const authService = new AuthService()
+      const removeUser = vi.fn()
+
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null), removeUser })
+      })
+
+      const { authStore } = initAuthService({ authService, router: createRouter() })
+      authStore.setGuestContext('permission-id', 'share-id')
+      authStore.setUserContextReady(true)
+
+      await authService.handleAuthError(userContextRoute)
+
+      expect(removeUser).toHaveBeenCalledWith('authError')
+    })
+    it('re-resolves a public link on a 401 even with a guest context around', async () => {
+      const authService = new AuthService()
+      const clear = vi.fn()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      const push = vi.spyOn(router, 'push').mockResolvedValue(undefined)
+      const { authStore } = initAuthService({ authService, router })
+      Object.defineProperty(authService, 'publicLinkManager', { value: { clear } })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+
+      await expect(
+        authService.handleAuthError(
+          {
+            name: 'files-public-link',
+            fullPath: '/s/token',
+            meta: { authContext: 'publicLink' },
+            params: { token: 'token' },
+            query: {}
+          } as unknown as RouteLocation,
+          new DavHttpError('', undefined, undefined, 401)
+        )
+      ).resolves.toBe(false)
+
+      expect(clear).toHaveBeenCalledWith('token')
+      expect(push).toHaveBeenCalledWith({
+        name: 'resolvePublicLink',
+        params: { token: 'token' },
+        query: { redirectUrl: '/s/token' }
+      })
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+  })
+
+  describe('initialize', () => {
+    it('disposes the previous guest session manager', () => {
+      const dispose = vi.spyOn(GuestSessionManager.prototype, 'dispose')
+      const authService = new AuthService()
+
+      initAuthService({ authService })
+      expect(dispose).not.toHaveBeenCalled()
+
+      initAuthService({ authService })
+      expect(dispose).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('user logout', () => {
+    it('drops a guest record together with the user context', () => {
+      const authService = new AuthService()
+      const { authStore } = initAuthService({ authService, router: createRouter() })
+      authStore.setGuestContext('permission-id', 'share-id')
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      Object.defineProperty(authService, 'userStore', { value: { reset: vi.fn() } })
+
+      ;(authService as any).resetStateAfterUserLogout()
+
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+    })
+  })
+
+  describe('guest logout', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    function getGuestLogout({ abortNavigation = false } = {}) {
+      const authService = new AuthService()
+      const router = createVueRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: '/logout', name: 'logout', component: {} }]
+      })
+      if (abortNavigation) {
+        router.beforeEach(() => false)
+      }
+      const push = vi.spyOn(router, 'push')
+      initAuthService({ authService, router })
+      const logout = vi.spyOn(GuestSessionManager.prototype, 'logout').mockResolvedValue(undefined)
+      return { authService, push, logout }
+    }
+
+    it('navigates to the guest variant of the logout page before ending the session', async () => {
+      const { authService, push, logout } = getGuestLogout()
+
+      await authService.logoutGuest()
+
+      expect(push).toHaveBeenCalledWith({ name: 'logout', query: { guest: 'true' } })
+      expect(logout).toHaveBeenCalled()
+      expect(push.mock.invocationCallOrder[0]).toBeLessThan(logout.mock.invocationCallOrder[0])
+    })
+
+    it('shows the failure on the logout page if the session could not be ended', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { authService, logout } = getGuestLogout()
+      const router = (authService as any).router
+      const replace = vi.spyOn(router, 'replace')
+      logout.mockRejectedValueOnce(new Error('500'))
+
+      await authService.logoutGuest()
+
+      expect(replace).toHaveBeenCalledWith({
+        name: 'logout',
+        query: { guest: 'true', failed: 'true' }
+      })
+    })
+
+    it('keeps the session when the navigation is aborted', async () => {
+      const { authService, logout } = getGuestLogout({ abortNavigation: true })
+
+      expect(isNavigationFailure(await authService.logoutGuest())).toBeTruthy()
+      expect(logout).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('initializeContext with a guest session', () => {
+    const getClientService = (driveItems: unknown[]) => {
+      const listSharedWithMe = vi.fn().mockResolvedValue(driveItems)
+      const clientService = mock<ClientService>({
+        graphAuthenticated: { driveItems: { listSharedWithMe } }
+      } as any)
+      return { clientService, listSharedWithMe }
+    }
+
+    const guestRoute = {
+      name: 'files-guest-link',
+      fullPath: '/files/guest/share/folder',
+      meta: { authContext: 'guest' },
+      params: {},
+      query: {}
+    } as unknown as RouteLocation
+
+    it('restores a persisted guest session', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      await authService.initializeContext(guestRoute)
+
+      expect(authStore.guestContextReady).toBeTruthy()
+      expect(authStore.guestPermissionId).toEqual('permission-id')
+    })
+
+    it('drops a persisted guest session whose share is gone', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService } = getClientService([])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      await authService.initializeContext(guestRoute)
+
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+    })
+
+    it('restores the guest session of the permission id in the url', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'other-permission-id')
+      const { clientService } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      await authService.initializeContext({
+        name: 'files-guest-link',
+        path: '/guest/share/Invited folder',
+        params: { driveAliasAndItem: 'share/Invited folder' },
+        meta: { authContext: 'guest' },
+        query: { permissionId: 'permission-id' }
+      } as unknown as RouteLocation)
+
+      expect(authStore.guestPermissionId).toEqual('permission-id')
+    })
+
+    it.each(['user', 'idp'])(
+      'drops a persisted guest session instead of restoring it on a %s route',
+      async (authContext) => {
+        const storedRenewal = JSON.stringify({
+          permissionId: 'permission-id',
+          renewedAt: Date.now()
+        })
+        localStorage.setItem('oc.guestPermissionId', 'permission-id')
+        localStorage.setItem('oc.guestLinkRenewal', storedRenewal)
+        const { clientService, listSharedWithMe } = getClientService([
+          {
+            name: 'Invited folder',
+            remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+          }
+        ])
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext({
+          meta: { authContext },
+          params: {},
+          query: {}
+        } as unknown as RouteLocation)
+
+        expect(listSharedWithMe).not.toHaveBeenCalled()
+        expect(authStore.guestContextReady).toBeFalsy()
+        expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+        // nobody signed in, so the pending renewal is kept
+        expect(localStorage.getItem('oc.guestLinkRenewal')).toEqual(storedRenewal)
+      }
+    )
+
+    it.each(['user', 'idp'])('keeps an active guest session on a %s route', async (authContext) => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService } = getClientService([])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      authStore.setGuestContext('permission-id', 'share-id')
+      await authService.initializeContext({
+        meta: { authContext },
+        params: {},
+        query: {}
+      } as unknown as RouteLocation)
+
+      expect(authStore.isGuestContext).toBeTruthy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+
+    it('drops a persisted guest session on a public link route when a user is signed in', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      localStorage.setItem(
+        'oc.guestLinkRenewal',
+        JSON.stringify({ permissionId: 'permission-id', renewedAt: Date.now() })
+      )
+      const { clientService, listSharedWithMe } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ expired: false, access_token: 'token', profile: { sid: 'sid' } })
+        })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      await authService.initializeContext({
+        name: 'files-public-link',
+        meta: { authContext: 'publicLink' },
+        params: {},
+        query: {}
+      } as unknown as RouteLocation)
+
+      expect(listSharedWithMe).not.toHaveBeenCalled()
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+      expect(localStorage.getItem('oc.guestLinkRenewal')).toBeNull()
+    })
+
+    it('deactivates the guest context on a public link route but keeps the persisted session', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService, listSharedWithMe } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({
+        authService,
+        clientService,
+        router: createRouter()
+      })
+      authStore.setGuestContext('permission-id', 'share-id')
+      await authService.initializeContext({
+        name: 'files-public-link',
+        meta: { authContext: 'publicLink' },
+        params: {},
+        query: {}
+      } as unknown as RouteLocation)
+
+      expect(listSharedWithMe).not.toHaveBeenCalled()
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+
+    it('does not restore while a guest link is being resolved', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService, listSharedWithMe } = getClientService([])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      initAuthService({ authService, clientService, router: createRouter() })
+      await authService.initializeContext({
+        name: 'resolveGuestLink',
+        meta: { authContext: 'anonymous' },
+        params: { token: 'token' },
+        query: {}
+      } as unknown as RouteLocation)
+
+      expect(listSharedWithMe).not.toHaveBeenCalled()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+
+    it('does not restore on anonymous routes outside of a guest link', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService, listSharedWithMe } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const { authStore } = initAuthService({ authService, clientService, router: createRouter() })
+      await authService.initializeContext({
+        name: 'login',
+        meta: { authContext: 'anonymous' },
+        params: {},
+        query: {}
+      } as unknown as RouteLocation)
+
+      expect(listSharedWithMe).not.toHaveBeenCalled()
+      expect(authStore.guestContextReady).toBeFalsy()
+      expect(localStorage.getItem('oc.guestPermissionId')).toEqual('permission-id')
+    })
+
+    describe('on a private link route', () => {
+      const privateLinkRoute = {
+        name: 'resolvePrivateLink',
+        fullPath: '/f/file-id',
+        meta: { authContext: 'user' },
+        params: { fileId: 'file-id' },
+        query: {}
+      } as unknown as RouteLocation
+
+      const sharedDriveItems = [
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ]
+
+      it('restores a persisted guest session', async () => {
+        localStorage.setItem('oc.guestPermissionId', 'permission-id')
+        const { clientService } = getClientService(sharedDriveItems)
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(authStore.guestContextReady).toBeTruthy()
+        expect(authStore.guestPermissionId).toEqual('permission-id')
+      })
+
+      it('flags an expired guest session', async () => {
+        localStorage.setItem('oc.guestPermissionId', 'permission-id')
+        const listSharedWithMe = vi
+          .fn()
+          .mockRejectedValue(
+            new DavHttpError(
+              '',
+              undefined,
+              { url: 'https://cloud.test/graph/v1beta1/me/drive/sharedWithMe' } as Response,
+              401
+            )
+          )
+        const clientService = mock<ClientService>({
+          graphAuthenticated: { driveItems: { listSharedWithMe } }
+        } as any)
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(authStore.guestContextReady).toBeFalsy()
+        expect(authService.consumeExpiredGuestPermissionId()).toEqual('permission-id')
+      })
+
+      it('does not restore without a guest session', async () => {
+        const { clientService, listSharedWithMe } = getClientService(sharedDriveItems)
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(listSharedWithMe).not.toHaveBeenCalled()
+        expect(authStore.guestContextReady).toBeFalsy()
+      })
+
+      it('drops a persisted guest session whose share is gone', async () => {
+        localStorage.setItem('oc.guestPermissionId', 'permission-id')
+        const { clientService } = getClientService([])
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(authStore.guestContextReady).toBeFalsy()
+        expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+        expect(authService.consumeExpiredGuestPermissionId()).toBeUndefined()
+        expect(authService.consumeUnavailableGuestPermissionId()).toBeUndefined()
+      })
+
+      it('does not restore with only a pending renewal of an expired session', async () => {
+        localStorage.setItem(
+          'oc.guestLinkRenewal',
+          JSON.stringify({ permissionId: 'permission-id', renewedAt: Date.now() })
+        )
+        const { clientService, listSharedWithMe } = getClientService(sharedDriveItems)
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(listSharedWithMe).not.toHaveBeenCalled()
+        expect(authStore.guestContextReady).toBeFalsy()
+        expect(authService.consumeExpiredGuestPermissionId()).toBeUndefined()
+      })
+
+      it('drops a persisted guest session when a user is signed in', async () => {
+        localStorage.setItem('oc.guestPermissionId', 'permission-id')
+        const { clientService, listSharedWithMe } = getClientService(sharedDriveItems)
+
+        const authService = new AuthService()
+        Object.defineProperty(authService, 'userManager', {
+          value: mock<UserManager>({
+            getUser: vi
+              .fn()
+              .mockResolvedValue({ expired: false, access_token: 'token', profile: { sid: 'sid' } })
+          })
+        })
+
+        const { authStore } = initAuthService({
+          authService,
+          clientService,
+          router: createRouter()
+        })
+        await authService.initializeContext(privateLinkRoute)
+
+        expect(listSharedWithMe).not.toHaveBeenCalled()
+        expect(authStore.guestContextReady).toBeFalsy()
+        expect(localStorage.getItem('oc.guestPermissionId')).toBeNull()
+      })
+    })
+
+    it('restores on a hybrid route opened from a guest link', async () => {
+      localStorage.setItem('oc.guestPermissionId', 'permission-id')
+      const { clientService } = getClientService([
+        {
+          name: 'Invited folder',
+          remoteItem: { id: 'share-id', permissions: [{ id: 'permission-id' }] }
+        }
+      ])
+
+      const authService = new AuthService()
+      Object.defineProperty(authService, 'userManager', {
+        value: mock<UserManager>({ getUser: vi.fn().mockResolvedValue(null) })
+      })
+
+      const router = createRouter()
+      router.addRoute({
+        name: 'files-guest-link',
+        path: '/guest/:driveAliasAndItem(.*)?',
+        component: {},
+        meta: { authContext: 'guest' }
+      })
+      const { authStore } = initAuthService({ authService, clientService, router })
+      await authService.initializeContext({
+        name: 'preview-media',
+        meta: { authContext: 'hybrid' },
+        params: {},
+        query: { contextRouteName: 'files-guest-link' }
+      } as unknown as RouteLocation)
+
+      expect(authStore.guestContextReady).toBeTruthy()
+    })
+  })
+})

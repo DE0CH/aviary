@@ -1,0 +1,45 @@
+name: egress-allowlist
+# Refreshes the sandbox egress allowlist (egress/egress-allowlist/, egress/CHAT.md "The sandbox allowlist") every Monday:
+# runs generate.py and commits allow.txt/deny.txt to main only when an entry changed (the header's date and digest alone
+# don't count). The push (the merge deploy key: main's ruleset refuses the workflow token) starts egress.yml like any
+# push to egress/, whose new image deploy.yml then deploys (a push to main is the deploy, docs/DEPLOY.md).
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: egress-allowlist
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    environment: merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ssh-key: "${{ secrets.MERGE_DEPLOY_KEY }}"}
+      - name: generate
+        run: python3 -I egress/egress-allowlist/generate.py
+      - name: commit when an entry changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -I '^#' -- egress/egress-allowlist; then
+            echo "no entry changed"
+            git checkout -- egress/egress-allowlist
+            exit 0
+          fi
+          git diff --stat -- egress/egress-allowlist
+          git config user.name "egress-allowlist bot"
+          git config user.email "egress-allowlist@aviary.invalid"
+          git add egress/egress-allowlist/allow.txt egress/egress-allowlist/deny.txt
+          git commit -m "egress allowlist: weekly refresh ($(sed -n 's/^# entries: //p' egress/egress-allowlist/allow.txt) allowed, $(sed -n 's/^# entries: //p' egress/egress-allowlist/deny.txt) denied)"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 10
+          done
+          exit 1

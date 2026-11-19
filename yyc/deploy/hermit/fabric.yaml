@@ -1,0 +1,52 @@
+# hermit's fabric on the cluster (hermit spec 14.2, 21.1, 30), namespace yyc-ai-fabric (PSS privileged, nothing else
+# in it). The sandbox gateway is not here: it is the plain server yyc-sbx-gw1 outside the cluster (infra/gateway.sh,
+# README "Sandboxes"), which only passes packets.
+#
+# hermit-overlay-route: on every node in network yyc, the route 10.202.0.0/15 via 10.0.0.1 (the hosts and the
+# sandboxes, through network yyc's route to the gateway server) and the rule that puts it ahead of KubeSpan's. Talos
+# has no shell, so it carries its own iproute2 (the sandboxd image).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hermit-overlay-route
+  namespace: yyc-ai-fabric
+  labels: {app: hermit-overlay-route}
+spec:
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app: hermit-overlay-route}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1}
+  template:
+    metadata:
+      labels: {app: hermit-overlay-route}
+    spec:
+      nodeSelector: {yyc.hetzner/network: "yyc"}
+      hostNetwork: true
+      priorityClassName: serving
+      tolerations: [{operator: Exists}]
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: route
+          image: sandboxd
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              trap 'exit 0' TERM INT
+              while :; do
+                dev=$(ip -o route get 10.0.0.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+                [ -n "$dev" ] && ip route replace 10.202.0.0/15 via 10.0.0.1 dev "$dev"
+                # ahead of every other rule that could claim an address in the range: KubeSpan routes a peer's
+                # addresses into its own tunnel (rule 32500), and the gateway's 10.202.0.1 stayed listed for the old
+                # gateway node after it was powered off, so hermit's calls to the new gateway went nowhere (2026-11-17)
+                ip rule show pref 997 | grep -q . || ip rule add pref 997 to 10.202.0.0/15 lookup main
+                sleep 15 & wait $!
+              done
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 5m, memory: 32Mi}
+            limits: {memory: 96Mi}

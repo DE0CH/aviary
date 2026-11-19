@@ -1,0 +1,545 @@
+import { mock, mockDeep } from 'vitest-mock-extended'
+import { createApp, defineComponent, App, reactive } from 'vue'
+import { flushPromises } from '@vue/test-utils'
+import { Language } from 'vue3-gettext'
+import {
+  ApplicationInformation,
+  AuthStore,
+  CapabilityStore,
+  ClientService,
+  ConfigStore,
+  ResourceIconMapping,
+  SharesStore,
+  SpacesStore,
+  useAppsStore,
+  useConfigStore,
+  useUpdatesStore
+} from '@opencloud-eu/web-pkg'
+import {
+  initializeApplications,
+  announceApplicationsReady,
+  announceClientService,
+  announceCustomScripts,
+  announceCustomStyles,
+  announceConfiguration,
+  announceUpdates,
+  announceTranslations,
+  announceGuestContext,
+  _resetEmbedConfigCache
+} from '../../../src/container/bootstrap'
+import { buildApplication, loadApplication } from '../../../src/container/application'
+import { createTestingPinia, mockAxiosResolve } from '@opencloud-eu/web-test-helpers'
+
+vi.mock('../../../src/container/application')
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@opencloud-eu/web-pkg')>()),
+  ClientService: vi.fn()
+}))
+
+describe('initialize applications', () => {
+  beforeEach(() => {
+    createTestingPinia()
+  })
+
+  it('continues even if one or more applications are falsy', async () => {
+    const fishyError = new Error('fishy')
+    const initialize = vi.fn()
+    const ready = vi.fn()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const loadApplicationMock = vi
+      .fn()
+      .mockImplementation(
+        ({
+          applicationKey,
+          applicationPath
+        }: {
+          applicationKey: string
+          applicationPath: string
+        }) => {
+          if (applicationPath.includes('Valid')) {
+            return Promise.resolve({ applicationKey })
+          }
+
+          return Promise.reject(fishyError)
+        }
+      )
+    vi.mocked(loadApplication).mockImplementation(loadApplicationMock)
+
+    const buildApplicationMock = vi.fn().mockReturnValue({ initialize, ready })
+    vi.mocked(buildApplication).mockImplementation(buildApplicationMock)
+
+    const configStore = useConfigStore()
+    configStore.apps = ['internalFishy', 'internalValid']
+    configStore.externalApps = [
+      { id: '1', path: 'externalFishy' },
+      { id: '2', path: 'externalValid' }
+    ]
+
+    const applications = await initializeApplications({
+      app: createApp(defineComponent({})),
+      configStore,
+      router: undefined,
+      appProviderService: undefined
+    })
+
+    expect(loadApplicationMock).toHaveBeenCalledTimes(4)
+    expect(buildApplicationMock).toHaveBeenCalledTimes(2)
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(errorSpy).toHaveBeenCalledTimes(2)
+    expect(errorSpy.mock.calls[0][0]).toMatchObject(fishyError)
+    expect(errorSpy.mock.calls[1][0]).toMatchObject(fishyError)
+
+    createTestingPinia()
+    await announceApplicationsReady({
+      app: mock<App>(),
+      appsStore: useAppsStore(),
+      applications
+    })
+    expect(ready).toHaveBeenCalledTimes(2)
+  })
+
+  describe('resource icon mapping', () => {
+    async function getMapping(appInfo: ApplicationInformation) {
+      createTestingPinia({ stubActions: false })
+      const appsStore = useAppsStore()
+      appsStore.registerApp(appInfo)
+      const app = mock<App>()
+
+      await announceApplicationsReady({ app, appsStore, applications: [] })
+
+      return vi.mocked(app.provide).mock.calls[0][1] as ResourceIconMapping
+    }
+
+    it('maps the named icon of a file extension with its deprecated color', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        extensions: [{ extension: 'drawio', icon: 'pencil', iconColor: 'red' }]
+      })
+      expect(mapping.extension.drawio).toEqual({ name: 'pencil', color: 'red' })
+    })
+    it('falls back to the icon and color of the app', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        icon: 'brush',
+        color: 'blue',
+        extensions: [{ extension: 'drawio' }]
+      })
+      expect(mapping.extension.drawio).toEqual({ name: 'brush', color: 'blue' })
+    })
+    it('prefers the color of a named icon over the deprecated color', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        extensions: [
+          { extension: 'drawio', icon: { name: 'pencil', color: 'green' }, iconColor: 'red' }
+        ]
+      })
+      expect(mapping.extension.drawio).toEqual({ name: 'pencil', color: 'green' })
+    })
+    it('does not apply the deprecated color of a file extension to the icon of the app', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        icon: { name: 'brush', color: 'blue' },
+        extensions: [{ extension: 'drawio', iconColor: 'red' }]
+      })
+      expect(mapping.extension.drawio).toEqual({ name: 'brush', color: 'blue' })
+    })
+    it('maps the image icon of a file extension', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        color: 'blue',
+        extensions: [{ mimeType: 'application/drawio', icon: { src: 'draw.png' } }]
+      })
+      expect(mapping.mimeType['application/drawio']).toEqual({ src: 'draw.png' })
+    })
+    it('falls back to the image icon of the app', async () => {
+      const mapping = await getMapping({
+        id: 'draw',
+        icon: { src: 'draw.png', srcDark: 'draw-dark.png' },
+        extensions: [{ extension: 'drawio' }]
+      })
+      expect(mapping.extension.drawio).toEqual({ src: 'draw.png', srcDark: 'draw-dark.png' })
+    })
+  })
+
+  it('tracks loading failures for all applications', async () => {
+    createTestingPinia({ stubActions: false })
+
+    const fishyError = new Error('fishy')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const loadApplicationMock = vi
+      .fn()
+      .mockImplementation(({ applicationPath }: { applicationPath: string }) => {
+        return Promise.reject(new Error(`${applicationPath}-${fishyError.message}`))
+      })
+    vi.mocked(loadApplication).mockImplementation(loadApplicationMock)
+    vi.mocked(buildApplication).mockImplementation(vi.fn())
+
+    const configStore = useConfigStore()
+    configStore.apps = ['internal']
+    configStore.externalApps = [{ id: 'external-id', path: 'external-path' }]
+
+    await initializeApplications({
+      app: createApp(defineComponent({})),
+      configStore,
+      router: undefined,
+      appProviderService: undefined
+    })
+
+    const appsStore = useAppsStore()
+    expect(appsStore.appLoadingFailure['external-id']).toBeDefined()
+    expect(appsStore.appLoadingFailure['web-app-internal']).toBeDefined()
+    expect(errorSpy).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('announceCustomScripts', () => {
+  let element: HTMLScriptElement
+
+  beforeEach(() => {
+    createTestingPinia()
+    vi.spyOn(document.head, 'appendChild').mockImplementation(
+      (el) => (element = el as HTMLScriptElement)
+    )
+  })
+
+  it('injects basic scripts', () => {
+    const appendChildSpy = vi.spyOn(document.head, 'appendChild')
+    const configStore = useConfigStore()
+    configStore.scripts = [{ src: 'foo.js' }, { src: 'bar.js' }]
+    announceCustomScripts({ configStore })
+    expect(appendChildSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips the injection if no src option is provided', () => {
+    const appendChildSpy = vi.spyOn(document.head, 'appendChild')
+    const configStore = useConfigStore()
+    configStore.scripts = [{}, {}, {}, {}, {}]
+    announceCustomScripts({ configStore })
+    expect(appendChildSpy).not.toHaveBeenCalled()
+  })
+
+  it('loads scripts synchronous by default', () => {
+    const configStore = useConfigStore()
+    configStore.scripts = [{ src: 'foo.js' }]
+    announceCustomScripts({ configStore })
+    expect(element.async).toBeFalsy()
+  })
+
+  it('injects scripts async if the corresponding configurations option is set', () => {
+    const configStore = useConfigStore()
+    configStore.scripts = [{ src: 'foo.js', async: true }]
+    announceCustomScripts({ configStore })
+    expect(element.async).toBeTruthy()
+  })
+})
+
+describe('announceCustomStyles', () => {
+  beforeEach(() => {
+    createTestingPinia()
+  })
+
+  it('injects basic styles', () => {
+    const appendChildSpy = vi.spyOn(document.head, 'appendChild')
+    const styles = [{ href: 'foo.css' }, { href: 'bar.css' }]
+    const configStore = useConfigStore()
+    configStore.styles = styles
+    announceCustomStyles({ configStore })
+    expect(appendChildSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips the injection if no href option is provided', () => {
+    const appendChildSpy = vi.spyOn(document.head, 'appendChild')
+    const configStore = useConfigStore()
+    configStore.styles = [{}, {}]
+    announceCustomStyles({ configStore })
+    expect(appendChildSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('announceConfiguration', () => {
+  beforeEach(() => {
+    createTestingPinia({ stubActions: false })
+    _resetEmbedConfigCache()
+  })
+
+  it('should not enable embed mode when it is not set', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () => Promise.resolve({ theme: '', server: '', options: {} })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.enabled).toStrictEqual(false)
+  })
+
+  it('should embed mode when it is set in config.json', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () =>
+          Promise.resolve({ theme: '', server: '', options: { embed: { enabled: true } } })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.enabled).toStrictEqual(true)
+  })
+
+  it('should enable embed mode when it is set in URL query but config.json does not set it', async () => {
+    Object.defineProperty(window, 'location', {
+      value: {
+        search: '?embed=true'
+      },
+      writable: true
+    })
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () => Promise.resolve({ theme: '', server: '', options: {} })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.enabled).toStrictEqual(true)
+  })
+
+  it('should not enable the embed mode when it is set in URL query but config.json disables it', async () => {
+    Object.defineProperty(window, 'location', {
+      value: {
+        search: '?embed=true'
+      },
+      writable: true
+    })
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () =>
+          Promise.resolve({ theme: '', server: '', options: { embed: { enabled: false } } })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.enabled).toStrictEqual(false)
+  })
+
+  it('should set embed submit button title from URL query', async () => {
+    Object.defineProperty(window, 'location', {
+      value: {
+        search: '?embed-submit-button-title=Move%20here'
+      },
+      writable: true
+    })
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () => Promise.resolve({ theme: '', server: '', options: {} })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.submitButtonTitle).toStrictEqual('Move here')
+  })
+
+  it('should trim embed file types from URL query and drop empty ones', async () => {
+    Object.defineProperty(window, 'location', {
+      value: {
+        search: '?embed-file-types=pdf,%20docx%20,,text/plain,'
+      },
+      writable: true
+    })
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      mock<Response>({
+        status: 200,
+        json: () => Promise.resolve({ theme: '', server: '', options: {} })
+      })
+    )
+    const configStore = useConfigStore()
+    await announceConfiguration({ path: '/config.json', configStore })
+    expect(configStore.options.embed.fileTypes).toStrictEqual(['pdf', 'docx', 'text/plain'])
+  })
+})
+
+describe('announceUpdates', () => {
+  it('does not contact the update server, if capability is turned off', async () => {
+    const configStore = mockDeep<ConfigStore>({ serverUrl: 'https://demo.opencloud.eu' })
+    const capabilityStore = mockDeep<CapabilityStore>({
+      capabilities: {
+        core: { 'check-for-updates': false }
+      },
+      status: { productversion: '3.5.0', edition: 'rolling' }
+    })
+    const updatesStore = useUpdatesStore()
+    const clientService = mockDeep<ClientService>()
+
+    clientService.httpAuthenticated.get.mockResolvedValue(mockAxiosResolve({}))
+    await announceUpdates({ clientService, updatesStore, configStore, capabilityStore })
+    expect(clientService.httpUnAuthenticated.get).not.toHaveBeenCalled()
+  })
+
+  it('sends the correct params to the update server', async () => {
+    const configStore = mockDeep<ConfigStore>({ serverUrl: 'https://demo.opencloud.eu' })
+    const capabilityStore = mockDeep<CapabilityStore>({
+      capabilities: {
+        core: { 'check-for-updates': true }
+      },
+      status: { productversion: '3.5.0', edition: 'rolling' }
+    })
+    const updatesStore = useUpdatesStore()
+    const clientService = mockDeep<ClientService>()
+
+    clientService.httpAuthenticated.get.mockResolvedValue(mockAxiosResolve({}))
+    await announceUpdates({ clientService, updatesStore, configStore, capabilityStore })
+    expect(clientService.httpUnAuthenticated.get).toHaveBeenCalledWith(
+      'https://update.opencloud.eu/server.json',
+      {
+        headers: {
+          'Cache-Control': 'no-cache'
+        },
+        params: {
+          edition: 'rolling',
+          server: 'feb937bb3019600cd682a7fc66d17a37540d9b3060ffa415373f2ad81f9f3b3a',
+          version: '3.5.0'
+        }
+      }
+    )
+  })
+})
+
+describe('announceClientService', () => {
+  it('creates a client service and provides it on the app', () => {
+    const app = createApp(defineComponent({}))
+    app.config.globalProperties.$language = mock<Language>()
+
+    const configStore = mockDeep<ConfigStore>()
+    const authStore = mockDeep<AuthStore>()
+
+    const clientService = announceClientService({ app, configStore, authStore })
+
+    expect(ClientService).toHaveBeenCalledWith(expect.objectContaining({ configStore, authStore }))
+    expect(app.config.globalProperties.$clientService).toBe(clientService)
+  })
+})
+
+describe('announceTranslations', () => {
+  it('loads core and app translations with custom translations taking precedence', async () => {
+    const gettext = { current: 'de', translations: {} } as unknown as Language
+    const appsStore = mock<ReturnType<typeof useAppsStore>>({
+      apps: { app: { translations: { de: { 'App string': 'App-Text', Delete: 'App-Löschen' } } } }
+    })
+
+    await announceTranslations({
+      gettext,
+      appsStore,
+      customTranslations: { de: { Delete: 'Custom' } }
+    })
+
+    expect(Object.keys(gettext.translations.de).length).toBeGreaterThan(2)
+    expect(gettext.translations.de['App string']).toBe('App-Text')
+    expect(gettext.translations.de.Delete).toBe('Custom')
+  })
+})
+
+describe('announceGuestContext', () => {
+  function getWrapper({
+    supportSSE = true,
+    listRoleDefinitions = () => Promise.resolve([])
+  }: {
+    supportSSE?: boolean
+    listRoleDefinitions?: () => Promise<unknown[]>
+  } = {}) {
+    const authStore = reactive({ isGuestContext: false })
+    const clientService = mockDeep<ClientService>()
+    clientService.graphAuthenticated.permissions.listRoleDefinitions.mockImplementation(
+      listRoleDefinitions as never
+    )
+    const sharesStore = mock<SharesStore>()
+    const spacesStore = mock<SpacesStore>()
+    const stopSSE = vi.fn()
+    const registerSSE = vi.fn(() => stopSSE)
+
+    const stop = announceGuestContext({
+      authStore: authStore as unknown as AuthStore,
+      capabilityStore: mock<CapabilityStore>({ supportSSE }),
+      clientService,
+      sharesStore,
+      spacesStore,
+      registerSSE
+    })
+    onTestFinished(stop)
+
+    return { authStore, sharesStore, spacesStore, registerSSE, stopSSE }
+  }
+
+  it('does nothing without a guest context', async () => {
+    const { registerSSE, spacesStore } = getWrapper()
+    await flushPromises()
+
+    expect(registerSSE).not.toHaveBeenCalled()
+    expect(spacesStore.setSpacesInitialized).not.toHaveBeenCalled()
+  })
+
+  it('loads the roles, registers sse and initializes the spaces', async () => {
+    const roles = [{ id: 'role' }]
+    const { authStore, sharesStore, spacesStore, registerSSE } = getWrapper({
+      listRoleDefinitions: () => Promise.resolve(roles)
+    })
+    authStore.isGuestContext = true
+    await flushPromises()
+
+    expect(sharesStore.setGraphRoles).toHaveBeenCalledWith(roles)
+    expect(registerSSE).toHaveBeenCalledOnce()
+    expect(spacesStore.setSpacesInitialized).toHaveBeenCalledWith(true)
+  })
+
+  it('initializes the spaces even if the roles fail to load', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { authStore, sharesStore, spacesStore } = getWrapper({
+      listRoleDefinitions: () => Promise.reject(new Error('failed'))
+    })
+    authStore.isGuestContext = true
+    await flushPromises()
+
+    expect(sharesStore.setGraphRoles).not.toHaveBeenCalled()
+    expect(spacesStore.setSpacesInitialized).toHaveBeenCalledWith(true)
+  })
+
+  it('does not register sse if not supported', async () => {
+    const { authStore, spacesStore, registerSSE } = getWrapper({ supportSSE: false })
+    authStore.isGuestContext = true
+    await flushPromises()
+
+    expect(registerSSE).not.toHaveBeenCalled()
+    expect(spacesStore.setSpacesInitialized).toHaveBeenCalledWith(true)
+  })
+
+  it('skips a run that got superseded while loading the roles', async () => {
+    let resolveRoles: (roles: unknown[]) => void
+    const { authStore, spacesStore, registerSSE } = getWrapper({
+      listRoleDefinitions: () => new Promise((resolve) => (resolveRoles = resolve))
+    })
+    authStore.isGuestContext = true
+    await flushPromises()
+    authStore.isGuestContext = false
+    await flushPromises()
+    resolveRoles([])
+    await flushPromises()
+
+    expect(registerSSE).not.toHaveBeenCalled()
+    expect(spacesStore.setSpacesInitialized).not.toHaveBeenCalled()
+  })
+
+  it('stops the sse watch of the previous run', async () => {
+    const { authStore, stopSSE } = getWrapper()
+    authStore.isGuestContext = true
+    await flushPromises()
+    expect(stopSSE).not.toHaveBeenCalled()
+
+    authStore.isGuestContext = false
+    await flushPromises()
+    expect(stopSSE).toHaveBeenCalledOnce()
+  })
+})

@@ -120,7 +120,7 @@ pub async fn person_row(db: &impl Db, person: &str) -> Result<PersonRow> {
 /// The columns of [`conversation_from_row`], over `conversations c` with its active and last turn.
 pub const SELECT: &str = "select c.id, c.title, c.name_source, c.created_at, c.activity_at, c.last_user_message_at,
     c.deleted_at, c.provider_session_id, c.run_state, c.background, c.sandbox_phase, c.hermit_state, c.hermit_phase, c.model, c.context_tokens, c.context_window,
-    c.origin, c.person, c.picked_model, c.picked_thinking, c.picked_harness, c.closed_reason, c.waiting_on_person,
+    c.origin, c.person, c.picked_model, c.picked_thinking, c.picked_harness, c.closed_reason, c.waiting_on_person, c.pinned_at,
     t.id as t_id, t.created_at as t_at, t.origin as t_origin, t.model as t_model,
     l.id as l_id, l.state as l_state, l.ended_at as l_ended, l.created_at as l_created, l.error_code as l_code,
     l.error_detail as l_detail,
@@ -248,6 +248,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         origin,
         next_schedule_at: row.get::<_, Option<OffsetDateTime>>("next_schedule_at").map(ts),
         waiting_on_person: row.get("waiting_on_person"),
+        pinned_at: row.get::<_, Option<OffsetDateTime>>("pinned_at").map(ts),
     })
 }
 

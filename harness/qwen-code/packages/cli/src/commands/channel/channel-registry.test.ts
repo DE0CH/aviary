@@ -1,0 +1,1408 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { ChannelPlugin } from '@qwen-code/channel-base';
+import {
+  getPlugin,
+  registerPlugin,
+  supportedChannelCatalog,
+} from './channel-registry.js';
+
+function invalidPlugin(
+  type: string,
+  fields: readonly unknown[],
+): ChannelPlugin {
+  return {
+    channelType: type,
+    displayName: type,
+    management: { fields },
+    createChannel() {
+      throw new Error('not used');
+    },
+  } as unknown as ChannelPlugin;
+}
+
+describe('channel registry', () => {
+  it('publishes an outbound destination without injecting conversation controls', async () => {
+    const plugin: ChannelPlugin = {
+      channelType: 'valid-outbound-only',
+      displayName: 'Outbound only',
+      outboundOnly: true,
+      defaultDeliveryTarget: {
+        type: 'chat',
+        id: 'default',
+        label: 'Configured group',
+      },
+      management: {
+        fields: [
+          {
+            key: 'webhookUrl',
+            label: 'Webhook URL',
+            kind: 'secret',
+            required: true,
+            envResolvable: true,
+          },
+        ],
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    };
+    registerPlugin(plugin);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === plugin.channelType,
+    );
+    expect(entry).toEqual({
+      type: plugin.channelType,
+      displayName: plugin.displayName,
+      manageable: true,
+      supportsQrLogin: false,
+      outboundOnly: true,
+      defaultDeliveryTarget: {
+        type: 'chat',
+        id: 'default',
+        label: 'Configured group',
+      },
+      fields: plugin.management?.fields,
+    });
+    expect(entry?.defaultDeliveryTarget).not.toBe(plugin.defaultDeliveryTarget);
+  });
+
+  it('keeps the legacy catalog shape when delivery metadata is omitted', async () => {
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'dingtalk',
+    );
+    expect(Object.keys(entry!).sort()).toEqual([
+      'displayName',
+      'fields',
+      'manageable',
+      'supportsQrLogin',
+      'type',
+    ]);
+    expect(entry?.fields).toContainEqual(
+      expect.objectContaining({ key: 'privatePolicy' }),
+    );
+  });
+
+  it.each([
+    { name: 'length-boundary', id: 'x'.repeat(2048) },
+    { name: 'surrounding-whitespace', id: ' default ' },
+  ])('preserves a valid $name target ID', async ({ name, id }) => {
+    const plugin: ChannelPlugin = {
+      ...invalidPlugin(`valid-delivery-${name}`, []),
+      defaultDeliveryTarget: { type: 'chat', id },
+    };
+    registerPlugin(plugin);
+    expect(
+      (await supportedChannelCatalog()).find(
+        (candidate) => candidate.type === plugin.channelType,
+      ),
+    ).toMatchObject({
+      manageable: true,
+      defaultDeliveryTarget: { type: 'chat', id },
+    });
+  });
+
+  it.each([
+    { name: 'outbound-flag', metadata: { outboundOnly: 'true' } },
+    { name: 'null-target', metadata: { defaultDeliveryTarget: null } },
+    { name: 'array-target', metadata: { defaultDeliveryTarget: [] } },
+    {
+      name: 'target-type',
+      metadata: { defaultDeliveryTarget: { type: 'url', id: 'default' } },
+    },
+    {
+      name: 'target-id',
+      metadata: { defaultDeliveryTarget: { type: 'chat', id: '   ' } },
+    },
+    {
+      name: 'oversize-target-id',
+      metadata: {
+        defaultDeliveryTarget: { type: 'chat', id: 'x'.repeat(2049) },
+      },
+    },
+    ...[
+      'https://oapi.dingtalk.com/robot/send?access_token=private-token',
+      ' HTTPS://oapi.dingtalk.com/robot/send?access_token=private-token ',
+    ].map((id, index) => ({
+      name: `url-target-id-${index}`,
+      metadata: { defaultDeliveryTarget: { type: 'chat', id } },
+    })),
+    {
+      name: 'target-label',
+      metadata: {
+        defaultDeliveryTarget: { type: 'chat', id: 'default', label: 3 },
+      },
+    },
+    {
+      name: 'target-credentials',
+      metadata: {
+        defaultDeliveryTarget: {
+          type: 'chat',
+          id: 'default',
+          webhookUrl: 'https://example.invalid/secret',
+        },
+      },
+    },
+  ])('does not publish invalid $name metadata', async ({ name, metadata }) => {
+    const plugin = {
+      ...invalidPlugin(`invalid-delivery-${name}`, []),
+      ...metadata,
+    } as unknown as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      registerPlugin(plugin);
+      const registered = await getPlugin(plugin.channelType);
+      expect(registered?.createChannel).toBe(plugin.createChannel);
+      expect(registered?.management).toBeUndefined();
+      expect(registered?.outboundOnly).toBeUndefined();
+      expect(registered?.defaultDeliveryTarget).toBeUndefined();
+      expect(
+        (await supportedChannelCatalog()).find(
+          (candidate) => candidate.type === plugin.channelType,
+        ),
+      ).toEqual({
+        type: plugin.channelType,
+        displayName: plugin.displayName,
+        manageable: false,
+        supportsQrLogin: false,
+        fields: [],
+      });
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('strips delivery hints when other management metadata is invalid', async () => {
+    const plugin: ChannelPlugin = {
+      ...invalidPlugin('invalid-outbound-management', [
+        { key: 'token', label: 'Token', kind: 'unsupported' },
+      ]),
+      outboundOnly: true,
+      defaultDeliveryTarget: { type: 'chat', id: 'default' },
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      registerPlugin(plugin);
+      expect(
+        (await supportedChannelCatalog()).find(
+          (entry) => entry.type === plugin.channelType,
+        ),
+      ).toEqual({
+        type: plugin.channelType,
+        displayName: plugin.displayName,
+        manageable: false,
+        supportsQrLogin: false,
+        fields: [],
+      });
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('adds the shared output descriptor only when a plugin opts in', async () => {
+    registerPlugin({
+      channelType: 'valid-output-mode',
+      displayName: 'Shared output mode',
+      supportsOutputMode: true,
+      management: { fields: [] },
+      createChannel() {
+        throw new Error('not used');
+      },
+    });
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'valid-output-mode',
+    );
+    const fields = entry?.fields.filter((field) => field.key === 'outputMode');
+    expect(fields).toHaveLength(1);
+    expect(fields?.[0]).toMatchObject({
+      kind: 'enum',
+      options: [
+        { value: 'per_task' },
+        { value: 'per_response' },
+        { value: 'per_turn' },
+      ],
+    });
+    expect(fields?.[0]?.default).toBe('per_turn');
+  });
+
+  it('publishes a plugin session-scope descriptor once with its runtime default', async () => {
+    registerPlugin({
+      channelType: 'valid-custom-session-scope',
+      displayName: 'Custom scope',
+      defaultSessionScope: 'thread',
+      management: {
+        fields: [
+          {
+            key: 'sessionScope',
+            label: 'Conversation scope',
+            kind: 'enum',
+            options: [
+              { value: 'user', label: 'User' },
+              { value: 'thread', label: 'Thread' },
+            ],
+          },
+        ],
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    });
+
+    const descriptor = (await supportedChannelCatalog()).find(
+      (entry) => entry.type === 'valid-custom-session-scope',
+    );
+    const scopeFields = descriptor?.fields.filter(
+      (field) => field.key === 'sessionScope',
+    );
+    expect(scopeFields).toHaveLength(1);
+    expect(scopeFields?.[0]).toMatchObject({
+      label: 'Conversation scope',
+      default: 'thread',
+    });
+  });
+
+  it('strips management for an invalid runtime session-scope default', async () => {
+    registerPlugin({
+      channelType: 'invalid-session-scope-default',
+      displayName: 'Invalid scope',
+      defaultSessionScope: 'workspace' as never,
+      management: { fields: [] },
+      createChannel() {
+        throw new Error('not used');
+      },
+    });
+
+    await expect(getPlugin('invalid-session-scope-default')).resolves.toEqual(
+      expect.objectContaining({ management: undefined }),
+    );
+  });
+
+  it.each([
+    {
+      type: 'invalid-output-mode-descriptor',
+      fields: [
+        {
+          key: 'outputMode',
+          label: 'Output Mode',
+          kind: 'enum',
+          options: [{ value: 'all', label: 'All' }],
+        },
+      ],
+      message:
+        'Channel field "outputMode" is shared; declare supportsOutputMode instead.',
+    },
+    {
+      type: 'invalid-nested-secret',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [{ key: 'token', label: 'Token', kind: 'secret' }],
+        },
+      ],
+      message: 'Channel field "settings.token" cannot declare a nested secret.',
+    },
+    {
+      type: 'invalid-nested-environment',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            {
+              key: 'endpoint',
+              label: 'Endpoint',
+              kind: 'string',
+              envResolvable: true,
+            },
+          ],
+        },
+      ],
+      message:
+        'Channel field "settings.endpoint" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-required-object',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          required: true,
+        },
+      ],
+      message: 'Channel field "settings" cannot be a required object.',
+    },
+    {
+      type: 'invalid-truthy-required-object',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          required: 'true',
+        },
+      ],
+      message: 'Channel field "settings" cannot be a required object.',
+    },
+    {
+      type: 'invalid-truthy-nested-environment',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            {
+              key: 'endpoint',
+              label: 'Endpoint',
+              kind: 'string',
+              envResolvable: 'yes',
+            },
+          ],
+        },
+      ],
+      message:
+        'Channel field "settings.endpoint" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-env-resolvable-object',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          envResolvable: true,
+        },
+      ],
+      message:
+        'Channel field "settings" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-reserved-field-key',
+      fields: [
+        {
+          key: 'constructor',
+          label: 'Constructor',
+          kind: 'string',
+        },
+      ],
+      message: 'Channel field "constructor" cannot use a reserved key.',
+    },
+    {
+      type: 'invalid-reserved-property-key',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            { key: 'prototype', label: 'Prototype', kind: 'string' },
+          ],
+        },
+      ],
+      message: 'Channel field "settings.prototype" cannot use a reserved key.',
+    },
+    {
+      type: 'invalid-depth2-nested-secret',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            {
+              key: 'inner',
+              label: 'Inner',
+              kind: 'object',
+              properties: [{ key: 'token', label: 'Token', kind: 'secret' }],
+            },
+          ],
+        },
+      ],
+      message:
+        'Channel field "settings.inner.token" cannot declare a nested secret.',
+    },
+    {
+      type: 'invalid-depth2-reserved-key',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            {
+              key: 'inner',
+              label: 'Inner',
+              kind: 'object',
+              properties: [
+                { key: '__proto__', label: 'Proto', kind: 'string' },
+              ],
+            },
+          ],
+        },
+      ],
+      message:
+        'Channel field "settings.inner.__proto__" cannot use a reserved key.',
+    },
+    {
+      type: 'invalid-reserved-type-key',
+      fields: [
+        {
+          key: 'type',
+          label: 'Type',
+          kind: 'string',
+        },
+      ],
+      message: 'Channel field "type" cannot use the reserved key "type".',
+    },
+    {
+      type: 'invalid-field-without-key',
+      fields: [{ label: 'Token', kind: 'string', required: true }],
+      message: 'Channel field "undefined" must declare a non-empty string key.',
+    },
+    {
+      type: 'invalid-unknown-kind',
+      fields: [{ key: 'retries', label: 'Retries', kind: 'sting' }],
+      message: 'Channel field "retries" declares an unknown kind "sting".',
+    },
+    {
+      type: 'invalid-enum-without-options',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          required: true,
+        },
+      ],
+      message: 'Channel field "mode" must declare at least one option.',
+    },
+    {
+      type: 'invalid-enum-empty-options',
+      fields: [{ key: 'mode', label: 'Mode', kind: 'enum', options: [] }],
+      message: 'Channel field "mode" must declare at least one option.',
+    },
+    {
+      type: 'invalid-enum-string-options',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          options: ['allowlist', 'open'],
+        },
+      ],
+      message:
+        'Channel field "mode" must declare non-empty string option values.',
+    },
+    {
+      type: 'invalid-enum-empty-option-value',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          options: [{ value: '', label: 'Empty' }],
+        },
+      ],
+      message:
+        'Channel field "mode" must declare non-empty string option values.',
+    },
+    {
+      type: 'invalid-enum-duplicate-option-values',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          options: [
+            { value: 'fast', label: 'Fast' },
+            { value: 'fast', label: 'Fastest' },
+          ],
+        },
+      ],
+      message: 'Channel field "mode" declares duplicate option values.',
+    },
+    {
+      type: 'invalid-non-finite-exclusive-minimum',
+      fields: [
+        {
+          key: 'retries',
+          label: 'Retries',
+          kind: 'number',
+          exclusiveMinimum: Number.NaN,
+        },
+      ],
+      message:
+        'Channel field "retries" must declare a finite exclusiveMinimum.',
+    },
+    {
+      type: 'invalid-exclusive-minimum-on-string',
+      fields: [
+        {
+          key: 'retentionDays',
+          label: 'Retention days',
+          kind: 'string',
+          exclusiveMinimum: 0,
+        },
+      ],
+      message:
+        'Channel field "retentionDays" can only declare exclusiveMinimum on number fields.',
+    },
+    {
+      type: 'invalid-maximum-on-string',
+      fields: [
+        {
+          key: 'retentionDays',
+          label: 'Retention days',
+          kind: 'string',
+          maximum: 0,
+        },
+      ],
+      message:
+        'Channel field "retentionDays" can only declare maximum on number fields.',
+    },
+    {
+      type: 'invalid-non-finite-maximum',
+      fields: [
+        {
+          key: 'retries',
+          label: 'Retries',
+          kind: 'number',
+          maximum: Number.NaN,
+        },
+      ],
+      message: 'Channel field "retries" must declare a finite maximum.',
+    },
+    {
+      type: 'invalid-maximum-leaves-no-valid-value',
+      fields: [
+        {
+          key: 'retries',
+          label: 'Retries',
+          kind: 'number',
+          exclusiveMinimum: 5,
+          maximum: 5,
+        },
+      ],
+      message:
+        'Channel field "retries" declares a maximum that leaves no valid value.',
+    },
+    {
+      type: 'invalid-non-finite-minimum',
+      fields: [
+        {
+          key: 'retries',
+          label: 'Retries',
+          kind: 'number',
+          minimum: Number.NaN,
+        },
+      ],
+      message: 'Channel field "retries" must declare a finite minimum.',
+    },
+    {
+      type: 'invalid-minimum-on-string',
+      fields: [
+        {
+          key: 'retentionDays',
+          label: 'Retention days',
+          kind: 'string',
+          minimum: 0,
+        },
+      ],
+      message:
+        'Channel field "retentionDays" can only declare minimum on number fields.',
+    },
+    {
+      type: 'invalid-maximum-below-inclusive-minimum',
+      fields: [
+        {
+          key: 'retries',
+          label: 'Retries',
+          kind: 'number',
+          minimum: 6,
+          maximum: 5,
+        },
+      ],
+      message:
+        'Channel field "retries" declares a maximum that leaves no valid value.',
+    },
+    {
+      type: 'invalid-env-resolvable-number',
+      fields: [
+        {
+          key: 'timeout',
+          label: 'Timeout',
+          kind: 'number',
+          envResolvable: true,
+        },
+      ],
+      message: 'Channel field "timeout" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-env-resolvable-enum',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          envResolvable: true,
+          options: [{ value: 'safe', label: 'Safe' }],
+        },
+      ],
+      message: 'Channel field "mode" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-env-resolvable-boolean',
+      fields: [
+        {
+          key: 'enabled',
+          label: 'Enabled',
+          kind: 'boolean',
+          envResolvable: true,
+        },
+      ],
+      message: 'Channel field "enabled" cannot resolve environment references.',
+    },
+    {
+      type: 'invalid-missing-label',
+      fields: [{ key: 'token', kind: 'string' }],
+      message: 'Channel field "token" must declare a string label.',
+    },
+    {
+      type: 'invalid-object-label',
+      fields: [{ key: 'token', label: { en: 'Token' }, kind: 'secret' }],
+      message: 'Channel field "token" must declare a string label.',
+    },
+    {
+      type: 'invalid-non-string-description',
+      fields: [
+        {
+          key: 'token',
+          label: 'Token',
+          kind: 'string',
+          description: ['rich'],
+        },
+      ],
+      message: 'Channel field "token" must declare a string description.',
+    },
+    {
+      type: 'invalid-non-string-default',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          default: 42,
+          options: [{ value: 'safe', label: 'Safe' }],
+        },
+      ],
+      message: 'Channel field "mode" must declare a string default.',
+    },
+    {
+      type: 'invalid-enum-default-not-in-options',
+      fields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'enum',
+          default: 'turbo',
+          options: [
+            { value: 'safe', label: 'Safe' },
+            { value: 'fast', label: 'Fast' },
+          ],
+        },
+      ],
+      message:
+        'Channel field "mode" declares a default that is not one of its options.',
+    },
+    {
+      type: 'invalid-object-properties-not-array',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: '',
+        },
+      ],
+      message: 'Channel field "settings" must declare a properties array.',
+    },
+    {
+      type: 'invalid-object-without-properties',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+        },
+      ],
+      message: 'Channel field "settings" must declare a properties array.',
+    },
+    {
+      type: 'invalid-object-with-empty-properties',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [],
+        },
+      ],
+      message: 'Channel field "settings" must declare at least one property.',
+    },
+    {
+      type: 'invalid-duplicate-top-level-field',
+      fields: [
+        { key: 'token', label: 'Token', kind: 'secret' },
+        { key: 'token', label: 'Token', kind: 'string' },
+      ],
+      message: 'Channel field "token" is declared more than once.',
+    },
+    {
+      type: 'invalid-duplicate-nested-field',
+      fields: [
+        {
+          key: 'settings',
+          label: 'Settings',
+          kind: 'object',
+          properties: [
+            { key: 'enabled', label: 'Enabled', kind: 'boolean' },
+            { key: 'enabled', label: 'Enabled', kind: 'boolean' },
+          ],
+        },
+      ],
+      message: 'Channel field "settings.enabled" is declared more than once.',
+    },
+  ])(
+    'registers $type without management metadata',
+    async ({ type, fields, message }) => {
+      const plugin = invalidPlugin(type, fields);
+      const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      registerPlugin(plugin);
+
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Invalid management metadata in "${type}" channel: ${message}`,
+        ),
+      );
+      stderr.mockRestore();
+
+      const registered = await getPlugin(type);
+      expect(registered?.management).toBeUndefined();
+      expect(registered).not.toBe(plugin);
+      expect(registered?.createChannel).toBe(plugin.createChannel);
+
+      const entry = (await supportedChannelCatalog()).find(
+        (candidate) => candidate.type === type,
+      );
+      expect(entry).toEqual({
+        type,
+        displayName: type,
+        manageable: false,
+        supportsQrLogin: false,
+        fields: [],
+      });
+    },
+  );
+
+  it.each([
+    ['null', null],
+    ['a non-object', 'qr'],
+    ['an object without start', {}],
+    ['a non-function start', { start: 42 }],
+  ])(
+    'strips management when qrLogin is %s instead of throwing',
+    async (_label, qrLogin) => {
+      const type = `invalid-qr-login-${_label.replace(/[^a-z]+/g, '-')}`;
+      const plugin = {
+        channelType: type,
+        displayName: type,
+        management: { fields: [], qrLogin },
+        createChannel() {
+          throw new Error('not used');
+        },
+      } as unknown as ChannelPlugin;
+      const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      registerPlugin(plugin);
+
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Channel management metadata must declare qrLogin.start as a function.',
+        ),
+      );
+      stderr.mockRestore();
+
+      const registered = await getPlugin(type);
+      expect(registered?.management).toBeUndefined();
+    },
+  );
+
+  it('keeps management when qrLogin declares a start function', async () => {
+    const plugin = {
+      channelType: 'valid-qr-login',
+      displayName: 'valid-qr-login',
+      management: { fields: [], qrLogin: { start: () => () => {} } },
+      createChannel() {
+        throw new Error('not used');
+      },
+    } as unknown as ChannelPlugin;
+
+    registerPlugin(plugin);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'valid-qr-login',
+    );
+    expect(entry?.manageable).toBe(true);
+    expect(entry?.supportsQrLogin).toBe(true);
+  });
+
+  it('registers a plugin whose management descriptor lacks a fields array without management metadata', async () => {
+    const plugin = {
+      channelType: 'invalid-missing-fields-array',
+      displayName: 'invalid-missing-fields-array',
+      management: {},
+      createChannel() {
+        throw new Error('not used');
+      },
+    } as unknown as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Invalid management metadata in "invalid-missing-fields-array" channel: Channel management metadata must declare a fields array.',
+      ),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('invalid-missing-fields-array');
+    expect(registered?.management).toBeUndefined();
+    expect(registered).not.toBe(plugin);
+    expect(registered?.createChannel).toBe(plugin.createChannel);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'invalid-missing-fields-array',
+    );
+    expect(entry).toEqual({
+      type: 'invalid-missing-fields-array',
+      displayName: 'invalid-missing-fields-array',
+      manageable: false,
+      supportsQrLogin: false,
+      fields: [],
+    });
+  });
+
+  it('registers a plugin whose validateConfig is not a function without management metadata', async () => {
+    const plugin = {
+      channelType: 'invalid-validate-config',
+      displayName: 'invalid-validate-config',
+      management: {
+        fields: [{ key: 'token', label: 'Token', kind: 'string' }],
+        validateConfig: { report: true },
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    } as unknown as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Invalid management metadata in "invalid-validate-config" channel: Channel management metadata must declare validateConfig as a synchronous function.',
+      ),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('invalid-validate-config');
+    expect(registered?.management).toBeUndefined();
+    expect(registered).not.toBe(plugin);
+    expect(registered?.createChannel).toBe(plugin.createChannel);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'invalid-validate-config',
+    );
+    expect(entry).toEqual({
+      type: 'invalid-validate-config',
+      displayName: 'invalid-validate-config',
+      manageable: false,
+      supportsQrLogin: false,
+      fields: [],
+    });
+  });
+
+  it('registers a plugin whose validateConfig is async without management metadata', async () => {
+    const plugin = {
+      channelType: 'invalid-async-validate-config',
+      displayName: 'invalid-async-validate-config',
+      management: {
+        fields: [{ key: 'token', label: 'Token', kind: 'string' }],
+        validateConfig: async () => undefined,
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    } as unknown as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Invalid management metadata in "invalid-async-validate-config" channel: Channel management metadata must declare validateConfig as a synchronous function.',
+      ),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('invalid-async-validate-config');
+    expect(registered?.management).toBeUndefined();
+    expect(registered).not.toBe(plugin);
+    expect(registered?.createChannel).toBe(plugin.createChannel);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'invalid-async-validate-config',
+    );
+    expect(entry).toEqual({
+      type: 'invalid-async-validate-config',
+      displayName: 'invalid-async-validate-config',
+      manageable: false,
+      supportsQrLogin: false,
+      fields: [],
+    });
+  });
+
+  it('registers a null-prototype plugin without management metadata and keeps Object.prototype behavior', async () => {
+    const plugin = Object.assign(Object.create(null), {
+      channelType: 'invalid-null-prototype-plugin',
+      displayName: 'invalid-null-prototype-plugin',
+      management: {
+        fields: [
+          {
+            key: 'settings',
+            label: 'Settings',
+            kind: 'object',
+            required: true,
+          },
+        ],
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    }) as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Invalid management metadata in "invalid-null-prototype-plugin" channel: Channel field "settings" cannot be a required object.',
+      ),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('invalid-null-prototype-plugin');
+    expect(registered?.management).toBeUndefined();
+    expect(registered).not.toBe(plugin);
+    expect(Object.getPrototypeOf(registered)).toBe(Object.prototype);
+    expect(registered?.createChannel).toBe(plugin.createChannel);
+  });
+
+  it('registers a plugin whose management is a getter-only accessor without management metadata', async () => {
+    class GetterManagementPlugin {
+      channelType = 'invalid-getter-management';
+      displayName = 'invalid-getter-management';
+      get management() {
+        return {
+          fields: [
+            {
+              key: 'settings',
+              label: 'Settings',
+              kind: 'object',
+              required: true,
+            },
+          ],
+        };
+      }
+      createChannel(): never {
+        throw new Error('not used');
+      }
+    }
+    const plugin = new GetterManagementPlugin() as unknown as ChannelPlugin;
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Invalid management metadata in "invalid-getter-management" channel: Channel field "settings" cannot be a required object.',
+      ),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('invalid-getter-management');
+    expect(registered?.management).toBeUndefined();
+    expect(registered).not.toBe(plugin);
+    expect(registered?.createChannel).toBe(plugin.createChannel);
+  });
+
+  it('registers an object field declaring required: false with management intact', async () => {
+    const plugin: ChannelPlugin = {
+      channelType: 'valid-optional-required-object',
+      displayName: 'valid-optional-required-object',
+      defaultSessionScope: 'thread',
+      management: {
+        fields: [
+          {
+            key: 'settings',
+            label: 'Settings',
+            kind: 'object',
+            required: false,
+            properties: [{ key: 'enabled', label: 'Enabled', kind: 'boolean' }],
+          },
+        ],
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).not.toHaveBeenCalledWith(
+      expect.stringContaining('Invalid management metadata'),
+    );
+    stderr.mockRestore();
+
+    const registered = await getPlugin('valid-optional-required-object');
+    expect(registered).toBe(plugin);
+    expect(registered?.management).toBe(plugin.management);
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'valid-optional-required-object',
+    );
+    expect(entry?.manageable).toBe(true);
+    expect(
+      entry?.fields.find((field) => field.key === 'sessionScope'),
+    ).toMatchObject({
+      default: 'thread',
+      options: [
+        { value: 'user' },
+        { value: 'thread' },
+        { value: 'chat_thread' },
+        { value: 'single' },
+      ],
+    });
+  });
+
+  it('registers a single-value interval whose maximum equals its inclusive floor', async () => {
+    // The inclusive clause must stay strict `<`. Copying the exclusive
+    // sibling's `<=` one line above would refuse a field with exactly one
+    // legal value and drop that channel's whole management surface — and
+    // every other new case here is a rejection, so nothing else notices.
+    const plugin: ChannelPlugin = {
+      channelType: 'valid-single-value-interval',
+      displayName: 'valid-single-value-interval',
+      defaultSessionScope: 'thread',
+      management: {
+        fields: [
+          {
+            key: 'retries',
+            label: 'Retries',
+            kind: 'number',
+            minimum: 5,
+            maximum: 5,
+          },
+        ],
+      },
+      createChannel() {
+        throw new Error('not used');
+      },
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    registerPlugin(plugin);
+
+    expect(stderr).not.toHaveBeenCalledWith(
+      expect.stringContaining('Invalid management metadata'),
+    );
+    stderr.mockRestore();
+
+    const entry = (await supportedChannelCatalog()).find(
+      (candidate) => candidate.type === 'valid-single-value-interval',
+    );
+    expect(entry?.manageable).toBe(true);
+    expect(
+      entry?.fields.find((field) => field.key === 'retries'),
+    ).toMatchObject({ minimum: 5, maximum: 5 });
+  });
+
+  it('only marks the manually configurable built-in types as manageable', async () => {
+    const catalog = await supportedChannelCatalog();
+    const builtinCatalog = catalog.filter(
+      (entry) =>
+        !entry.type.startsWith('invalid-') && !entry.type.startsWith('valid-'),
+    );
+    expect(builtinCatalog.map((entry) => entry.type)).toEqual([
+      'telegram',
+      'weixin',
+      'dingtalk',
+      'dingtalk-webhook',
+      'dws',
+      'email',
+      'wecom',
+      'wecom-callback',
+      'feishu',
+      'qq',
+      'github',
+      'gitlab',
+    ]);
+    expect(
+      builtinCatalog
+        .filter((entry) => entry.manageable)
+        .map((entry) => entry.type),
+    ).toEqual([
+      'weixin',
+      'dingtalk',
+      'dingtalk-webhook',
+      'dws',
+      'email',
+      'wecom',
+      'wecom-callback',
+      'feishu',
+      'qq',
+      'github',
+      'gitlab',
+    ]);
+    expect(
+      builtinCatalog
+        .filter((entry) =>
+          entry.fields.some((field) => field.key === 'outputMode'),
+        )
+        .map((entry) => entry.type),
+    ).toEqual(['dingtalk']);
+    // WeChat's iLink Bot only produces direct messages, so its group policy
+    // must offer nothing else. Without this the shared four-option descriptor
+    // would silently come back and let an operator enable a mode the adapter
+    // can never reach.
+    expect(
+      builtinCatalog
+        .find((entry) => entry.type === 'weixin')
+        ?.fields.find((field) => field.key === 'groupPolicy'),
+    ).toMatchObject({
+      kind: 'enum',
+      required: true,
+      default: 'disabled',
+      options: [{ value: 'disabled', label: 'Disabled' }],
+    });
+    // No API-root knob: `connect()` replaces the configured root with the one
+    // stored at login, and both login paths always store one, so the field
+    // would promise an override that can never reach a request.
+    expect(
+      builtinCatalog
+        .find((entry) => entry.type === 'weixin')
+        ?.fields.some((field) => field.key === 'baseUrl'),
+    ).toBe(false);
+    // The registry skips the shared `instructions` injection for any channel
+    // that declares its own, so pin the render invariants the editor depends on
+    // for every manageable inbound type: one field, plus the multiline hint
+    // (without it the editor falls back to a single-line input that flattens
+    // stored guidance on the first edit). The copy guarantee is scoped to the
+    // injected descriptor, because a channel declaring its own `instructions`
+    // takes the skip branch and may carry tailored neutral copy, and it is
+    // asserted where an operator actually reads it
+    // (ChannelEditorDialog.test.tsx): fieldDescription resolves
+    // `${labelKey}.description` and falls back to this literal only when that
+    // i18n key is missing.
+    for (const entry of builtinCatalog.filter(
+      (item) => item.manageable && !item.outboundOnly,
+    )) {
+      const instructions = entry.fields.filter(
+        (field) => field.key === 'instructions',
+      );
+      expect(instructions).toHaveLength(1);
+      expect(instructions[0]).toMatchObject({
+        kind: 'string',
+        multiline: true,
+      });
+      const declaresOwnInstructions = (
+        await getPlugin(entry.type)
+      )?.management?.fields?.some((field) => field.key === 'instructions');
+      if (!declaresOwnInstructions) {
+        expect(instructions[0].description).toContain(
+          'replace their own default guidance',
+        );
+      }
+    }
+    expect(
+      catalog.find((entry) => entry.type === 'dingtalk')?.fields,
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'clientSecret',
+        kind: 'secret',
+        required: true,
+      }),
+    );
+    const webhook = catalog.find((entry) => entry.type === 'dingtalk-webhook');
+    expect(webhook).toMatchObject({
+      manageable: true,
+      outboundOnly: true,
+      defaultDeliveryTarget: { type: 'chat', id: 'default' },
+    });
+    expect(webhook?.fields.map((field) => field.key)).toEqual([
+      'webhookUrl',
+      'signingSecret',
+    ]);
+    for (const type of ['dingtalk', 'wecom', 'feishu'] as const) {
+      const fields = catalog.find((entry) => entry.type === type)?.fields;
+      expect(fields).not.toContainEqual(
+        expect.objectContaining({
+          key: 'messagePrefix',
+          kind: 'string',
+        }),
+      );
+      expect(
+        fields
+          ?.find((field) => field.key === 'privatePolicy')
+          ?.options?.map((option) => option.value),
+      ).toEqual(['disabled', 'pairing', 'allowlist', 'open']);
+      expect(
+        fields?.find((field) => field.key === 'privatePolicy'),
+      ).toMatchObject({ default: 'pairing' });
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          key: 'allowedUsers',
+          kind: 'string-list',
+        }),
+      );
+      expect(
+        fields
+          ?.find((field) => field.key === 'groupPolicy')
+          ?.options?.map((option) => option.value),
+      ).toEqual(['disabled', 'pairing', 'allowlist', 'open']);
+      expect(
+        fields?.find((field) => field.key === 'sessionScope'),
+      ).toMatchObject({
+        kind: 'enum',
+        required: true,
+        default: 'user',
+        options: [
+          { value: 'user' },
+          { value: 'thread' },
+          { value: 'chat_thread' },
+          { value: 'single' },
+        ],
+      });
+    }
+    for (const type of ['github', 'gitlab'] as const) {
+      const fields = catalog.find((entry) => entry.type === type)?.fields;
+      expect(fields).not.toContainEqual(
+        expect.objectContaining({
+          key: 'messagePrefix',
+          kind: 'string',
+        }),
+      );
+      expect(
+        fields?.filter((field) => field.key === 'privatePolicy'),
+      ).toHaveLength(1);
+      expect(
+        fields?.filter((field) => field.key === 'groupPolicy'),
+      ).toHaveLength(1);
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          key: 'groupPolicy',
+          kind: 'enum',
+          required: true,
+        }),
+      );
+      expect(
+        fields
+          ?.find((field) => field.key === 'groupPolicy')
+          ?.options?.map((option) => option.value),
+      ).toContain('pairing');
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          key: 'privatePolicy',
+          kind: 'enum',
+          required: true,
+        }),
+      );
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          key: 'allowedUsers',
+          kind: 'string-list',
+        }),
+      );
+      expect(
+        fields?.filter((field) => field.key === 'sessionScope'),
+      ).toHaveLength(1);
+      expect(
+        fields?.find((field) => field.key === 'sessionScope'),
+      ).toMatchObject({
+        kind: 'enum',
+        required: true,
+        default: 'chat_thread',
+      });
+    }
+    expect(
+      catalog.find((entry) => entry.type === 'github')?.fields,
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'sessionScope',
+        default: 'chat_thread',
+      }),
+    );
+    expect(
+      catalog.find((entry) => entry.type === 'telegram')?.fields,
+    ).not.toContainEqual(expect.objectContaining({ key: 'sessionScope' }));
+    expect(
+      catalog.find((entry) => entry.type === 'dingtalk')?.fields,
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'interactiveCards',
+        kind: 'object',
+        properties: expect.arrayContaining([
+          expect.objectContaining({ key: 'enabled', kind: 'boolean' }),
+          expect.objectContaining({ key: 'statusCard', kind: 'object' }),
+          expect.objectContaining({ key: 'questionCard', kind: 'object' }),
+        ]),
+      }),
+    );
+    expect(
+      catalog.find((entry) => entry.type === 'gitlab')?.fields,
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'token',
+        kind: 'secret',
+        required: true,
+      }),
+    );
+    const githubFields = catalog.find(
+      (entry) => entry.type === 'github',
+    )?.fields;
+    expect(githubFields).toContainEqual(
+      expect.objectContaining({
+        key: 'token',
+        kind: 'secret',
+      }),
+    );
+    expect(
+      githubFields?.find((field) => field.key === 'token'),
+    ).not.toHaveProperty('required');
+    expect(githubFields).toContainEqual(
+      expect.objectContaining({
+        key: 'useLocalGh',
+        kind: 'boolean',
+      }),
+    );
+    expect(JSON.stringify(catalog)).not.toContain('createChannel');
+  });
+});

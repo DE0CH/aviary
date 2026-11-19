@@ -9,7 +9,8 @@
     "node": ">=22"
   },
   "paseo": {
-    "repository": "https://github.com/DE0CH/claudecodeui.git"
+    "repository": "https://github.com/DE0CH/claudecodeui.git",
+    "monorepo": "https://github.com/DE0CH/aviary.git"
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.mjs",

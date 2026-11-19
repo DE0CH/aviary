@@ -1,0 +1,301 @@
+<template>
+  <div id="oc-notifications" class="flex">
+    <notification-bell :notification-count="notifications.length" />
+    <oc-drop
+      ref="notificationsDrop"
+      :title="$gettext('Notifications')"
+      drop-id="oc-notifications-drop"
+      toggle="#oc-notifications-bell"
+      mode="click"
+      class="w-md max-w-full max-h-[400px] overflow-y-auto overflow-x-hidden"
+      :options="{ pos: 'bottom-right', delayHide: 0 }"
+      padding-size="small"
+      :is-menu="false"
+      @show-drop="refreshNotifications"
+    >
+      <div class="flex justify-end items-center" :class="{ 'mb-2': notifications.length }">
+        <oc-button
+          v-if="notifications.length"
+          class="oc-notifications-mark-all"
+          appearance="raw"
+          no-hover
+          @click="deleteNotificationsTask.perform(notifications.map((n) => n.notification_id))"
+        >
+          <span class="text-sm" v-text="$gettext('Mark all as read')" />
+        </oc-button>
+      </div>
+      <div class="relative">
+        <div v-if="loading" class="oc-notifications-loading">
+          <div class="size-full bg-role-surface absolute opacity-60" />
+          <oc-spinner
+            class="absolute top-[50%] left-[50%] transform-[translate(-50%, -50%)] opacity-100"
+            size="large"
+          />
+        </div>
+        <span
+          v-if="!notifications.length"
+          class="oc-notifications-no-new"
+          v-text="$gettext('Nothing new')"
+        />
+        <oc-list v-else>
+          <li
+            v-for="(el, index) in notifications"
+            :key="index"
+            class="oc-notifications-item [&>a]:text-role-on-surface z-1000 relative"
+          >
+            <component
+              :is="notificationLinks[index] ? 'router-link' : 'div'"
+              class="flex items-center gap-2"
+              :to="notificationLinks[index]"
+              @click="onNotificationClick(index)"
+            >
+              <user-avatar
+                :user-id="el.messageRichParameters?.user?.id || el.user"
+                :user-name="el.messageRichParameters?.user?.displayname || el.user"
+              />
+              <div class="min-w-0 wrap-anywhere">
+                <div v-if="!el.message && !el.messageRich" class="oc-notifications-subject">
+                  <span v-text="el.subject" />
+                </div>
+                <div v-if="el.computedMessage" class="oc-notifications-message">
+                  <span v-bind="{ innerHTML: el.computedMessage }" />
+                </div>
+                <div
+                  v-if="el.link && el.object_type !== 'local_share'"
+                  class="oc-notifications-link truncate w-sm"
+                >
+                  <a
+                    :href="el.link"
+                    :title="el.link"
+                    target="_blank"
+                    @click.stop
+                    v-text="el.link"
+                  />
+                </div>
+                <div v-if="el.datetime" class="text-sm text-role-on-surface-variant mt-1">
+                  <span
+                    v-oc-tooltip="formatDate(el.datetime)"
+                    tabindex="0"
+                    v-text="formatDateRelative(el.datetime)"
+                  />
+                </div>
+              </div>
+            </component>
+            <hr v-if="index + 1 !== notifications.length" class="my-2" />
+          </li>
+        </oc-list>
+      </div>
+    </oc-drop>
+  </div>
+</template>
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, Ref, ref, unref, useTemplateRef } from 'vue'
+import { useEventListener } from '@vueuse/core'
+import isEmpty from 'lodash-es/isEmpty'
+import escape from 'lodash-es/escape'
+import {
+  useCapabilityStore,
+  useSpacesStore,
+  createFileRouteOptions,
+  formatDateFromISO,
+  formatRelativeDateFromISO,
+  useClientService,
+  useMessages,
+  UserAvatar
+} from '@opencloud-eu/web-pkg'
+import { OcDrop } from '@opencloud-eu/design-system/components'
+import NotificationBell from './NotificationBell.vue'
+import { Notification } from '../../helpers/notifications'
+import { useGettext } from 'vue3-gettext'
+import { useTask } from 'vue-concurrency'
+import { MESSAGE_TYPE } from '@opencloud-eu/web-client/sse'
+import { call } from '@opencloud-eu/web-client'
+import { AxiosHeaders } from 'axios'
+
+const POLLING_INTERVAL = 30000
+
+const spacesStore = useSpacesStore()
+const capabilityStore = useCapabilityStore()
+const clientService = useClientService()
+const language = useGettext()
+const { showErrorMessage } = useMessages()
+
+const notificationsDrop = useTemplateRef<InstanceType<typeof OcDrop>>('notificationsDrop')
+const notifications: Ref<Notification[]> = ref([])
+const notificationsInterval = ref<ReturnType<typeof setInterval>>()
+// the getter would open a new stream after logout reset the old one
+let sseStream: EventSource | undefined
+
+const loading = computed(() => {
+  const initialFetchRunning =
+    fetchNotificationsTask.isRunning && !fetchNotificationsTask.lastSuccessful
+  return initialFetchRunning || deleteNotificationsTask.isRunning
+})
+
+const formatDate = (date: string) => {
+  return formatDateFromISO(date, language.current)
+}
+const formatDateRelative = (date: string) => {
+  return formatRelativeDateFromISO(date, language.current)
+}
+
+const messageParameters = [
+  { name: 'user', labelAttribute: 'displayname' },
+  { name: 'resource', labelAttribute: 'name' },
+  { name: 'space', labelAttribute: 'name' },
+  { name: 'virus', labelAttribute: 'name' }
+]
+const getMessage = ({ message, messageRich, messageRichParameters }: Notification): string => {
+  if (!messageRich || isEmpty(messageRichParameters)) {
+    return escape(message)
+  }
+  const labels: Record<string, string> = {}
+  for (const param of messageParameters) {
+    if (!messageRich.includes(`{${param.name}}`)) {
+      continue
+    }
+    const label = messageRichParameters[param.name]?.[param.labelAttribute]
+    if (!label) {
+      return escape(message)
+    }
+    labels[param.name] = label
+  }
+  // the result is rendered as HTML, so everything is escaped. interpolate in a single pass,
+  // so placeholders inside the inserted labels (e.g. a file named "{virus}") are not interpolated again
+  return escape(messageRich).replace(/\{(\w+)\}/g, (placeholder, name: string) =>
+    Object.hasOwn(labels, name) ? `<strong>${escape(labels[name])}</strong>` : placeholder
+  )
+}
+const getLink = ({ messageRichParameters, object_type }: Notification) => {
+  if (!messageRichParameters) {
+    return null
+  }
+  if (object_type === 'share') {
+    return {
+      name: 'files-shares-with-me',
+      ...(!!messageRichParameters?.resource?.id && {
+        query: { scrollTo: messageRichParameters.resource.id }
+      })
+    }
+  }
+  if (object_type === 'storagespace' && messageRichParameters?.space?.id) {
+    const space = spacesStore.spaces.find(
+      (s) => s.fileId === messageRichParameters?.space?.id.split('!')[0] && !s.disabled
+    )
+    if (space) {
+      return {
+        name: 'files-spaces-generic',
+        ...createFileRouteOptions(space, { path: '', fileId: space.fileId })
+      }
+    }
+  }
+  if (object_type === 'mention' || messageRichParameters.resource?.id) {
+    return {
+      name: 'resolvePrivateLink',
+      params: { fileId: messageRichParameters.resource?.id }
+    }
+  }
+  return null
+}
+
+const notificationLinks = computed(() => unref(notifications).map((n) => getLink(n)))
+
+function onNotificationClick(index: number) {
+  if (!unref(notificationLinks)[index]) {
+    return
+  }
+  unref(notificationsDrop)?.hide()
+}
+
+const fetchNotificationsTask = useTask(function* (signal) {
+  try {
+    const response = yield* call(
+      clientService.httpAuthenticated.get<{ ocs: { data: Notification[] } }>(
+        'ocs/v2.php/apps/notifications/api/v1/notifications',
+        { signal }
+      )
+    )
+
+    if ((response.headers as AxiosHeaders).get('Content-Length') === '0') {
+      return
+    }
+
+    const {
+      ocs: { data = [] }
+    } = response.data
+    notifications.value = data?.sort((a, b) => b.datetime.localeCompare(a.datetime)) || []
+    unref(notifications).forEach((notification) => setAdditionalNotificationData(notification))
+  } catch (e) {
+    console.error(e)
+  }
+}).restartable()
+
+const deleteNotificationsTask = useTask(function* (signal, ids) {
+  fetchNotificationsTask.cancelAll()
+  try {
+    yield clientService.httpAuthenticated.delete(
+      'ocs/v2.php/apps/notifications/api/v1/notifications',
+      { data: { ids } },
+      { signal }
+    )
+    notifications.value = unref(notifications).filter((n) => !ids.includes(n.notification_id))
+  } catch (e) {
+    console.error(e)
+    showErrorMessage({
+      title: language.$gettext('Failed to mark notifications as read'),
+      errors: [e]
+    })
+  }
+}).restartable()
+
+const setAdditionalNotificationData = (notification: Notification) => {
+  notification.computedMessage = getMessage(notification)
+}
+
+const onSSENotificationEvent = (event: MessageEvent) => {
+  try {
+    const notification = JSON.parse(event.data) as Notification
+    if (!notification || !notification.notification_id) {
+      return
+    }
+    if (unref(notifications).some((n) => n.notification_id === notification.notification_id)) {
+      return
+    }
+    setAdditionalNotificationData(notification)
+    notifications.value = [notification, ...unref(notifications)]
+  } catch {
+    console.error('Unable to parse sse notification data')
+  }
+}
+
+function refreshNotifications() {
+  fetchNotificationsTask.perform()
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState !== 'visible') {
+    return
+  }
+  refreshNotifications()
+}
+
+useEventListener(document, 'visibilitychange', onVisibilityChange)
+
+onMounted(() => {
+  fetchNotificationsTask.perform()
+  if (unref(capabilityStore.supportSSE)) {
+    sseStream = clientService.sseAuthenticated
+    sseStream.addEventListener(MESSAGE_TYPE.NOTIFICATION, onSSENotificationEvent)
+  } else {
+    notificationsInterval.value = setInterval(() => {
+      fetchNotificationsTask.perform()
+    }, POLLING_INTERVAL)
+  }
+})
+
+onUnmounted(() => {
+  sseStream?.removeEventListener(MESSAGE_TYPE.NOTIFICATION, onSSENotificationEvent)
+  sseStream = undefined
+  clearInterval(unref(notificationsInterval))
+})
+</script>

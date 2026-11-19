@@ -1,0 +1,338 @@
+import AppTokenModal from '../../../../src/components/Modals/AppTokenModal.vue'
+import {
+  defaultComponentMocks,
+  defaultPlugins,
+  mockAxiosResolve,
+  shallowMount
+} from '@opencloud-eu/web-test-helpers'
+import { mock, mockDeep } from 'vitest-mock-extended'
+import { ClientService, Modal, useMessages, useModals } from '@opencloud-eu/web-pkg'
+import { OcButton, OcDatepicker, OcTextInput } from '@opencloud-eu/design-system/components'
+import { DateTime } from 'luxon'
+import { VueWrapper, flushPromises } from '@vue/test-utils'
+import { defineComponent, h, ref } from 'vue'
+
+const MODAL_ID = 'modal-id'
+
+const copyMock = vi.fn()
+const copiedMock = ref(false)
+const announceMock = vi.fn()
+// exposes a spy as the announce method, so the tests can check what gets announced
+const OcHiddenAnnouncerStub = defineComponent({
+  setup(_, { expose }) {
+    expose({ announce: announceMock })
+    return () => h('span')
+  }
+})
+vi.mock('@vueuse/core', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useClipboard: vi.fn(() => ({ copy: copyMock, copied: copiedMock }))
+}))
+
+describe('AppTokenModal component', () => {
+  afterEach(() => {
+    copyMock.mockReset()
+    copiedMock.value = false
+    announceMock.mockReset()
+  })
+  it('should display an input for the label', () => {
+    const { wrapper } = getWrapper()
+    expect(wrapper.find('oc-text-input-stub').exists()).toBeTruthy()
+  })
+  it('renders the note input as the first field', () => {
+    const { wrapper } = getWrapper()
+    expect(wrapper.find('oc-text-input-stub').attributes('id')).toBe('app-token-note-input')
+  })
+  it('should display an input for the expiration date', () => {
+    const { wrapper } = getWrapper()
+    expect(wrapper.find('oc-datepicker-stub').exists()).toBeTruthy()
+  })
+  describe('confirm button', () => {
+    it('should be disabled when no data has been entered', () => {
+      const { wrapper } = getWrapper()
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      expect(btn.props('disabled')).toBeTruthy()
+    })
+    it('should be disabled when only a note has been entered', () => {
+      const { wrapper } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      expect(btn.props('disabled')).toBeTruthy()
+    })
+    it('should be disabled when only a date has been entered', () => {
+      const { wrapper } = getWrapper()
+      emitDateInput(wrapper, DateTime.now())
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      expect(btn.props('disabled')).toBeTruthy()
+    })
+    it('should not be disabled when a note and date has been entered', async () => {
+      const { wrapper } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      expect(btn.props('disabled')).toBeFalsy()
+    })
+    it('should be disabled and show an error when the note only contains whitespace', async () => {
+      const { wrapper } = getWrapper()
+      emitNoteInput(wrapper, '   ')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      expect(findConfirmButton(wrapper).props('disabled')).toBeTruthy()
+      expect(
+        wrapper.findComponent<typeof OcTextInput>('oc-text-input-stub').props('errorMessage')
+      ).toBe('The note is required')
+    })
+    it('should send the trimmed note', async () => {
+      const { wrapper, mocks } = getWrapper()
+      emitNoteInput(wrapper, '  someNote  ')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      await findConfirmButton(wrapper).trigger('click')
+      expect(mocks.$clientService.httpAuthenticated.post).toHaveBeenCalledWith(
+        '/auth-app/tokens',
+        null,
+        { params: expect.objectContaining({ label: 'someNote' }) }
+      )
+    })
+    describe('expiry', () => {
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+      // the datepicker emits the end of the picked day, but the expiry must not depend on that
+      it.each([
+        { time: 'end', serverDelay: 0 },
+        { time: 'end', serverDelay: 5 },
+        { time: 'start', serverDelay: 0 },
+        { time: 'start', serverDelay: 5 }
+      ] as const)(
+        'should let the token expire at 23:59 of the picked day ($time of day) when the server adds the duration $serverDelay s later',
+        async ({ time, serverDelay }) => {
+          const now = DateTime.fromISO('2026-12-01T10:00:00.250')
+          vi.useFakeTimers({ toFake: ['Date'] })
+          vi.setSystemTime(now.toJSDate())
+          const day = DateTime.fromISO('2026-12-11')
+          const pickedDate = time === 'end' ? day.endOf('day') : day.startOf('day')
+          const { wrapper, mocks } = getWrapper()
+          emitNoteInput(wrapper, 'someNote')
+          emitDateInput(wrapper, pickedDate)
+          await wrapper.vm.$nextTick()
+          await findConfirmButton(wrapper).trigger('click')
+
+          const { expiry } = mocks.$clientService.httpAuthenticated.post.mock.calls[0][2].params
+          expect(expiry).toMatch(/^\d+s$/)
+          const serverExpiry = now.plus({ seconds: serverDelay + parseInt(expiry) })
+          expect(serverExpiry.hasSame(pickedDate, 'day')).toBe(true)
+          expect(serverExpiry.toFormat('HH:mm')).toBe('23:59')
+        }
+      )
+    })
+    it('should create a token on submit', async () => {
+      const { wrapper, mocks } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      await wrapper.vm.$nextTick()
+      await btn.trigger('click')
+      await flushPromises()
+      expect(mocks.$clientService.httpAuthenticated.post).toHaveBeenCalled()
+      expect(wrapper.emitted('created')).toBeTruthy()
+    })
+    it('should create a token on form submit', async () => {
+      const { wrapper, mocks } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(mocks.$clientService.httpAuthenticated.post).toHaveBeenCalled()
+    })
+    it('should not create a token on form submit with incomplete data', async () => {
+      const { wrapper, mocks } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      await wrapper.vm.$nextTick()
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(mocks.$clientService.httpAuthenticated.post).not.toHaveBeenCalled()
+    })
+    it('should not create a second token when confirm is clicked twice in a row', async () => {
+      const { wrapper, mocks } = getWrapper({ pendingPost: true })
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+      await wrapper.vm.$nextTick()
+      await btn.trigger('click')
+      await btn.trigger('click')
+      expect(mocks.$clientService.httpAuthenticated.post).toHaveBeenCalledTimes(1)
+    })
+    it('should disable the confirm button while the token is being created', async () => {
+      const { wrapper } = getWrapper({ pendingPost: true })
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      // the actions row is teleported with `defer`, so the button instance is replaced
+      // on re-render - always look it up again instead of holding on to a wrapper
+      expect(findConfirmButton(wrapper).props('disabled')).toBeFalsy()
+      await findConfirmButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(findConfirmButton(wrapper).props('disabled')).toBeTruthy()
+      expect(findConfirmButton(wrapper).props('showSpinner')).toBeTruthy()
+    })
+    it('should re-enable the confirm button after creating the token failed', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { wrapper, mocks } = getWrapper({ postRejects: true })
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      await findConfirmButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(findConfirmButton(wrapper).props('disabled')).toBeFalsy()
+      expect(findConfirmButton(wrapper).props('showSpinner')).toBeFalsy()
+      expect(mocks.$clientService.httpAuthenticated.post).toHaveBeenCalledTimes(1)
+    })
+  })
+  it('should show an error message when creating the token failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { wrapper } = getWrapper({ postRejects: true })
+    const { showErrorMessage } = useMessages()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+    await wrapper.vm.$nextTick()
+    await btn.trigger('click')
+    await flushPromises()
+    expect(showErrorMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'An error occurred while creating the app token.' })
+    )
+    expect(wrapper.find('.created-token').exists()).toBeFalsy()
+  })
+  // the modal is dispatched with hidden actions, so its cancel button is the only
+  // other way out. It has to be disabled while creating, otherwise the request
+  // completes into a closed modal and the token is never shown
+  it('should mark the modal as loading while creating the token', async () => {
+    const { wrapper } = getWrapper({ pendingPost: true })
+    const { updateModal } = useModals()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+    await wrapper.vm.$nextTick()
+    await btn.trigger('click')
+    expect(updateModal).toHaveBeenCalledWith(MODAL_ID, 'isLoading', true)
+  })
+  it('should reset the modal loading state once the request settled', async () => {
+    const { wrapper } = getWrapper()
+    const { updateModal } = useModals()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+    await wrapper.vm.$nextTick()
+    await btn.trigger('click')
+    await flushPromises()
+    expect(updateModal).toHaveBeenCalledWith(MODAL_ID, 'isLoading', false)
+  })
+  it('should display the created token', async () => {
+    const { wrapper } = getWrapper()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+    await wrapper.vm.$nextTick()
+    await btn.trigger('click')
+    expect(wrapper.find('.created-token').exists()).toBeTruthy()
+  })
+  it('the created token can be copied', async () => {
+    const { wrapper } = getWrapper()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    const btn = wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+    await wrapper.vm.$nextTick()
+    await btn.trigger('click')
+    await wrapper.find('.copy-app-token-btn').trigger('click')
+    expect(copyMock).toHaveBeenCalled()
+  })
+  it.each([true, false])(
+    'announces the copied token only if copying succeeded (copied: %s)',
+    async (copied) => {
+      copyMock.mockImplementation(() => {
+        copiedMock.value = copied
+      })
+      const { wrapper } = getWrapper()
+      emitNoteInput(wrapper, 'someNote')
+      emitDateInput(wrapper, DateTime.now())
+      await wrapper.vm.$nextTick()
+      await findConfirmButton(wrapper).trigger('click')
+      await flushPromises()
+      await wrapper.find('.copy-app-token-btn').trigger('click')
+      await flushPromises()
+      expect(copyMock).toHaveBeenCalledWith('token')
+      if (copied) {
+        expect(announceMock).toHaveBeenCalledWith('Copied to clipboard!')
+      } else {
+        expect(announceMock).not.toHaveBeenCalled()
+      }
+    }
+  )
+  it('announces every copy of the token', async () => {
+    copyMock.mockImplementation(() => {
+      copiedMock.value = true
+    })
+    const { wrapper } = getWrapper()
+    emitNoteInput(wrapper, 'someNote')
+    emitDateInput(wrapper, DateTime.now())
+    await wrapper.vm.$nextTick()
+    await findConfirmButton(wrapper).trigger('click')
+    await flushPromises()
+    await wrapper.find('.copy-app-token-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.copy-app-token-btn').trigger('click')
+    await flushPromises()
+    expect(announceMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+const findConfirmButton = (wrapper: VueWrapper<typeof AppTokenModal.vm>) =>
+  wrapper.findComponent<typeof OcButton>('.oc-modal-body-actions-confirm')
+
+const emitNoteInput = (wrapper: VueWrapper<typeof AppTokenModal.vm>, note: string) => {
+  wrapper
+    .findComponent<typeof OcTextInput>('oc-text-input-stub')
+    .vm.$emit('update:modelValue', note)
+}
+const emitDateInput = (wrapper: VueWrapper<typeof AppTokenModal.vm>, date: DateTime) => {
+  wrapper
+    .findComponent<typeof OcDatepicker>('oc-datepicker-stub')
+    .vm.$emit('dateChanged', { date, error: null })
+}
+
+const getWrapper = ({
+  pendingPost = false,
+  postRejects = false
+}: { pendingPost?: boolean; postRejects?: boolean } = {}) => {
+  const clientService = mockDeep<ClientService>()
+  if (pendingPost) {
+    // a promise that never settles on its own, so the request stays in flight for the whole test
+    clientService.httpAuthenticated.post.mockReturnValue(new Promise(() => undefined))
+  } else if (postRejects) {
+    clientService.httpAuthenticated.post.mockRejectedValue(new Error('failed to create token'))
+  } else {
+    clientService.httpAuthenticated.post.mockResolvedValue(mockAxiosResolve({ token: 'token' }))
+  }
+  const mocks = { ...defaultComponentMocks(), $clientService: clientService }
+
+  return {
+    mocks,
+    wrapper: shallowMount(AppTokenModal, {
+      props: { modal: mock<Modal>({ id: MODAL_ID }) },
+      global: {
+        mocks,
+        provide: mocks,
+        plugins: [
+          ...defaultPlugins({
+            piniaOptions: { modalsState: { modals: [{ id: MODAL_ID } as Modal] } }
+          })
+        ],
+        // the actions row only exists inside OcModal, so render them in place
+        stubs: { teleport: true, OcHiddenAnnouncer: OcHiddenAnnouncerStub }
+      }
+    })
+  }
+}

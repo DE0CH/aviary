@@ -1,0 +1,349 @@
+import { Page, expect } from '@playwright/test'
+import util from 'util'
+import { Group, User } from '../../../types'
+import { getActualExpiryDate } from '../../../utils/datePicker'
+
+export interface ICollaborator {
+  collaborator: User | Group
+  role?: string
+  type?: CollaboratorType
+  resourceType?: string
+  expirationDate?: string
+  shareType?: string
+  hasAvatar?: boolean
+}
+
+export interface InviteCollaboratorsArgs {
+  page: Page
+  collaborators: ICollaborator[]
+}
+
+export interface CollaboratorArgs {
+  page: Page
+  collaborator: ICollaborator
+  hasAvatar?: boolean
+}
+
+export interface RemoveCollaboratorArgs extends Omit<CollaboratorArgs, 'collaborator'> {
+  collaborator: Omit<ICollaborator, 'role'>
+  removeOwnSpaceAccess?: boolean
+}
+
+export interface SetExpirationDateForCollaboratorArgs extends Omit<
+  CollaboratorArgs,
+  'collaborator'
+> {
+  collaborator: Omit<ICollaborator, 'role'>
+  expirationDate: any
+}
+
+export interface RemoveExpirationDateFromCollaboratorArgs extends Omit<
+  CollaboratorArgs,
+  'collaborator'
+> {
+  collaborator: Omit<ICollaborator, 'role'>
+}
+
+export interface IAccessDetails {
+  Name?: string
+  'Additional info'?: string
+  Type?: string
+  'Access expires'?: string
+  'Shared on'?: string
+  'Invited by'?: string
+}
+
+export type CollaboratorType = 'user' | 'group' | 'guest'
+
+export default class Collaborator {
+  private static readonly invitePanel = '//*[@id="oc-files-sharing-sidebar"]'
+  private static readonly inviteInput = '#files-share-invite-input'
+  private static readonly newCollaboratorRoleDropdown = '#files-collaborators-role-button-new'
+  private static readonly sendInvitationButton = '#new-collaborators-form-create-button'
+  public static readonly collaboratorRoleDropdownButton =
+    '%s//button[contains(@class,"files-recipient-role-select-btn")]'
+  private static readonly collaboratorRoleItemSelector =
+    '%s//span[contains(@class,"roles-select-role-item")]/span[text()="%s"]'
+  public static readonly collaboratorEditDropdownButton =
+    '%s//button[contains(@class,"collaborator-edit-dropdown-options-btn")]'
+  private static readonly collaboratorUserSelector = '//*[@data-testid="collaborator-user-item-%s"]'
+  private static readonly collaboratorGroupSelector =
+    '//*[@data-testid="collaborator-group-item-%s" or @data-testid="collaborator-group-item-%s"]'
+  private static readonly collaboratorGuestSelector =
+    '//*[@data-testid="collaborator-group-item-%s"]'
+  private static readonly collaboratorRoleSelector =
+    '%s//button[contains(@class,"files-recipient-role-select-btn")]/span[text()="%s"]'
+  private static readonly removeCollaboratorButton =
+    '%s//ul[contains(@class,"collaborator-edit-dropdown-options-list")]//button[contains(@class,"remove-share")]'
+  private static readonly setExpirationDateCollaboratorButton =
+    '%s//ul[contains(@class,"collaborator-edit-dropdown-options-list")]//button[contains(@class,"recipient-datepicker-btn")]'
+  private static readonly removeExpirationDateCollaboratorButton =
+    '%s//ul[contains(@class,"collaborator-edit-dropdown-options-list")]//button[contains(@class,"remove-expiration-date")]'
+  private static readonly showAccessDetailsButton =
+    '%s//ul[contains(@class,"collaborator-edit-dropdown-options-list")]//button[contains(@class,"show-access-details")]'
+  private static readonly collaboratorGuestIndication =
+    '%s//*[contains(@class,"files-collaborators-collaborator-indicator") and @data-test-item-name="guest"]'
+  private static readonly collaboratorIndication =
+    '%s//span[contains(@class,"files-collaborators-collaborator-indicator")]'
+  private static readonly removeCollaboratorConfirmationButton = '.oc-modal-body-actions-confirm'
+  private static readonly collaboratorExpirationDatepicker = '.oc-modal-body .oc-date-picker input'
+  private static readonly collaboratorExpirationDatepickerConfirmButton =
+    '.oc-modal-body-actions-confirm'
+  private static readonly collaboratorDropdownItem =
+    'div[data-testid="new-collaborators-form"] div[data-testid="recipient-autocomplete-item-%s"]'
+
+  static async addCollaborator(args: CollaboratorArgs): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator }
+    } = args
+    const collaboratorInputLocator = page.locator(Collaborator.inviteInput)
+    await collaboratorInputLocator.click()
+
+    // use unique email for user and unique display name for group
+    const collaboratorIdentifier =
+      'email' in collaborator ? collaborator.email : collaborator.displayName
+    await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('users') && resp.status() === 200),
+      collaboratorInputLocator.fill(collaboratorIdentifier)
+    ])
+    await collaboratorInputLocator.focus()
+    await page.locator('.vs--open').waitFor()
+    const dropdownItemLocator = page.locator(
+      util.format(Collaborator.collaboratorDropdownItem, collaborator.displayName)
+    )
+    await page.waitForTimeout(200)
+    await dropdownItemLocator.click()
+  }
+
+  static async sendInvitation(page: Page, collaborators: string[]): Promise<void> {
+    const checkResponses = []
+    for (let i = 0; i < collaborators.length; i++) {
+      checkResponses.push(
+        page.waitForResponse((resp) => {
+          return (
+            resp.url().endsWith('invite') &&
+            resp.status() === 200 &&
+            resp.request().method() === 'POST'
+          )
+        })
+      )
+    }
+    await Promise.all([...checkResponses, page.locator(Collaborator.sendInvitationButton).click()])
+  }
+
+  static async inviteCollaborators(args: InviteCollaboratorsArgs): Promise<void> {
+    const { page, collaborators } = args
+    // When adding multiple users/groups at once
+    // the role of the first collaborator is used as the collaborators role
+    const role = collaborators[0].role
+    const resourceType = collaborators[0].resourceType
+    const collaboratorNames = []
+    for (const collaborator of collaborators) {
+      await Collaborator.addCollaborator({ page, collaborator })
+      collaboratorNames.push(collaborator.collaborator.id)
+    }
+    await Collaborator.setCollaboratorRole(page, role, resourceType)
+    await Collaborator.sendInvitation(page, collaboratorNames)
+  }
+
+  static async setCollaboratorRole(
+    page: Page,
+    role: string,
+    resourceType: string,
+    dropdownSelector?: string,
+    itemSelector?: string
+  ): Promise<void> {
+    if (!dropdownSelector) {
+      dropdownSelector = Collaborator.newCollaboratorRoleDropdown
+      itemSelector = util.format(Collaborator.collaboratorRoleItemSelector, '')
+    }
+
+    await page.locator(dropdownSelector).click()
+    const isDropVisible = await page.locator('.files-recipient-role-drop').isVisible()
+    if (!isDropVisible) {
+      // the drop sometimes doesn't show after the first click for some reason, click again
+      await page.locator(dropdownSelector).click()
+    }
+    return await page.click(util.format(itemSelector, role))
+  }
+
+  static async changeCollaboratorRole(args: CollaboratorArgs): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator, type, role, resourceType }
+    } = args
+
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+    const roleDropdownSelector = util.format(
+      Collaborator.collaboratorRoleDropdownButton,
+      collaboratorRow
+    )
+    const roleItemSelector = util.format(Collaborator.collaboratorRoleItemSelector, collaboratorRow)
+    await Collaborator.setCollaboratorRole(
+      page,
+      role,
+      resourceType,
+      roleDropdownSelector,
+      roleItemSelector
+    )
+  }
+
+  static async removeCollaborator(args: RemoveCollaboratorArgs): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator, type },
+      removeOwnSpaceAccess
+    } = args
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+
+    await page
+      .locator(util.format(Collaborator.collaboratorEditDropdownButton, collaboratorRow))
+      .first()
+      .click()
+    await page.locator(util.format(Collaborator.removeCollaboratorButton, collaboratorRow)).click()
+
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes('permissions') &&
+          resp.status() === 204 &&
+          resp.request().method() === 'DELETE'
+      ),
+      page.locator(Collaborator.removeCollaboratorConfirmationButton).click()
+    ])
+    if (removeOwnSpaceAccess) {
+      await page.waitForURL(/.*\/files\/spaces.*/)
+    }
+  }
+
+  static async checkCollaborator(args: CollaboratorArgs): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator, type, hasAvatar }
+    } = args
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+
+    await page.locator(collaboratorRow).waitFor()
+
+    if (type === 'guest') {
+      await expect(
+        page.locator(util.format(Collaborator.collaboratorGuestIndication, collaboratorRow))
+      ).toBeVisible()
+      return
+    }
+
+    if (hasAvatar) {
+      const avatarImgLocator = page
+        .locator(util.format(Collaborator.collaboratorIndication, collaboratorRow))
+        .locator('img')
+
+      await expect(avatarImgLocator).toBeVisible()
+      await expect(avatarImgLocator).toHaveAttribute('src', /^blob:/)
+    } else {
+      const avatarInitialsLocator = page
+        .locator(util.format(Collaborator.collaboratorIndication, collaboratorRow))
+        .locator('.avatar-initials')
+
+      await expect(avatarInitialsLocator).toBeVisible()
+    }
+  }
+
+  static async setExpirationDateForCollaborator(
+    args: SetExpirationDateForCollaboratorArgs
+  ): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator, type },
+      expirationDate
+    } = args
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+    await page.locator(collaboratorRow).waitFor()
+
+    await page
+      .locator(util.format(Collaborator.collaboratorEditDropdownButton, collaboratorRow))
+      .click()
+    await page
+      .locator(util.format(Collaborator.setExpirationDateCollaboratorButton, collaboratorRow))
+      .click()
+    await Collaborator.setExpirationDate(page, expirationDate)
+  }
+
+  static async setExpirationDate(page: Page, expirationDate: any): Promise<void> {
+    const newExpiryDate = getActualExpiryDate(
+      expirationDate.toLowerCase().match(/[dayrmonthwek]+/)[0],
+      expirationDate
+    )
+
+    await page
+      .locator(Collaborator.collaboratorExpirationDatepicker)
+      .fill(newExpiryDate.toISOString().split('T')[0])
+    await page.locator(Collaborator.collaboratorExpirationDatepickerConfirmButton).click()
+  }
+
+  static async removeExpirationDateFromCollaborator(
+    args: RemoveExpirationDateFromCollaboratorArgs
+  ): Promise<void> {
+    const {
+      page,
+      collaborator: { collaborator, type }
+    } = args
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+    await page.locator(collaboratorRow).waitFor()
+    await page
+      .locator(util.format(Collaborator.collaboratorEditDropdownButton, collaboratorRow))
+      .click()
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes('permissions') &&
+          resp.status() === 200 &&
+          resp.request().method() === 'PATCH'
+      ),
+      page
+        .locator(util.format(Collaborator.removeExpirationDateCollaboratorButton, collaboratorRow))
+        .click()
+    ])
+  }
+
+  static waitForInvitePanel(page: Page): Promise<void> {
+    return page.locator(Collaborator.invitePanel).waitFor()
+  }
+
+  static getCollaboratorUserOrGroupSelector = (collaborator: User | Group, type = 'user') => {
+    if (type === 'guest') {
+      return util.format(Collaborator.collaboratorGuestSelector, collaborator.displayName)
+    }
+
+    return type === 'group'
+      ? util.format(
+          Collaborator.collaboratorGroupSelector,
+          collaborator.displayName,
+          collaborator.displayName
+        )
+      : util.format(Collaborator.collaboratorUserSelector, collaborator.displayName)
+  }
+
+  static async getAccessDetails(
+    page: Page,
+    recipient: Omit<ICollaborator, 'role'>
+  ): Promise<IAccessDetails> {
+    const { collaborator, type } = recipient
+    const collaboratorRow = Collaborator.getCollaboratorUserOrGroupSelector(collaborator, type)
+    await page
+      .locator(util.format(Collaborator.collaboratorEditDropdownButton, collaboratorRow))
+      .click()
+    await page.locator(util.format(Collaborator.showAccessDetailsButton, collaboratorRow)).click()
+
+    return page.locator('.share-access-details-drop dl').evaluate((el) => {
+      const nodes = el.childNodes
+      const details: Record<string, string> = {}
+      nodes.forEach((node) => {
+        if (node.nodeName === 'DT') {
+          details[node.textContent] = node.nextSibling.textContent
+        }
+      })
+      return details
+    })
+  }
+}

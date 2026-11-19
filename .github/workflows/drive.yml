@@ -1,0 +1,134 @@
+# YYC Drive (drive/, drive/YYC-DRIVE.md; it was DE0CH/yyc-drive). server: clippy and the server's tests (the real
+# program on a temporary folder). page: the page's unit tests. edge: the Worker's tests and its bundle (wrangler's dry
+# run). image + index: all of it in one image for amd64 and arm64, ghcr.io/de0ch/yyc-drive:<sha12> (the last commit
+# that changed drive/, docs/DEPLOY.md; the edge at /srv/edge), only when all three passed and the tag is not there yet.
+name: drive
+on:
+  push:
+    branches: ['**']  # every branch: the gate waits for it (not tags: jarvis.yml's releases push jarvis-<sha12>)
+    paths: [drive/**, deploy/images.json, .github/workflows/drive.yml]
+  workflow_dispatch:
+concurrency:
+  group: drive-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+permissions:
+  contents: read
+env:
+  IMAGE: ghcr.io/de0ch/yyc-drive
+jobs:
+  part:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      have: ${{ steps.p.outputs.have }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+      - id: p
+        run: |
+          # shellcheck disable=SC2046 # a list of paths
+          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."yyc-drive".paths | join(" ")' deploy/images.json))
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/yyc-drive:pull" | jq -r .token)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/de0ch/yyc-drive/manifests/${sha::12}")
+          echo "yyc-drive:${sha::12}: HTTP $code"
+          if [ "$code" = 200 ]; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults: {run: {working-directory: drive/server}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain 1.99.1 with clippy
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy && rustup override set 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: drive/server}
+      - name: ffmpeg (the previews' tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: tests
+        run: cargo test --locked
+
+  page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults: {run: {working-directory: drive}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: 22}
+      - run: npm install -g pnpm@11.28.11
+      - run: pnpm install --frozen-lockfile
+      - name: unit tests
+        run: pnpm test:unit run
+
+  edge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults: {run: {working-directory: drive/edge}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: 22}
+      - run: npm test
+      - name: the bundle (with a stand-in for the page)
+        run: |
+          mkdir -p assets && echo "<html></html>" > assets/index.html && cp _headers assets/
+          npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/bundle
+
+  # One image per architecture on its own kind of runner (YYC's app nodes are arm64, its other pools amd64), then one
+  # tag naming both; built once per tag, on any branch (the tag names the source)
+  image:
+    needs: [part, server, page, edge]
+    if: needs.part.outputs.have == 'false'
+    strategy:
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ needs.part.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: build and push
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          docker buildx build drive -f drive/server/Dockerfile --push --platform "linux/${{ matrix.arch }}" --provenance=false \
+            --tag "$IMAGE:${TAG::12}-${{ matrix.arch }}" \
+            --cache-from "type=gha,scope=drive-${{ matrix.arch }}" --cache-to "type=gha,mode=max,scope=drive-${{ matrix.arch }}"
+
+  index:
+    needs: [part, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ needs.part.outputs.sha }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: one tag for both architectures
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          tag="${TAG::12}"
+          docker buildx imagetools create -t "$IMAGE:$tag" "$IMAGE:$tag-amd64" "$IMAGE:$tag-arm64"
+          docker buildx imagetools inspect "$IMAGE:$tag" | grep -E "linux/(amd64|arm64)"
+          test "$(docker buildx imagetools inspect "$IMAGE:$tag" | grep -cE "Platform: +linux/(amd64|arm64)")" = 2

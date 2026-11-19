@@ -16,7 +16,9 @@ members = [
   "testing/fabric-replica",
 ]
 # throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
-exclude = ["crates/supervisor/spikes"]
+# jarvis/hermit (hermit-jarvis, aviary-gateway: on these crates by path), drive/server (YYC Drive) and tools/ are
+# workspaces of their own, each with its own lock; yyc-code/ and jarvis4/ are the checkouts CI makes of those repositories
+exclude = ["crates/supervisor/spikes", "jarvis/hermit", "drive/server", "tools", "yyc-code", "jarvis4"]
 
 [workspace.package]
 edition = "2024"

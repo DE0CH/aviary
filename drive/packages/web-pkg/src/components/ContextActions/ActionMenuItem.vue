@@ -1,0 +1,132 @@
+<template>
+  <li v-oc-tooltip="componentProps.disabled ? action.disabledTooltip?.(actionOptions) : ''">
+    <oc-button
+      v-oc-tooltip="showTooltip || action.hideLabel ? action.label(actionOptions) : ''"
+      :type="componentType"
+      v-bind="componentProps"
+      :class="[action.class, 'action-menu-item', 'align-middle', 'w-full', ...buttonClasses]"
+      :aria-label="
+        (componentProps.disabled ? action.disabledTooltip?.(actionOptions) : '') ||
+        action.label(actionOptions)
+      "
+      data-testid="action-handler"
+      :size="size"
+      justify-content="left"
+      v-on="componentListeners"
+    >
+      <oc-icon
+        v-if="actionIcon"
+        data-testid="action-icon"
+        :icon="actionIcon"
+        :fill-type="action.iconFillType || 'line'"
+        :size="size"
+      />
+      <span
+        v-if="!action.hideLabel"
+        class="oc-files-context-action-label flex flex-col"
+        data-testid="action-label"
+      >
+        <span class="text-left" v-text="action.label(actionOptions)" />
+      </span>
+      <span
+        v-if="action.shortcut && shortcutHint"
+        class="text-sm flex-row-reverse"
+        v-text="action.shortcut"
+      />
+    </oc-button>
+  </li>
+</template>
+
+<script setup lang="ts">
+import { computed, unref } from 'vue'
+import { Action, ActionOptions, useConfigStore } from '../../composables'
+import { storeToRefs } from 'pinia'
+import { AppearanceType } from '@opencloud-eu/design-system/helpers'
+
+const {
+  action,
+  actionOptions,
+  size = 'medium',
+  appearance = 'raw',
+  shortcutHint = true,
+  showTooltip = false,
+  buttonClasses = []
+} = defineProps<{
+  action: Action
+  actionOptions: ActionOptions
+  size?: 'small' | 'medium' | 'large'
+  appearance?: AppearanceType
+  shortcutHint?: boolean
+  showTooltip?: boolean
+  buttonClasses?: string[]
+}>()
+
+const configStore = useConfigStore()
+const { options } = storeToRefs(configStore)
+
+const resolvedRoute = computed(() => {
+  if (!Object.hasOwn(action, 'route')) {
+    return undefined
+  }
+  return action.route(actionOptions)
+})
+
+const resolvedHref = computed(() => {
+  if (!Object.hasOwn(action, 'href')) {
+    return undefined
+  }
+  return action.href(actionOptions)
+})
+
+const componentType = computed<'a' | 'button' | 'router-link'>(() => {
+  if (unref(resolvedRoute)) {
+    return 'router-link'
+  }
+  if (unref(resolvedHref)) {
+    return 'a'
+  }
+  if (Object.hasOwn(action, 'handler')) {
+    return 'button'
+  }
+  console.warn('ActionMenuItem: No handler, route or href callback found in action', action)
+  return 'button'
+})
+
+const componentProps = computed(() => {
+  const properties = {
+    appearance: action.appearance || appearance,
+    ...(action.isDisabled && {
+      disabled: action.isDisabled(actionOptions)
+    }),
+    ...(action.id && { id: action.id })
+  }
+
+  return {
+    ...properties,
+    ...(unref(componentType) === 'router-link' && {
+      to: unref(resolvedRoute)
+    }),
+    ...(unref(componentType) === 'a' && {
+      href: unref(resolvedHref)
+    }),
+    ...(['router-link', 'a'].includes(unref(componentType)) && {
+      target: options.value.openFilesInNewTab ? ('_blank' as const) : ('_self' as const)
+    })
+  }
+})
+
+const actionIcon = computed(() => {
+  return typeof action.icon === 'function' ? action.icon(actionOptions) : action.icon
+})
+
+const componentListeners = computed(() => {
+  if (typeof action.handler !== 'function') {
+    return {}
+  }
+
+  const callback = () => action.handler({ ...actionOptions })
+  return {
+    click: callback
+  }
+})
+</script>

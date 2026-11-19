@@ -1,0 +1,206 @@
+import { mount } from '@vue/test-utils'
+import { defineComponent, nextTick, ref, shallowRef } from 'vue'
+import type { TextEditorInstance, TextEditorLinkPanelRequest } from '../../../../src/editor/types'
+import TextEditorContent from '../../../../src/editor/components/TextEditorContent.vue'
+import { EditorActionGroup } from '../../../../src/editor/composables'
+import { defaultPlugins } from '@opencloud-eu/web-test-helpers'
+
+vi.mock('@tiptap/vue-3', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tiptap/vue-3')>()
+
+  return {
+    ...actual,
+    EditorContent: defineComponent({
+      name: 'EditorContent',
+      props: { editor: { type: Object, required: false } },
+      template: '<div class="mock-editor-content" />'
+    })
+  }
+})
+
+vi.mock('@tiptap/vue-3/menus', () => ({
+  BubbleMenu: {
+    template: '<div class="mock-bubble-menu"><slot /></div>'
+  }
+}))
+
+vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({
+  DragHandle: defineComponent({
+    name: 'DragHandle',
+    props: { editor: { type: Object, required: false } },
+    emits: ['node-change'],
+    template: '<div class="mock-drag-handle"><slot /></div>'
+  })
+}))
+
+function mountEditorContent({
+  contentType = 'markdown',
+  sourceMode = false,
+  content = '# Initial',
+  hasSlashCommands = false,
+  showTableOfContents = false
+}: {
+  contentType?: 'markdown' | 'html'
+  sourceMode?: boolean
+  content?: string
+  hasSlashCommands?: boolean
+  showTableOfContents?: boolean
+} = {}) {
+  const setContent = vi.fn()
+  const openSlashCommandMenu = vi.fn()
+  const registerPlugin = vi.fn()
+  const unregisterPlugin = vi.fn()
+
+  const textEditor = {
+    editor: ref({
+      commands: { setContent, openSlashCommandMenu },
+      on: vi.fn(),
+      off: vi.fn(),
+      registerPlugin,
+      unregisterPlugin,
+      getAttributes: vi.fn(() => ({})),
+      isActive: vi.fn(() => false),
+      extensionManager: {
+        extensions: hasSlashCommands ? [{ name: 'slashCommands' }] : []
+      }
+    }),
+    contentType: ref(contentType),
+    readonly: ref(false),
+    yjsActive: ref(false),
+    showTableOfContents,
+    state: {
+      sourceMode: ref(sourceMode),
+      sourceModeReadonly: ref(false),
+      linkPanel: ref<TextEditorLinkPanelRequest | null>(null),
+      editorZoom: ref(100),
+      tableOfContents: shallowRef([])
+    },
+    actionGroups: (): EditorActionGroup[] => [],
+    actions: vi.fn(() => ({})),
+    getContent: vi.fn(() => content),
+    isEmpty: ref(false),
+    isFocused: ref(false),
+    focus: vi.fn(),
+    blur: vi.fn(),
+    destroy: vi.fn()
+  } as unknown as TextEditorInstance
+
+  const wrapper = mount(TextEditorContent, {
+    global: {
+      plugins: [...defaultPlugins()],
+      provide: { textEditor }
+    }
+  })
+
+  return { wrapper, textEditor, setContent, openSlashCommandMenu }
+}
+
+describe('TextEditorContent', () => {
+  it('swaps the editor view for the source view in source mode', async () => {
+    const { wrapper, textEditor } = mountEditorContent()
+    const sourceView = () => wrapper.findComponent({ name: 'TextEditorSourceView' })
+
+    expect(sourceView().exists()).toBe(false)
+
+    textEditor.state.sourceMode.value = true
+    await nextTick()
+
+    expect(sourceView().exists()).toBe(true)
+    expect(wrapper.find('.mock-editor-content').attributes('style')).toContain('display: none')
+  })
+
+  it('shows the table of contents only when enabled', () => {
+    const toc = (wrapper: ReturnType<typeof mountEditorContent>['wrapper']) =>
+      wrapper.findComponent({ name: 'TextEditorTableOfContents' })
+
+    expect(toc(mountEditorContent().wrapper).exists()).toBe(false)
+    expect(toc(mountEditorContent({ showTableOfContents: true }).wrapper).exists()).toBe(true)
+  })
+
+  it('hides the table of contents in source mode', async () => {
+    const { wrapper, textEditor } = mountEditorContent({ showTableOfContents: true })
+    const toc = wrapper.findComponent({ name: 'TextEditorTableOfContents' })
+
+    textEditor.state.sourceMode.value = true
+    await nextTick()
+
+    expect(toc.attributes('style')).toContain('display: none')
+  })
+
+  it('shows plus button only when slash commands extension is available', () => {
+    const { wrapper } = mountEditorContent({ hasSlashCommands: true })
+    expect(wrapper.find('.drag-handle-plus-button').exists()).toBe(true)
+
+    const { wrapper: wrapperWithout } = mountEditorContent({ hasSlashCommands: false })
+    expect(wrapperWithout.find('.drag-handle-plus-button').exists()).toBe(false)
+  })
+
+  it('hides the drag handle controls on the frontmatter block', async () => {
+    const { wrapper } = mountEditorContent({ hasSlashCommands: true })
+    const dragHandle = wrapper.findComponent({ name: 'DragHandle' })
+    const controlsStyle = () => wrapper.find('.drag-handle-controls').attributes('style') ?? ''
+
+    dragHandle.vm.$emit('node-change', { pos: 0, node: { type: { name: 'paragraph' } } })
+    await nextTick()
+    expect(controlsStyle()).not.toContain('display: none')
+
+    dragHandle.vm.$emit('node-change', { pos: 0, node: { type: { name: 'frontmatter' } } })
+    await nextTick()
+    expect(controlsStyle()).toContain('display: none')
+
+    dragHandle.vm.$emit('node-change', { pos: 0, node: null })
+    await nextTick()
+    expect(controlsStyle()).not.toContain('display: none')
+  })
+
+  it('keeps the drag handle controls when the editor itself scrolls', async () => {
+    const { wrapper } = mountEditorContent({ hasSlashCommands: true })
+    // the handle is still over the text
+    stubRects(wrapper, { top: 100, bottom: 300 }, { top: 150, bottom: 170 })
+
+    document.dispatchEvent(new Event('scroll'))
+    await nextTick()
+
+    expect(controlsStyle(wrapper)).not.toContain('display: none')
+  })
+
+  it('hides the drag handle controls once a scroll moves the editor away from them', async () => {
+    const { wrapper } = mountEditorContent({ hasSlashCommands: true })
+    // an ancestor scrolled the editor up, the handle stayed behind
+    stubRects(wrapper, { top: 100, bottom: 300 }, { top: 400, bottom: 420 })
+
+    document.dispatchEvent(new Event('scroll'))
+    await nextTick()
+
+    expect(controlsStyle(wrapper)).toContain('display: none')
+
+    await wrapper.find('.text-editor-content').trigger('mousemove')
+    expect(controlsStyle(wrapper)).not.toContain('display: none')
+  })
+
+  it('opens slash menu when plus button is clicked', async () => {
+    const { wrapper, openSlashCommandMenu } = mountEditorContent({ hasSlashCommands: true })
+
+    const dragHandle = wrapper.findComponent({ name: 'DragHandle' })
+    dragHandle.vm.$emit('node-change', { pos: 4 })
+    await nextTick()
+
+    await wrapper.find('.drag-handle-plus-button').trigger('click')
+
+    expect(openSlashCommandMenu).toHaveBeenCalledWith(4)
+  })
+})
+
+function controlsStyle(wrapper: ReturnType<typeof mountEditorContent>['wrapper']) {
+  return wrapper.find('.drag-handle-controls').attributes('style') ?? ''
+}
+
+function stubRects(
+  wrapper: ReturnType<typeof mountEditorContent>['wrapper'],
+  content: { top: number; bottom: number },
+  controls: { top: number; bottom: number }
+) {
+  const rect = (r: { top: number; bottom: number }) => () => r as DOMRect
+  wrapper.find('.text-editor-content').element.getBoundingClientRect = rect(content)
+  wrapper.find('.drag-handle-controls').element.getBoundingClientRect = rect(controls)
+}

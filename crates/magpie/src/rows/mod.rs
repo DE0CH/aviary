@@ -338,6 +338,7 @@ async fn read_answers(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, reader: &str, it
             "select row_id, item, source_seqs from rows
              where conversation_id = $1 and kind = 'tool' and item ? 'person'
                and item->'person'->>'state' <> 'open' and item->'person'->'readBy' is null
+               and item->'person'->>'marker' <> ''
              order by row_id",
             &[&w.conversation],
         )

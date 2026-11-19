@@ -1,0 +1,135 @@
+<template>
+  <oc-drop
+    ref="drop"
+    class="w-full oc-info-drop inline-block"
+    :drop-id="dropId"
+    :toggle="toggle"
+    :mode="mode"
+    :teleport="teleport"
+    close-on-click
+    enforce-drop-on-mobile
+    :is-menu="false"
+    @hide-drop="() => (dropOpen = false)"
+    @show-drop="() => (dropOpen = true)"
+  >
+    <focus-trap ref="focusTrapRef" :active="dropOpen" :return-focus-on-deactivate="false">
+      <div class="info-drop-content" @click="releaseFocus" @keydown.esc="releaseFocus">
+        <div class="flex justify-between items-center info-header border-b pb-2">
+          <p class="m-0 info-title text-lg font-normal" v-text="$gettext(title)" />
+          <oc-button appearance="raw" :aria-label="$gettext('Close')" class="align-middle">
+            <oc-icon name="close" fill-type="line" size-class="size-5" />
+          </oc-button>
+        </div>
+        <p v-if="text" class="info-text first:mt-0 last:mb-0" v-text="$gettext(text)" />
+        <dl v-if="isDefinitionList" class="info-list mt-2 mb-1 first:mt-0 last:mb-0">
+          <component
+            :is="item.headline ? 'dt' : 'dd'"
+            v-for="(item, index) in listItems"
+            :key="index"
+            :class="{
+              'ml-0': !item.headline,
+              'first:mt-0': item.headline,
+              'font-bold': item.headline
+            }"
+          >
+            {{ $gettext(item.text) }}
+          </component>
+        </dl>
+        <oc-list v-else-if="listItems.length" class="info-list mt-2 mb-1 first:mt-0 last:mb-0">
+          <li v-for="(item, index) in listItems" :key="index" class="mb-0">
+            {{ $gettext(item.text) }}
+          </li>
+        </oc-list>
+        <p v-if="endText" class="info-text-end" v-text="$gettext(endText)" />
+        <oc-button
+          v-if="readMoreLink"
+          type="a"
+          appearance="raw"
+          class="info-more-link"
+          :href="readMoreLink"
+          target="_blank"
+        >
+          {{ $gettext('Read more') }}
+        </oc-button>
+      </div>
+    </focus-trap>
+  </oc-drop>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, unref, useTemplateRef } from 'vue'
+import { FocusTrap } from 'focus-trap-vue'
+import OcButton from '../OcButton/OcButton.vue'
+import OcIcon from '../OcIcon/OcIcon.vue'
+import OcList from '../OcList/OcList.vue'
+import OcDrop, { Props as OcDropProps } from '../OcDrop/OcDrop.vue'
+import { uniqueId } from '../../helpers'
+import { ContextualHelperDataListItem } from '../../helpers'
+
+export interface Props {
+  /**
+   * @docs Title of the info drop.
+   */
+  title: string
+  /**
+   * @docs Element ID of the info drop.
+   */
+  dropId?: string
+  /**
+   * @docs Text at the end of the info drop.
+   */
+  endText?: string
+  /**
+   * @docs List of items to display in the info drop. Please refer to the component source for the `ContextualHelperDataListItem` type definition.
+   */
+  list?: ContextualHelperDataListItem[]
+  /**
+   * @docs Event that triggers the info drop.
+   * @default 'click'
+   */
+  mode?: OcDropProps['mode']
+  /**
+   * @docs Link at the end of the info drop.
+   */
+  readMoreLink?: string
+  /**
+   * @docs Text to display in the info drop.
+   */
+  text?: string
+  /**
+   * @docs CSS selector for the element to be used as toggle. By default, the preceding element is used.
+   */
+  toggle?: string
+  /**
+   * @docs Teleport the info drop to a different DOM element. This can be useful to prevent overflow issues.
+   */
+  teleport?: string
+}
+
+const {
+  title,
+  dropId = uniqueId('oc-info-drop-'),
+  endText = '',
+  list = [],
+  mode = 'click',
+  readMoreLink = '',
+  text = '',
+  toggle = '',
+  teleport = ''
+} = defineProps<Props>()
+
+const dropOpen = ref(false)
+const focusTrapRef = useTemplateRef<InstanceType<typeof FocusTrap>>('focusTrapRef')
+
+// the closing drop returns the focus to the toggle itself, the trap must neither pull it back
+// nor move it into the drop that is still fading out
+function releaseFocus() {
+  unref(focusTrapRef)?.deactivate()
+}
+
+const listItems = computed(() => {
+  return (list || []).filter((item) => !!item.text)
+})
+// a definition list needs terms, plain items without a headline make a regular list
+const isDefinitionList = computed(() => unref(listItems).some((item) => item.headline))
+</script>

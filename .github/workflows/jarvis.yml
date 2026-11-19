@@ -1,0 +1,142 @@
+name: jarvis
+# Jarvis chat's own parts (jarvis/: chat.deyaochen.com, Deyao's): hermit-jarvis and aviary-gateway (jarvis/hermit,
+# Jarvis 4's side of the aviary harness) and the chat's settings (jarvis/deploy/settings.json).
+# - test: fmt, clippy and the tests (against a TLS Postgres, as aviary-pg requires).
+# - image: ghcr.io/de0ch/hermit-jarvis:<sha12> (the last commit that changed its part, docs/DEPLOY.md), built once per
+#   tag on any branch, and the release jarvis-<sha12> with aviary-gateway (each Jarvis 4 session machine's half of the
+#   gateway; DE0CH/jarvis4's session image takes it from the release the deploy run names).
+# - settings: `hermit-jarvis check-settings` on jarvis/deploy/settings.json with this very build: it fails on a file the
+#   build would refuse at its start, among others a model that names no `reasoning` of its own (Deyao, 2026-11-17).
+on:
+  push:
+    branches: ['**']  # every branch: the gate waits for it
+    paths: [jarvis/**, crates/aviary-core/**, crates/aviary-pg/**, crates/hermit-api/**, crates/gateway-api/**,
+            crates/magpie-api/**, crates/supervisor-api/**, testing/fakes/**, rust-toolchain.toml, deploy/images.json,
+            .github/workflows/jarvis.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: jarvis-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  part:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      have: ${{ steps.p.outputs.have }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC2046 # a list of paths
+          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."hermit-jarvis".paths | join(" ")' deploy/images.json))
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # the image and the release both, or the build runs (it makes whichever is missing)
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/hermit-jarvis:pull" | jq -r .token)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/de0ch/hermit-jarvis/manifests/${sha::12}")
+          if [ "$code" = 200 ] && gh release view "jarvis-${sha::12}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults: {run: {working-directory: jarvis/hermit}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: jarvis/hermit}
+      - name: postgres with TLS (aviary-pg connects with sslmode=require)
+        run: |
+          d=$(mktemp -d)
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=ci -keyout "$d/server.key" -out "$d/server.crt" 2>/dev/null
+          pw=$(openssl rand -hex 16); printf '%s\n' "$pw" > "$d/pw"; chmod 0755 "$d"; chmod 0644 "$d"/*
+          docker run -d --name pg -p 127.0.0.1:5432:5432 -v "$d:/ci:ro" postgres:18 bash -ec '
+            bin=$(ls -d /usr/lib/postgresql/*/bin)
+            su postgres -c "$bin/initdb -D /tmp/pgdata -U postgres --pwfile=/ci/pw -A scram-sha-256" >/dev/null
+            cp /ci/server.crt /ci/server.key /tmp/pgdata/ && chown postgres /tmp/pgdata/server.* && chmod 0600 /tmp/pgdata/server.key
+            printf "local all all trust\nhostssl all all all scram-sha-256\n" > /tmp/pgdata/pg_hba.conf
+            exec su postgres -c "$bin/postgres -D /tmp/pgdata -c listen_addresses=* -c ssl=on -c fsync=off"' >/dev/null
+          for _ in $(seq 1 60); do docker exec pg pg_isready -q -h 127.0.0.1 && break; sleep 1; done
+          echo "::add-mask::$pw"
+          echo "HERMIT_TEST_DATABASE_URL=postgres://postgres:$pw@127.0.0.1:5432/postgres?sslmode=require" >> "$GITHUB_ENV"
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  image:
+    needs: [part, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      PART_SHA: ${{ needs.part.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: hermit-jarvis (loaded here; pushed below when its tag is new)
+        run: |
+          docker buildx build . -f jarvis/hermit/Dockerfile --load --tag hermit-jarvis:test \
+            --build-arg AVIARY_REVISION="$PART_SHA" --platform linux/amd64 --provenance=false \
+            --label org.opencontainers.image.source=https://github.com/DE0CH/aviary \
+            --label "org.opencontainers.image.revision=$PART_SHA" \
+            --cache-from type=gha,scope=hermit-jarvis --cache-to type=gha,mode=max,scope=hermit-jarvis
+      - name: the chat's settings, checked by this build
+        run: docker run --rm -v "$PWD/jarvis/deploy:/chat:ro" hermit-jarvis:test check-settings /chat/settings.json
+      - name: push hermit-jarvis:<sha12>
+        if: needs.part.outputs.have == 'false'
+        id: push
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          t=ghcr.io/de0ch/hermit-jarvis:${PART_SHA::12}
+          docker tag hermit-jarvis:test "$t"
+          docker push -q "$t"
+          echo "digest=$(docker image inspect "$t" --format '{{index .RepoDigests 0}}' | cut -d@ -f2)" >> "$GITHUB_OUTPUT"
+      - if: needs.part.outputs.have == 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/hermit-jarvis, subject-digest: "${{ steps.push.outputs.digest }}", push-to-registry: true}
+      - name: aviary-gateway, the release jarvis-<sha12>
+        # built in the image's builder (the same Rust and glibc as Jarvis 4's session image, which runs it); the tag
+        # goes up with the release-tag deploy key (a workflow token may not make a ref whose commit's workflows differ
+        # from main's)
+        if: needs.part.outputs.have == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          tag=jarvis-${PART_SHA::12}
+          if ! gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            docker run --rm -v "$PWD:/src" -v "$RUNNER_TEMP:/out" -w /src -e AVIARY_REVISION="$PART_SHA" rust:1.99.1-bookworm \
+              sh -c 'cargo build --release --locked --manifest-path jarvis/hermit/Cargo.toml --bin aviary-gateway && install -D jarvis/hermit/target/release/aviary-gateway /out/aviary-gateway'
+            (cd "$RUNNER_TEMP" && sha256sum aviary-gateway > aviary-gateway.sha256)
+            key=$RUNNER_TEMP/release-tag-key
+            install -m 600 /dev/null "$key"
+            printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
+            git tag "$tag" "$PART_SHA"
+            GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+              git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
+            rm -f "$key"
+            gh release create "$tag" "$RUNNER_TEMP/aviary-gateway" "$RUNNER_TEMP/aviary-gateway.sha256" --verify-tag \
+              --title "$tag" --notes "aviary-gateway of jarvis/hermit at ${PART_SHA::12} (docs/DEPLOY.md)."
+          fi

@@ -1,0 +1,150 @@
+<template>
+  <header
+    id="oc-topbar"
+    class="sticky my-1 grid z-50 items-center px-4 h-auto sm:h-13 sm:gap-10 grid-rows-[52px_auto] grid-cols-[auto_9fr_1fr]"
+    :aria-label="$gettext('Top bar')"
+  >
+    <div class="flex items-center flex-start gap-2.5 sm:gap-5 col-1 oc-logo-wrapper">
+      <custom-component-target :extension-point="topBarLeftExtensionPoint" />
+      <sidebar-nav-mobile class="flex" />
+      <router-link v-if="!hideLogo" :to="homeLink">
+        <picture>
+          <source :srcset="logoMobileWithVersion" media="(max-width: 959px)" />
+          <oc-image
+            :src="logoWithVersion"
+            :alt="sidebarLogoAlt"
+            class="oc-logo-image align-middle ml-1 h-[28px] md:h-[36px] w-auto select-none"
+          />
+        </picture>
+      </router-link>
+    </div>
+    <div class="topbar-center flex justify-end sm:justify-center col-2">
+      <custom-component-target :extension-point="topBarCenterExtensionPoint" />
+    </div>
+    <div class="flex items-center justify-end gap-5 col-3">
+      <template v-if="!isEmbedModeEnabled">
+        <custom-component-target :extension-point="topBarRightExtensionPoint" />
+        <feedback-link v-if="isFeedbackLinkEnabled" v-bind="feedbackLinkOptions" />
+        <notifications v-if="isNotificationBellEnabled" />
+      </template>
+    </div>
+  </header>
+</template>
+
+<script setup lang="ts">
+import { storeToRefs } from 'pinia'
+import { computed, unref } from 'vue'
+import { addVersionToAssetUrl } from '@opencloud-eu/design-system/helpers'
+import Notifications from './Notifications.vue'
+import FeedbackLink from './FeedbackLink.vue'
+import {
+  CustomComponentTarget,
+  createLocationGuest,
+  useAuthStore,
+  useCapabilityStore,
+  useConfigStore,
+  useEmbedMode,
+  useIsAppActive,
+  useRouter,
+  useThemeStore
+} from '@opencloud-eu/web-pkg'
+import SidebarNavMobile from '../SidebarNav/SidebarNavMobile.vue'
+import { routeNames } from '../../router/names'
+import {
+  topBarCenterExtensionPoint,
+  topBarLeftExtensionPoint,
+  topBarRightExtensionPoint
+} from '../../extensionPoints'
+import { RouteRecordNormalized } from 'vue-router'
+import { useGettext } from 'vue3-gettext'
+
+const { $gettext } = useGettext()
+const capabilityStore = useCapabilityStore()
+const themeStore = useThemeStore()
+const { currentTheme } = storeToRefs(themeStore)
+const configStore = useConfigStore()
+const { options: configOptions } = storeToRefs(configStore)
+const isAppActive = useIsAppActive()
+
+const authStore = useAuthStore()
+const router = useRouter()
+const { isEnabled: isEmbedModeEnabled } = useEmbedMode()
+
+const isRuntimeRoute = (route: Pick<RouteRecordNormalized, 'name'>) => {
+  return Object.values(routeNames).includes(route.name?.toString())
+}
+
+// runtime pages (e.g. account) keep the app context in the query but are no app themselves
+const isRuntimePageActive = computed(() => {
+  return unref(router.currentRoute).matched.some(isRuntimeRoute)
+})
+
+const hideLogo = computed(() => {
+  return unref(configOptions).hideLogo || (unref(isAppActive) && !unref(isRuntimePageActive))
+})
+
+const isNotificationBellEnabled = computed(() => {
+  return authStore.userContextReady && capabilityStore.notificationsOcsEndpoints.includes('list')
+})
+
+const homeLink = computed(() => {
+  if (authStore.publicLinkContextReady && !authStore.userContextReady) {
+    return {
+      name: 'resolvePublicLink',
+      params: { token: authStore.publicLinkToken }
+    }
+  }
+
+  if (authStore.isGuestContext) {
+    // other routes would only redirect the guest here
+    return createLocationGuest('files-guest-shares')
+  }
+
+  return '/'
+})
+
+const sidebarLogoAlt = computed(() => {
+  if (authStore.publicLinkContextReady && !authStore.userContextReady) {
+    return $gettext('Navigate to public link root')
+  }
+  return $gettext('Navigate to personal files page')
+})
+
+const isFeedbackLinkEnabled = computed(() => {
+  return !unref(configOptions).disableFeedbackLink
+})
+
+const feedbackLinkOptions = computed(() => {
+  const feedback = unref(configOptions).feedbackLink
+  if (!unref(isFeedbackLinkEnabled) || !feedback) {
+    return {}
+  }
+
+  return {
+    ...(feedback.href && { href: feedback.href }),
+    ...(feedback.ariaLabel && { ariaLabel: feedback.ariaLabel }),
+    ...(feedback.description && { description: feedback.description })
+  }
+})
+
+const logoWithVersion = computed(() => {
+  return addVersionToAssetUrl(unref(currentTheme).logo)
+})
+
+const logoMobileWithVersion = computed(() => {
+  const logo = unref(currentTheme).logoMobile || unref(currentTheme).logo
+  return addVersionToAssetUrl(logo)
+})
+</script>
+<style scoped>
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer utilities {
+  #oc-topbar .oc-logo-image {
+    image-rendering: auto;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+    image-rendering: -webkit-optimize-contrast;
+  }
+}
+</style>

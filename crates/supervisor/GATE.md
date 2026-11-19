@@ -278,7 +278,7 @@ final delta against the checksummed one (the quick check losing writes, the chec
 
 | What | Value |
 |---|---|
-| Hosts, items 1, 3, 4 (and 2, 6 repeated) | two throwaway AWS `m7i.xlarge` (Intel Xeon Platinum 8488C, the fabric's instance type) in eu-central-1a (the fabric's region), Ubuntu 24.04 from Canonical's SSM parameter (the base `infra.sh ami` bakes from), kernel 7.0.0-1014-aws; identical `runsc cpu-features`. Not the fabric's AMI, and not in the fabric's account (deviation 1), deleted after the run |
+| Hosts, items 1, 3, 4 (and 2, 6 repeated) | two throwaway AWS `m7i.xlarge` (Intel Xeon Platinum 8488C, the fabric's instance type) in eu-central-1a (the fabric's region), Ubuntu 24.04 from Canonical's SSM parameter (the base `fabric-aws ami` bakes from), kernel 7.0.0-1014-aws; identical `runsc cpu-features`. Not the fabric's AMI, and not in the fabric's account (deviation 1), deleted after the run |
 | Hosts, items 2, 9, 10 | two throwaway Hetzner Cloud runners (cx33 in fsn1, cpx32 in nbg1), deleted after the run |
 | Hosts, round 3 (items 2 tombstone, 3, 5) | two throwaway Hetzner Cloud cx33 in nbg1 (AMD EPYC-Rome, identical `runsc cpu-features`; IPv6 only), Ubuntu 24.04, deleted after the run |
 | Sandbox runtime | runsc from the fork release `precopy-20261021.2` (the tarball and SHA256SUMS check of `fabric/host/setup.sh`, the pin of `GV=`), flags exactly sandboxd's (`--platform=systrap --network=sandbox --overlay2=none --host-uds=none --host-fifo=none --net-raw --allow-packet-socket-write --allow-suid`) |
@@ -619,7 +619,7 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    fabric's instance type and region, from Canonical's Ubuntu 24.04 (the base of the fabric's AMI) with the same
    runsc release, flags, bundle shape and image, not on the fabric's AMI in the fabric's account (where and why: the
    task record). Round 3 ran on Hetzner. **What the fabric's AMI has that these hosts did not** (from
-   `fabric/host/setup.sh` and `fabric/aws/infra.sh ami`): the kernel of Canonical's image on the AMI's bake date
+   `fabric/host/setup.sh` and `fabric-aws ami`): the kernel of Canonical's image on the AMI's bake date
    (these hosts: 7.0.0-1014-aws on 2026-11-02); sysctls `net.ipv4.ip_forward=1` and `rp_filter=0` (the gate sets only
    `vm.max_map_count=262144`, as the AMI does); systemd-networkd leaving foreign routes alone; sandboxd's unit and the
    `/sbx` cgroup hierarchy with its memory reservation and cap (the gate: `/gate/<name>`, a 4 GiB limit); the shared workspace filesystem on

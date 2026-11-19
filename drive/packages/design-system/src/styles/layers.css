@@ -1,0 +1,112 @@
+@reference '@opencloud-eu/design-system/tailwind';
+
+@layer theme {
+  html {
+    font-size: var(--oc-font-size);
+    line-height: var(--text-sm--line-height);
+  }
+
+  body {
+    @apply overflow-hidden;
+  }
+}
+
+@layer base {
+  h1 {
+    @apply text-3xl font-bold my-4;
+  }
+
+  h2 {
+    @apply text-2xl font-bold my-4;
+  }
+
+  h3 {
+    @apply text-xl font-bold my-4;
+  }
+
+  h4 {
+    @apply text-base font-bold my-4;
+  }
+
+  h5 {
+    @apply text-sm font-bold my-4;
+  }
+
+  h5 {
+    @apply text-xs font-bold my-4;
+  }
+
+  p {
+    @apply my-2;
+  }
+
+  ol,
+  ul {
+    @apply pl-5 my-2;
+  }
+
+  a {
+    @apply text-role-secondary;
+  }
+
+  body,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  dialog,
+  a:hover {
+    @apply text-role-on-surface;
+  }
+
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    /* default border color */
+    border-color: var(--oc-role-surface-container-highest);
+  }
+
+}
+
+@layer components {
+
+  /* sidebar */
+  .sidebar-actions-panel li a,
+  .sidebar-actions-panel li button {
+    @apply p-2 mb-1;
+  }
+
+  [role="tooltip"] {
+    @apply rounded px-2 py-1 w-max max-w-xs absolute top-0 left-0 break-all z-[10000] pointer-events-none;
+    background-color: var(--oc-role-inverse-surface);
+    color: var(--oc-role-inverse-on-surface);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  [role="tooltip"] .arrow {
+    @apply absolute size-2 bg-inherit;
+    transform: rotate(45deg);
+  }
+}
+
+@layer utilities {
+
+  /* outline for visible focus (via tab) */
+  *:focus-visible:not(input[type=text]):not(input[type=textarea]):not(input[type=search]):not(input[type=password]):not(input[type=email]):not(input[type=date]):not([type=number]):not(textarea):not(.oc-search-input):not(.cm-content) {
+    outline: 2px var(--oc-role-on-secondary) solid;
+    outline-offset: 0;
+    box-shadow: 0 0 0 4px var(--oc-role-secondary);
+  }
+
+  /* inner outline for visible focus on resource names. outer outlines don't work because of the hidden overflow (due to text truncation) */
+  .oc-resource-details a:focus-visible,
+  .oc-resource-details button:focus-visible {
+    box-shadow: inset 0px 0px 0px 2px var(--oc-role-secondary) !important;
+  }
+}

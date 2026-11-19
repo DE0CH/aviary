@@ -1,0 +1,94 @@
+<template>
+  <div
+    ref="photoRollItem"
+    class="flex flex-col items-center p-4 mb-1 photo-roll-item"
+    :class="{ 'bg-role-secondary-container rounded-md': isActive }"
+  >
+    <oc-button
+      appearance="raw"
+      class="flex flex-col w-full"
+      :aria-label="item.name"
+      no-hover
+      :aria-current="isActive ? 'true' : 'false'"
+      @click="$emit('select')"
+    >
+      <motion-photo-overlay
+        class="mx-auto w-fit max-w-full"
+        :resource="item.resource"
+        badge-class="top-0 right-0 m-1"
+        video-class="rounded-md"
+      >
+        <img
+          v-if="item && item.resource.thumbnail"
+          :src="item.resource.thumbnail"
+          class="object-cover h-25 rounded-md aspect-video"
+          :alt="item.name"
+          referrerpolicy="no-referrer"
+          decoding="async"
+        />
+        <div v-else class="aspect-video h-25 max-w-full flex items-center justify-center">
+          <resource-icon class="aspect-video" :resource="iconResource" size-class="size-12" />
+        </div>
+      </motion-photo-overlay>
+      <span class="w-full">
+        <resource-name
+          :name="item.resource.name"
+          :extension="item.resource.extension"
+          :type="item.resource.type"
+          :full-path="item.resource.webDavPath"
+          :is-extension-displayed="areFileExtensionsShown"
+          :is-path-displayed="false"
+          :is-favorite="item.resource.starred"
+          class="justify-center"
+        />
+      </span>
+    </oc-button>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { Resource } from '@opencloud-eu/web-client'
+import { MediaFile } from '../helpers/types'
+import {
+  MotionPhotoOverlay,
+  ResourceIcon,
+  ResourceName,
+  useResourcesStore
+} from '@opencloud-eu/web-pkg'
+import { useIsVisible } from '@opencloud-eu/design-system/composables'
+import { computed, ref, useTemplateRef } from 'vue'
+
+const props = defineProps<{
+  item: MediaFile
+  isActive: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'select'): void
+  (e: 'item-visible'): void
+}>()
+
+const resourcesStore = useResourcesStore()
+const itemRef = useTemplateRef<HTMLElement>('photoRollItem')
+
+const areFileExtensionsShown = computed(() => resourcesStore.areFileExtensionsShown)
+
+const iconResource = computed(() => {
+  return {
+    id: props.item.id,
+    path: '',
+    extension: props.item.ext,
+    mimeType: props.item.mimeType,
+    isFolder: false,
+    isFile: true,
+    type: 'file'
+  } as Resource
+})
+
+useIsVisible({
+  target: itemRef,
+  // observed against the viewport, the photo roll is no scroll container of its own
+  root: ref<Element>(null),
+  onVisibleCallback: () => emit('item-visible')
+})
+</script>

@@ -1,0 +1,134 @@
+import {
+  useMessages,
+  useResourcesStore,
+  useRoute,
+  useSpacesStore,
+  useUserStore,
+  useClientService,
+  useExtensionRegistry
+} from '@opencloud-eu/web-pkg'
+import { computed, onMounted, onBeforeUnmount, unref, watch, Ref } from 'vue'
+import {
+  SpaceResource,
+  isPublicSpaceResource,
+  isShareSpaceResource
+} from '@opencloud-eu/web-client'
+import { useService, useUpload, UppyService, UploadResult, OcUppyMeta } from '@opencloud-eu/web-pkg'
+import { HandleUpload } from '../HandleUpload'
+import { useGettext } from 'vue3-gettext'
+import { storeToRefs } from 'pinia'
+
+export const useFileUpload = (space: Ref<SpaceResource>) => {
+  const uppyService = useService<UppyService>('$uppyService')
+  const clientService = useClientService()
+  const userStore = useUserStore()
+  const spacesStore = useSpacesStore()
+  const messageStore = useMessages()
+  const route = useRoute()
+  const language = useGettext()
+  const extensionRegistry = useExtensionRegistry()
+
+  const resourcesStore = useResourcesStore()
+  const { currentFolder } = storeToRefs(resourcesStore)
+
+  useUpload({ uppyService })
+
+  if (!uppyService.getPlugin('HandleUpload')) {
+    uppyService.addPlugin(HandleUpload, {
+      clientService,
+      language,
+      route,
+      space,
+      userStore,
+      spacesStore,
+      messageStore,
+      resourcesStore,
+      uppyService,
+      extensionRegistry
+    })
+  }
+
+  let uploadCompletedSub: string
+  let uploadCancelledSub: string
+
+  const canUpload = computed(() => {
+    return unref(currentFolder)?.canUpload({ user: userStore.user })
+  })
+
+  async function onUploadComplete(result: UploadResult) {
+    // folders of failed files may have been created already, so failed uploads need a refresh too
+    const file = result.successful?.[0] || result.failed?.[0]
+    if (!file) {
+      return
+    }
+
+    try {
+      await refreshAfterUpload(file.meta)
+    } catch (e) {
+      // the refresh fails if e.g. the upload target folder has been deleted in the meantime
+      console.error(e)
+    }
+  }
+
+  async function refreshAfterUpload({ spaceId, driveType }: OcUppyMeta) {
+    if (!isPublicSpaceResource(unref(space))) {
+      const isOwnSpace = spacesStore.spaces
+        .find(({ id }) => id === spaceId)
+        ?.isOwner(userStore.user)
+
+      if (driveType === 'project' || isOwnSpace) {
+        const client = clientService.graphAuthenticated
+        const updatedSpace = await client.drives.getDrive(spaceId)
+        spacesStore.updateSpaceField({
+          id: updatedSpace.id,
+          field: 'spaceQuota',
+          value: updatedSpace.spaceQuota
+        })
+      }
+    }
+
+    if (!unref(currentFolder) || spaceId !== unref(space).id) {
+      return
+    }
+
+    const { children } = await clientService.webdav.listFiles(unref(space), {
+      path: unref(currentFolder).path
+    })
+
+    if (isShareSpaceResource(unref(space))) {
+      // TODO: remove when server returns share id for federated shares in propfind response
+      children.forEach((r) => (r.remoteItemId = unref(space).id))
+    }
+
+    const existingEtags = new Map(resourcesStore.resources.map((r) => [r.id, r.etag]))
+    const changedResources = children.filter((child) => existingEtags.get(child.id) !== child.etag)
+    resourcesStore.upsertResources(changedResources)
+  }
+
+  onMounted(() => {
+    uploadCompletedSub = uppyService.subscribe('uploadCompleted', onUploadComplete)
+    uploadCancelledSub = uppyService.subscribe('uploadCancelled', onUploadComplete)
+  })
+
+  onBeforeUnmount(() => {
+    uppyService.removePlugin(uppyService.getPlugin('HandleUpload'))
+    uppyService.unsubscribe('uploadCompleted', uploadCompletedSub)
+    uppyService.unsubscribe('uploadCancelled', uploadCancelledSub)
+    uppyService.removeDropTarget()
+  })
+
+  watch(
+    canUpload,
+    () => {
+      const targetSelector = '#files-view'
+      const target = document.querySelector(targetSelector)
+
+      if (target && unref(canUpload)) {
+        uppyService.useDropTarget({ targetSelector })
+      } else {
+        uppyService.removeDropTarget()
+      }
+    },
+    { immediate: true }
+  )
+}

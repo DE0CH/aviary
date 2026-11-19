@@ -1,0 +1,185 @@
+import {
+  isPersonalSpaceResource,
+  isShareResource,
+  isTrashResource,
+  Resource,
+  SpaceResource
+} from '@opencloud-eu/web-client'
+import { computed, unref } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import PQueue from 'p-queue'
+import {
+  FileAction,
+  FileActionOptions,
+  useAbility,
+  useClientService,
+  useConfigStore,
+  useCreateSpace,
+  useIsResourceNameValid,
+  useMessages,
+  useModals,
+  useResourcesStore,
+  useSpacesStore
+} from '@opencloud-eu/web-pkg'
+
+export const useFileActionsCreateSpaceFromResource = () => {
+  const { showMessage, showErrorMessage } = useMessages()
+  const { can } = useAbility()
+  const { $gettext, $ngettext } = useGettext()
+  const { createSpace } = useCreateSpace()
+  const clientService = useClientService()
+  const hasCreatePermission = computed(() => can('create-all', 'Drive'))
+  const { dispatchModal } = useModals()
+  const configStore = useConfigStore()
+  const spacesStore = useSpacesStore()
+  const resourcesStore = useResourcesStore()
+  const { isSpaceNameValid } = useIsResourceNameValid()
+
+  async function copyResourcesToSpace({
+    resources,
+    space,
+    createdSpace
+  }: {
+    resources: Resource[]
+    space: SpaceResource
+    createdSpace: SpaceResource
+  }) {
+    const { webdav } = clientService
+    const queue = new PQueue({
+      concurrency: configStore.options.concurrentRequests.resourceBatchActions
+    })
+    const results = await Promise.allSettled(
+      resources.map((resource) =>
+        queue.add(() => webdav.copyFiles(space, resource, createdSpace, { path: resource.name }))
+      )
+    )
+
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map(({ reason }) => reason)
+    errors.forEach((error) => console.error(error))
+    return errors
+  }
+
+  const confirmAction = async ({
+    spaceName,
+    resources,
+    space
+  }: {
+    spaceName: string
+    resources: Resource[]
+    space: SpaceResource
+  }) => {
+    let resourcesToCopy = resources
+    let createdSpace: SpaceResource
+    try {
+      if (resources.length === 1 && resources[0].isFolder) {
+        // If a single folder is selected we copy its content to the space root folder.
+        const { children } = await clientService.webdav.listFiles(space, {
+          path: resources[0].path
+        })
+        resourcesToCopy = children
+      }
+
+      createdSpace = await createSpace(spaceName)
+      spacesStore.upsertSpace(createdSpace)
+    } catch (error) {
+      console.error(error)
+      showErrorMessage({ title: $gettext('Creating space failed…'), errors: [error] })
+      return
+    }
+
+    const errors = await copyResourcesToSpace({ resources: resourcesToCopy, space, createdSpace })
+    resourcesStore.resetSelection()
+
+    if (errors.length) {
+      showErrorMessage({
+        title: $gettext('Space was created'),
+        desc: $gettext('Not all files could be copied.'),
+        status: 'warning',
+        errors
+      })
+      return
+    }
+
+    showMessage({ title: $gettext('Space was created successfully') })
+  }
+
+  const handler = ({ resources, space }: FileActionOptions) => {
+    dispatchModal({
+      title: $ngettext(
+        'Create Space from »%{resourceName}«',
+        'Create Space from selection',
+        resources.length,
+        {
+          resourceName: resources[0].name
+        }
+      ),
+      message: $ngettext(
+        'Create Space with the content of »%{resourceName}«.',
+        'Create Space with the selected files.',
+        resources.length,
+        {
+          resourceName: resources[0].name
+        }
+      ),
+      contextualHelperLabel: $gettext('The marked elements will be copied.'),
+      contextualHelperData: {
+        title: $gettext('Restrictions'),
+        text: $gettext('Shares, versions and tags will not be copied.')
+      },
+      confirmText: $gettext('Create'),
+      hasInput: true,
+      inputLabel: $gettext('Space name'),
+      inputRequiredMark: true,
+      onInput: (name: string, setError: (error: string) => void) => {
+        const { isValid, error } = isSpaceNameValid(name)
+        setError(isValid ? null : error)
+      },
+      onConfirm: (spaceName: string) => confirmAction({ spaceName, space, resources })
+    })
+  }
+
+  const actions = computed((): FileAction[] => [
+    {
+      name: 'create-space-from-resource',
+      icon: 'function',
+      handler,
+      label: () => {
+        return $gettext('Create Space from selection')
+      },
+      isVisible: ({ resources, space }) => {
+        if (!resources.length) {
+          return false
+        }
+
+        if (!unref(hasCreatePermission)) {
+          return false
+        }
+
+        if (resources.some((r) => isShareResource(r) || isTrashResource(r))) {
+          return false
+        }
+
+        if (resources.some((r) => isTrashResource(r))) {
+          return false
+        }
+
+        // The new space would receive ciphertext blobs (no key follows the
+        // resource), so the contents would be unreadable. Hide for any
+        // vault resource - and for the vault root itself, which would
+        // also lose the path-derived encryption.
+        if (resources.some((r) => r.isInVault)) {
+          return false
+        }
+
+        return isPersonalSpaceResource(space)
+      },
+      class: 'oc-files-actions-create-space-from-resource-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

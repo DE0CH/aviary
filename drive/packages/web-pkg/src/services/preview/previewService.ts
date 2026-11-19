@@ -1,0 +1,219 @@
+import { buildFilePreviewCacheKey, cacheService } from '../cache'
+import { ClientService } from '../client'
+import { encodePath } from '../../utils'
+import { isPublicSpaceResource } from '@opencloud-eu/web-client'
+import { BuildQueryStringOptions, LoadPreviewOptions } from '.'
+import { AuthStore, ConfigStore, UserStore } from '../../composables' // @ts-ignore
+import { stringify } from 'qs'
+import { DavProperty } from '@opencloud-eu/web-client/webdav'
+
+export class PreviewService {
+  clientService: ClientService
+  configStore: ConfigStore
+  userStore: UserStore
+  authStore: AuthStore
+
+  /** Ongoing preview requests, so concurrent loads of the same key share one fetch. */
+  private inFlightPreviews = new Map<string, Promise<string>>()
+
+  constructor({
+    clientService,
+    userStore,
+    authStore,
+    configStore
+  }: {
+    clientService: ClientService
+    userStore: UserStore
+    authStore: AuthStore
+    configStore: ConfigStore
+  }) {
+    this.clientService = clientService
+    this.userStore = userStore
+    this.authStore = authStore
+    this.configStore = configStore
+  }
+
+  private get user() {
+    return this.userStore.user
+  }
+
+  public async loadPreview(
+    options: LoadPreviewOptions,
+    cached = false,
+    silenceErrors = true,
+    signal?: AbortSignal
+  ): Promise<string | undefined> {
+    const { space, resource } = options
+
+    if (!resource.canDownload() || !resource.hasPreview?.()) {
+      return undefined
+    }
+
+    const isPublic = isPublicSpaceResource(space)
+    if (!isPublic && !this.configStore.serverUrl) {
+      return undefined
+    }
+    // guests authenticate via session cookie
+    if (
+      !isPublic &&
+      !this.authStore.isGuestContext &&
+      (!this.user?.onPremisesSamAccountName || !this.authStore.accessToken)
+    ) {
+      return undefined
+    }
+
+    if (isPublic) {
+      return this.publicPreviewUrl(options, signal)
+    }
+    try {
+      return await this.privatePreviewBlob(options, cached, silenceErrors, signal)
+    } catch (e) {
+      if (silenceErrors) {
+        return undefined
+      }
+      throw e
+    }
+  }
+
+  private async cacheFactory(
+    options: LoadPreviewOptions,
+    silenceErrors: boolean,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const { resource, dimensions } = options
+    const key = buildFilePreviewCacheKey(resource.id, dimensions)
+    const hit = cacheService.filePreview.get(key)
+
+    if (hit && hit.etag === resource.etag) {
+      return hit.src
+    }
+
+    try {
+      let request = this.inFlightPreviews.get(key)
+      if (!request) {
+        request = this.fetchAndCachePreview(options, key, signal)
+        this.inFlightPreviews.set(key, request)
+      }
+
+      return await request
+    } catch (e) {
+      if (silenceErrors) {
+        return
+      }
+      throw e
+    }
+  }
+
+  private async fetchAndCachePreview(
+    options: LoadPreviewOptions,
+    key: string,
+    signal?: AbortSignal
+  ): Promise<string> {
+    try {
+      const { src, size } = await this.fetchPreviewBlob(options, signal)
+      return cacheService.filePreview.set(key, { src, size, etag: options.resource.etag }, 0).src
+    } finally {
+      this.inFlightPreviews.delete(key)
+    }
+  }
+
+  private buildQueryString(options: BuildQueryStringOptions): string {
+    return stringify({
+      scalingup: options.scalingup || 0,
+      preview: Object.hasOwnProperty.call(options, 'preview') ? options.preview : 1,
+      ...(options.processor && { processor: options.processor }),
+      ...(options.etag && { c: options.etag.replaceAll('"', '') }),
+      ...(options.dimensions && options.dimensions[0] && { x: options.dimensions[0] }),
+      ...(options.dimensions && options.dimensions[1] && { y: options.dimensions[1] })
+    })
+  }
+
+  private async privatePreviewBlob(
+    options: LoadPreviewOptions,
+    cached = false,
+    silenceErrors = true,
+    signal?: AbortSignal
+  ): Promise<string> {
+    if (cached) {
+      return this.cacheFactory(options, silenceErrors, signal)
+    }
+
+    const { src } = await this.fetchPreviewBlob(options, signal)
+    return src
+  }
+
+  private async fetchPreviewBlob(
+    options: LoadPreviewOptions,
+    signal?: AbortSignal
+  ): Promise<{ src: string; size: number }> {
+    const { resource, dimensions, processor } = options
+
+    const url = [
+      this.configStore.serverUrl,
+      'dav',
+      encodePath(resource.webDavPath),
+      '?',
+      this.buildQueryString({ etag: resource.etag, dimensions, processor })
+    ].join('')
+
+    try {
+      const { data } = await this.clientService.httpAuthenticated.get<Blob>(url, {
+        responseType: 'blob',
+        signal
+      })
+      return { src: window.URL.createObjectURL(data), size: data.size }
+    } catch (e) {
+      if ([425, 429].includes(e.status)) {
+        const retryAfter = e.response?.headers?.['retry-after'] || 5
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000))
+        return this.fetchPreviewBlob(options, signal)
+      }
+
+      throw e
+    }
+  }
+
+  private async publicPreviewUrl(
+    options: LoadPreviewOptions,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const { space, resource, dimensions, processor } = options
+    let { downloadURL } = resource
+    if (!downloadURL) {
+      const { downloadURL: url } = await this.clientService.webdav.getFileInfo(space, resource, {
+        davProperties: [DavProperty.DownloadURL]
+      })
+      downloadURL = url
+    }
+    // In a public context, i.e. public shares, the downloadURL contains a pre-signed url to
+    // download the file.
+    const [url, signedQuery] = downloadURL.split('?')
+
+    // Since the pre-signed url contains query parameters and the caller of this method
+    // can also provide query parameters we have to combine them.
+    const combinedQuery = [
+      this.buildQueryString({ etag: resource.etag, dimensions, processor }),
+      signedQuery
+    ]
+      .filter(Boolean)
+      .join('&')
+
+    const previewUrl = [url, combinedQuery].filter(Boolean).join('?')
+
+    try {
+      const { status } = await this.clientService.httpUnAuthenticated.head(previewUrl, { signal })
+
+      if (status !== 404) {
+        return previewUrl
+      }
+    } catch (e) {
+      if ([425, 429].includes(e.status)) {
+        const retryAfter = e.response?.headers?.['retry-after'] || 5
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000))
+        return this.publicPreviewUrl(options, signal)
+      }
+
+      throw e
+    }
+  }
+}

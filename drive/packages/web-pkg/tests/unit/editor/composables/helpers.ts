@@ -1,0 +1,139 @@
+import { vi } from 'vitest'
+import { createApp, defineComponent, h } from 'vue'
+import { createGettext } from 'vue3-gettext'
+import type { Editor } from '@tiptap/vue-3'
+
+export function withSetup<T>(
+  composable: () => T,
+  { provide = {} }: { provide?: Record<string, unknown> } = {}
+): { result: T } {
+  let result!: T
+  const app = createApp(
+    defineComponent({
+      setup() {
+        result = composable()
+        return () => h('div')
+      }
+    })
+  )
+  for (const [key, value] of Object.entries(provide)) {
+    app.provide(key, value)
+  }
+  app.use(createGettext({ translations: {}, silent: true }))
+  app.mount(document.createElement('div'))
+  return { result }
+}
+
+interface MockEditorOptions {
+  isActive?: (type: string, attrs?: Record<string, unknown>) => boolean
+  canUndo?: boolean
+  canRedo?: boolean
+  attributes?: Record<string, Record<string, unknown>>
+  runResult?: boolean
+  /** Node type name of `state.doc.firstChild`, or undefined for an empty document. */
+  firstChildType?: string
+  /** `nodeSize` of `state.doc.firstChild`. */
+  firstChildSize?: number
+}
+
+export function createMockEditor(options: MockEditorOptions = {}) {
+  const {
+    isActive = () => false,
+    canUndo = false,
+    canRedo = false,
+    attributes = {},
+    runResult = true,
+    firstChildType,
+    firstChildSize = 16
+  } = options
+
+  const run = vi.fn().mockReturnValue(runResult)
+
+  function createChain() {
+    const chain: Record<string, ReturnType<typeof vi.fn>> = {}
+    const methods = [
+      'focus',
+      'undo',
+      'redo',
+      'toggleBold',
+      'toggleItalic',
+      'toggleUnderline',
+      'toggleStrike',
+      'toggleSubscript',
+      'toggleSuperscript',
+      'toggleCode',
+      'setParagraph',
+      'setNode',
+      'toggleHeading',
+      'toggleBlockquote',
+      'toggleCodeBlock',
+      'setHorizontalRule',
+      'toggleBulletList',
+      'toggleOrderedList',
+      'toggleTaskList',
+      'deleteRange',
+      'deleteRow',
+      'deleteTable',
+      'deleteColumn',
+      'insertTable',
+      'setFontFamily',
+      'setFontSize',
+      'unsetFontSize',
+      'setLineHeight',
+      'setColor',
+      'unsetColor',
+      'setBackgroundColor',
+      'unsetBackgroundColor',
+      'setTextAlign',
+      'addRowBefore',
+      'addRowAfter',
+      'goToPreviousCell',
+      'addColumnBefore',
+      'addColumnAfter',
+      'setImage',
+      'insertContent',
+      'command',
+      'toggleHeaderRow',
+      'setFrontmatter',
+      'unsetFrontmatter',
+      'setTextSelection'
+    ]
+    for (const method of methods) {
+      chain[method] = vi.fn().mockReturnValue(chain)
+    }
+    chain.run = run
+    return chain
+  }
+
+  const chainInstance = createChain()
+
+  return {
+    chain: vi.fn(() => chainInstance),
+    commands: {
+      setTextSelection: vi.fn()
+    },
+    isActive: vi.fn(isActive),
+    can: vi.fn(() => ({
+      undo: vi.fn().mockReturnValue(canUndo),
+      redo: vi.fn().mockReturnValue(canRedo)
+    })),
+    getAttributes: vi.fn((mark: string) => attributes[mark] ?? {}),
+    state: {
+      selection: {
+        $anchor: { before: () => 0 },
+        $from: { parent: { type: { spec: {} } } }
+      },
+      doc: {
+        nodeAt: (): any => null,
+        firstChild: firstChildType
+          ? { type: { name: firstChildType }, nodeSize: firstChildSize }
+          : null
+      }
+    },
+    _chain: chainInstance,
+    _run: run
+  } as unknown as Editor & {
+    _chain: Record<string, ReturnType<typeof vi.fn>>
+    _run: ReturnType<typeof vi.fn>
+  }
+}

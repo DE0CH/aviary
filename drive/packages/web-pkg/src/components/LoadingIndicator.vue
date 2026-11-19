@@ -1,0 +1,55 @@
+<template>
+  <div v-if="isLoading" id="oc-loading-indicator" class="w-full">
+    <oc-progress
+      :aria-label="$gettext('Loading')"
+      :max="100"
+      :indeterminate="currentProgress === null"
+      :value="currentProgress"
+      size="xsmall"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { eventBus, LoadingEventTopics } from '../services'
+import { useLoadingService } from '../composables'
+
+const loadingService = useLoadingService()
+let addLoadingEventToken: string
+let removeLoadingEventToken: string
+let setProgressToken: string
+
+const isLoading = ref(loadingService.isLoading)
+const currentProgress = ref(loadingService.currentProgress)
+
+const updateLoadingState = () => {
+  currentProgress.value = loadingService.currentProgress
+  isLoading.value = loadingService.isLoading
+}
+const setProgress = () => {
+  currentProgress.value = loadingService.currentProgress
+}
+
+onMounted(() => {
+  addLoadingEventToken = eventBus.subscribe(LoadingEventTopics.add, updateLoadingState)
+  removeLoadingEventToken = eventBus.subscribe(LoadingEventTopics.remove, updateLoadingState)
+  setProgressToken = eventBus.subscribe(LoadingEventTopics.setProgress, setProgress)
+})
+
+onBeforeUnmount(() => {
+  eventBus.unsubscribe(LoadingEventTopics.add, addLoadingEventToken)
+  eventBus.unsubscribe(LoadingEventTopics.remove, removeLoadingEventToken)
+  eventBus.unsubscribe(LoadingEventTopics.setProgress, setProgressToken)
+})
+</script>
+<style>
+#oc-loading-indicator .oc-progress-indeterminate-first {
+  animation-duration: 4s;
+}
+
+#oc-loading-indicator .oc-progress-indeterminate-second {
+  animation-duration: 4s;
+  animation-delay: 1s;
+}
+</style>

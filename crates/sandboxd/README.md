@@ -11,8 +11,8 @@ filesystem by rsync). hermit is its only client.
   fixtures and the running daemon.
 - Memory bound and how it is enforced and tested: [docs/MEMORY.md](docs/MEMORY.md).
 - Network, storage, migration, security on a host: [docs/HOST.md](docs/HOST.md).
-- Host scripts: `fabric/host` (setup.sh, make-certs.sh, fetch-sandboxd.sh), `fabric/aws` (infra.sh and the IAM
-  policies), `fabric/gvisor-patches`; the gateway pod's image `images/sandboxd` (sandboxd as its main process,
+- Host scripts: `fabric/host` (setup.sh, make-certs.sh, fetch-sandboxd.sh), `fabric/aws` (the IAM policies; the AWS side
+  itself is `crates/fabric-aws`, binary `fabric-aws` in each release), `fabric/gvisor-patches`; the gateway pod's image `images/sandboxd` (sandboxd as its main process,
   docs/HOST.md "Gateway").
 
 Moved from DE0CH/jarvis3 `chat/sandboxd/daemon` on 2026-11-02 (jarvis3 commit 52c9b8c, platform spec 4.1); jarvis3
@@ -62,11 +62,10 @@ the live contract check, `build` puts the binary in `dist` (checked static, `--v
 the gateway pod's image `images/sandboxd` (not pushed), then runs `tests/gateway/adopt.sh` with that image;
 `sandboxd-soak` also runs `tests/gateway/adopt.sh` with the binary.
 
-No `aviary-<sha12>` release is published yet: that is the `publish` job of WP-28 (main only, after every gate). Until
-it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh` and `infra.sh ami`) installs sandboxd
-only from a local build or the `dist` artifact, with `SANDBOXD_BINARY=<path>`. `infra.sh sync` refuses both a local
-build and a `fabric.sandboxd` pin that is not an `aviary-<sha12>` release (exit 3, nothing baked), and `check` says
-why it fails, so the AMI workflow (hermit spec 14.3) cannot bake an AMI on every run before a release exists.
+`fabric/host/fetch-sandboxd.sh` (and so `setup.sh` and `fabric-aws ami`) installs sandboxd from the pinned
+`aviary-<sha12>` release, or from a local build with `SANDBOXD_BINARY=<path>` (`fabric-aws ami --sandboxd-binary`).
+`fabric-aws sync` refuses a `fabric.sandboxd` pin that is not an `aviary-<sha12>` release (exit 3, nothing baked), and
+`check` says why it fails, so the AMI workflow (hermit spec 14.3) never bakes an AMI that can never match its pin.
 
 ## Commands
 

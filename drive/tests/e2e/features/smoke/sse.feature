@@ -1,0 +1,400 @@
+@sse
+Feature: server sent events
+  events:
+  | userlog-notification    | x |
+  | postprocessing-finished | x |
+  | file-locked             | x | checked in the app-provider/lock.feature
+  | file-unlocked           | x | checked in the app-provider/lock.feature
+  | file-touched            | x |
+  | item-renamed            | x |
+  | item-trashed            | x |
+  | item-restored           | x |
+  | item-moved              | x |
+  | item-favorite-added     | x |
+  | item-favorite-removed   | x |
+  | folder-created          | x |
+  | space-created           | x |
+  | space-member-added      | x |
+  | space-member-removed    | x |
+  | space-share-updated     | x |
+  | share-created           | x |
+  | share-removed           | x |
+  | share-updated           | x |
+  | link-created            | x |
+  | link-removed            | x |
+  | link-updated            | x |
+  | space-disabled          | x |
+  | space-enabled           | x |
+  | space-deleted           | x |
+
+
+  Background:
+    Given "Admin" creates following users using API
+      | id    |
+      | Alice |
+      | Brian |
+      | Carol |
+
+  @webkit-skip
+  Scenario: space sse events
+    Given "Admin" assigns following role to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Brian" logs in
+    And "Brian" navigates to the projects space page
+
+    And "Alice" logs in
+    And "Alice" creates the project space using API "Marketing"
+
+    # space-created
+    Then "Alice" should get "space-created" SSE event
+
+    # space-member-added
+    When "Alice" adds the following member to the space "Marketing" using API
+      | user  | role     | shareType |
+      | Brian | Can view | user      |
+    Then "Alice" should get "space-member-added" SSE event
+    And "Brian" should get "userlog-notification" SSE event
+    And "Brian" should get "space-member-added" SSE event
+    And "Brian" should see space "Marketing"
+
+    # folder-created
+    When "Brian" navigates to the project space "Marketing"
+    And "Alice" creates the following folder in space "Marketing" using API
+      | name         |
+      | space-folder |
+    Then "Alice" should get "folder-created" SSE event
+    And "Brian" should get "folder-created" SSE event
+    And following resource should be displayed in the files list for user "Brian"
+      | resource     |
+      | space-folder |
+    And "Brian" should not be able to edit folder "space-folder"
+
+    # space-share-updated
+    When "Alice" navigates to the project space "Marketing"
+    And "Alice" changes the roles of the following user in the project space
+      | user  | role     |
+      | Brian | Can edit |
+    Then "Alice" should get "space-share-updated" SSE event
+    And "Brian" should get "space-share-updated" SSE event
+    And "Brian" should be able to edit folder "space-folder"
+
+    # share-created
+    When "Alice" shares the following resource using the sidebar panel
+      | resource     | recipient | type | role     |
+      | space-folder | Carol     | user | Can view |
+    Then "Alice" should get "share-created" SSE event
+    And "Brian" should get "share-created" SSE event
+    And "Brian" should see user-direct indicator on the folder "space-folder"
+
+    # share-updated
+    When "Alice" updates following sharee role
+      | resource     | recipient | type | role     | resourceType |
+      | space-folder | Carol     | user | Can view | folder       |
+    Then "Alice" should get "share-updated" SSE event
+    And "Brian" should get "share-updated" SSE event
+
+    # link-created
+    When "Alice" creates a public link of following resource using the sidebar panel
+      | resource     | password |
+      | space-folder | %public% |
+    Then "Alice" should get "link-created" SSE event
+    Then "Brian" should get "link-created" SSE event
+    And "Brian" should see link-direct indicator on the folder "space-folder"
+
+    # link-updated
+    When "Alice" renames the most recently created public link of resource "space-folder" to "myLink"
+    Then "Alice" should get "link-updated" SSE event
+    And "Brian" should get "link-updated" SSE event
+
+    # share-removed
+    When "Alice" removes following sharee
+      | resource     | recipient |
+      | space-folder | Carol     |
+    Then "Alice" should get "share-removed" SSE event
+    And "Brian" should get "share-removed" SSE event
+    And "Brian" should not see user-direct indicator on the folder "space-folder"
+
+    # link-removed
+    When "Alice" removes the public link named "myLink" of resource "space-folder"
+    Then "Alice" should get "link-removed" SSE event
+    And "Brian" should get "link-removed" SSE event
+    And "Brian" should not see link-direct indicator on the folder "space-folder"
+
+    # space-member-removed
+    When "Brian" navigates to the projects space page
+    And "Alice" navigates to the project space "Marketing"
+    And "Alice" removes access to following user from the project space
+      | user  |
+      | Brian |
+    Then "Alice" should get "space-member-removed" SSE event
+    And "Brian" should get "space-member-removed" SSE event
+    And "Brian" should not see space "Marketing"
+
+
+    # space-disabled
+    When "Alice" adds the following member to the space "Marketing" using API
+      | user  | role     | shareType |
+      | Brian | Can view | user      |
+    And "Alice" navigates to the projects space page
+    And "Alice" disables the following space using the batch-actions
+      | name      |
+      | Marketing |
+    Then "Alice" should get "space-disabled" SSE event
+    And "Brian" should get "space-disabled" SSE event
+
+    # space-enabled
+    When "Alice" enables the following space using the batch-actions
+      | name      |
+      | Marketing |
+    Then "Alice" should get "space-enabled" SSE event
+    And "Brian" should get "space-enabled" SSE event
+
+    # space-deleted
+    And "Alice" disables the following space using the batch-actions
+      | name      |
+      | Marketing |
+    And "Alice" deletes the following space using the batch-actions
+      | name      |
+      | Marketing |
+    Then "Alice" should get "space-deleted" SSE event
+    And "Brian" should get "space-deleted" SSE event
+
+    And "Brian" logs out
+    And "Alice" logs out
+
+  @webkit-skip
+  Scenario: share sse events
+    When "Brian" logs in
+    And "Brian" navigates to the shared with me page
+    And "Alice" logs in
+    And "Alice" creates the following folder in personal space using API
+      | name                   |
+      | sharedFolder/subFolder |
+
+    # share-created
+    When "Alice" shares the following resource using the sidebar panel
+      | resource     | recipient | type | role     |
+      | sharedFolder | Brian     | user | Can view |
+    Then "Alice" should get "share-created" SSE event
+    And "Brian" should get "share-created" SSE event
+    And "Brian" should not be able to edit folder "sharedFolder"
+
+    # share-updated
+    When "Brian" opens folder "sharedFolder"
+    And "Alice" updates following sharee role
+      | resource     | recipient | type | role     | resourceType |
+      | sharedFolder | Brian     | user | Can edit | folder       |
+    Then "Alice" should get "share-updated" SSE event
+    And "Brian" should get "share-updated" SSE event
+    And "Brian" should be able to edit folder "subFolder"
+
+    # share-removed
+    When "Alice" removes following sharee
+      | resource     | recipient |
+      | sharedFolder | Brian     |
+    Then "Alice" should get "share-removed" SSE event
+    And "Brian" should get "share-removed" SSE event
+    And "Brian" should see the message "Your access to this share has been revoked. Please navigate to another location." on the webUI
+
+    And "Brian" logs out
+    And "Alice" logs out
+
+  @webkit-skip
+  Scenario: sse events on file operations
+    Given "Admin" assigns following role to the users using API
+      | id    | role        |
+      | Alice | Space Admin |
+    And "Alice" creates the project space using API "Marketing"
+    And "Alice" adds the following member to the space "Marketing" using API
+      | user  | role     | shareType |
+      | Brian | Can edit | user      |
+    And "Alice" creates the following folder in space "Marketing" using API
+      | name         |
+      | space-folder |
+    And "Alice" logs in
+    When "Alice" navigates to the project space "Marketing"
+    And "Brian" logs in
+    And "Brian" navigates to the project space "Marketing"
+
+    # postprocessing-finished - upload file
+    When "Brian" uploads the following resource
+      | resource   |
+      | simple.pdf |
+    Then "Brian" should get "postprocessing-finished" SSE event
+    And "Alice" should get "postprocessing-finished" SSE event
+    And following resource should be displayed in the files list for user "Alice"
+      | resource   |
+      | simple.pdf |
+
+    # postprocessing-finished - create file
+    # file-touched -create file
+    When "Alice" creates the following resource
+      | resource       | type     | content   |
+      | example.ocnote | noteFile | some text |
+    Then "Alice" should get "postprocessing-finished" SSE event
+    And "Alice" should get "file-touched" SSE event
+    And "Brian" should get "postprocessing-finished" SSE event
+    And "Brian" should get "file-touched" SSE event
+    And following resource should be displayed in the files list for user "Brian"
+      | resource       |
+      | example.ocnote |
+
+    # item-renamed
+    When "Brian" renames the following resource
+      | resource   | as                 |
+      | simple.pdf | simple-renamed.pdf |
+    Then "Brian" should get "item-renamed" SSE event
+    And "Alice" should get "item-renamed" SSE event
+    And following resource should be displayed in the files list for user "Alice"
+      | resource           |
+      | simple-renamed.pdf |
+
+    # item-trashed
+    When "Alice" deletes the following resource using the context menu
+      | resource       |
+      | example.ocnote |
+    Then "Alice" should get "item-trashed" SSE event
+    And "Brian" should get "item-trashed" SSE event
+    And following resource should not be displayed in the files list for user "Brian"
+      | resource       |
+      | example.ocnote |
+
+    # item-restored
+    When "Brian" navigates to the trashbin
+    When "Brian" opens trashbin of the project space "Marketing"
+    And "Brian" restores the following resource from trashbin
+      | resource       |
+      | example.ocnote |
+    Then "Brian" should get "item-restored" SSE event
+    And "Alice" should get "item-restored" SSE event
+    And following resource should be displayed in the files list for user "Alice"
+      | resource       |
+      | example.ocnote |
+
+    # item-moved
+    When "Brian" navigates to the project space "Marketing"
+    And "Brian" opens folder "space-folder"
+    And "Alice" moves the following resource using drag-drop
+      | resource           | to           |
+      | simple-renamed.pdf | space-folder |
+    Then "Alice" should get "item-moved" SSE event
+    And "Brian" should get "item-moved" SSE event
+    And following resource should be displayed in the files list for user "Brian"
+      | resource           |
+      | simple-renamed.pdf |
+
+    And "Brian" logs out
+    And "Alice" logs out
+
+  @webkit-skip
+  Scenario: share recipients get sse events on file operations
+    Given "Admin" creates following user using API
+      | id    |
+      | David |
+    And "Admin" creates following group using API
+      | id    |
+      | sales |
+    And "Admin" adds user to the group using API
+      | user  | group |
+      | Carol | sales |
+    And "Alice" creates the following folders in personal space using API
+      | name             |
+      | sharedFolder     |
+      | sharedFolder/sub |
+      | privateFolder    |
+    And "Alice" shares the following resources using API
+      | resource     | recipient | type  | role     |
+      | sharedFolder | Brian     | user  | Can edit |
+      | sharedFolder | sales     | group | Can view |
+    And "Alice" logs in
+    And "Brian" logs in
+    And "Brian" navigates to the shared with me page
+    And "Brian" opens folder "sharedFolder"
+    And "Carol" logs in
+    And "David" logs in
+
+    When "Alice" uploads the following local file into personal space using API
+      | localFile  | to                          |
+      | simple.pdf | sharedFolder/sub/simple.pdf |
+    Then "Brian" should get "postprocessing-finished" SSE event
+    And "Carol" should get "postprocessing-finished" SSE event
+    And "David" should not get "postprocessing-finished" SSE event
+
+    # folder-created
+    When "Alice" opens folder "sharedFolder"
+    And "Alice" creates the following resources
+      | resource  | type   |
+      | newFolder | folder |
+    Then "Brian" should get "folder-created" SSE event
+
+    # item-renamed
+    When "Alice" renames the following resource
+      | resource  | as            |
+      | newFolder | renamedFolder |
+    Then "Brian" should get "item-renamed" SSE event
+
+    # item-moved out of the share: recipients of the old location get the event
+    When "Alice" moves the following resource using dropdown-menu
+      | resource      | to                     |
+      | renamedFolder | Personal/privateFolder |
+    Then "Brian" should get "item-moved" SSE event
+
+    # item-trashed
+    When "Alice" deletes the following resource using the context menu
+      | resource |
+      | sub      |
+    Then "Brian" should get "item-trashed" SSE event
+    And "Carol" should get "item-trashed" SSE event
+
+    # item-restored
+    When "Alice" navigates to the trashbin
+    And "Alice" restores the following resource from trashbin
+      | resource         |
+      | sharedFolder/sub |
+    Then "Brian" should get "item-restored" SSE event
+    And "David" logs out
+    And "Carol" logs out
+    And "Brian" logs out
+    And "Alice" logs out
+
+
+  Scenario: favorite sse events update the favorites view across tabs
+    Given "Alice" creates the following file into personal space using API
+      | pathToFile  | content     |
+      | example.txt | lorem ipsum |
+    And "Alice" logs in
+
+    # tab 2. open the favorites page in the second tab
+    And "Alice" opens a new tab
+    And "Alice" navigates to the favorites page
+    And following resource should not be displayed in the files list for user "Alice"
+      | resource    |
+      | example.txt |
+
+    # tab 1. item-favorite-added - mark as favorite
+    When "Alice" switches to tab 1
+    And "Alice" marks the following resource as favorite using "context menu"
+      | resource    |
+      | example.txt |
+    Then "Alice" should get "item-favorite-added" SSE event
+    
+    # tab 2 check that the resource is displayed without a reload
+    When "Alice" switches to tab 2
+    Then following resource should be displayed in the files list for user "Alice"
+      | resource    |
+      | example.txt |
+
+    # tab 1. item-favorite-removed - unmark as favorite
+    When "Alice" switches to tab 1
+    And "Alice" removes the following resource from favorites using "context menu"
+      | resource    |
+      | example.txt |
+    Then "Alice" should get "item-favorite-removed" SSE event
+
+    # tab 2 check that the resource is not displayed without a reload
+    When "Alice" switches to tab 2
+    Then following resource should not be displayed in the files list for user "Alice"
+      | resource    |
+      | example.txt |
+    And "Alice" logs out

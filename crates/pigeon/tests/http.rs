@@ -726,7 +726,7 @@ async fn me_gives_the_first_name() {
     assert_eq!(
         body_json(r).await,
         json!({"firstName": "Tai", "sharing": true, "product": PRODUCT, "newConversations": true,
-               "conversationDelete": true, "modelPick": false, "midTurn": true})
+               "conversationDelete": true, "modelPick": false, "personCards": false, "midTurn": true})
     );
     // no name claim: Access's get-identity answers (fake-access answers from the token's own name)
     let t1 = &h.teams[0];
@@ -758,6 +758,11 @@ async fn me_gives_the_first_name() {
     h.set_facts(|d| d.conversations.people_pick_model = true).await;
     let v = body_json(h.get_as(me(), STAFF).await).await;
     assert_eq!(v["modelPick"], true);
+    // the question and wait cards show only where the deployment turns them on (Deyao, 2026-11-19: one deployment first)
+    assert_eq!(v["personCards"], false);
+    h.set_facts(|d| d.features.person_cards = true).await;
+    let v = body_json(h.get_as(me(), STAFF).await).await;
+    assert_eq!(v["personCards"], true);
 }
 
 // ---- Models and warm (spec 5.5-5.6) ----

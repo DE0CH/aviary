@@ -1,0 +1,239 @@
+import { mock } from 'vitest-mock-extended'
+import type { RouteLocationNormalizedLoaded } from 'vue-router'
+import { defineComponent } from 'vue'
+import {
+  createRouter,
+  defaultComponentMocks,
+  getComposableWrapper
+} from '@opencloud-eu/web-test-helpers'
+import type { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import type { DriveItem } from '@opencloud-eu/web-client/graph/generated'
+import { FolderLoaderSpace, type TaskContext } from '../../../../../src/services/folder'
+import {
+  useCapabilityStore,
+  useConfigStore,
+  useResourcesStore,
+  useSharesStore,
+  useSpacesStore,
+  useUserStore,
+  type AuthServiceInterface,
+  type ExtensionRegistry
+} from '../../../../../src/composables'
+import { getSharedDriveItem } from '../../../../../src/helpers'
+
+vi.mock('../../../../../src/helpers', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  getSharedDriveItem: vi.fn()
+}))
+
+describe('FolderLoaderSpace', () => {
+  describe('isActive', () => {
+    it('is active on the guest route', () => {
+      const { $router } = defaultComponentMocks({
+        currentRoute: mock<RouteLocationNormalizedLoaded>({ name: 'files-guest-link' })
+      })
+      expect(new FolderLoaderSpace().isActive($router)).toBeTruthy()
+    })
+    it('is not active on the guest shares route', async () => {
+      const component = defineComponent({ template: '<div />' })
+      const router = createRouter({
+        routes: [
+          { name: 'files-spaces-projects', path: '/files/spaces/projects', component },
+          {
+            name: 'files-spaces-generic',
+            path: '/files/spaces/:driveAliasAndItem(.*)?',
+            component
+          },
+          { name: 'files-public-link', path: '/files/public/:driveAliasAndItem(.*)?', component },
+          { name: 'files-guest-shares', path: '/files/guest/shares', component },
+          { name: 'files-guest-link', path: '/files/guest/:driveAliasAndItem(.*)?', component }
+        ]
+      })
+      await router.push('/files/guest/shares')
+      expect(new FolderLoaderSpace().isActive(router)).toBeFalsy()
+    })
+  })
+
+  describe('share space', () => {
+    it('sets the share space as remote item on the current folder and its children', async () => {
+      const space = {
+        id: 'share-space-id',
+        driveType: 'share',
+        graphPermissions: [],
+        getDriveAliasAndItem: () => 'share/f1/k2'
+      } as unknown as SpaceResource
+
+      const { resourcesStore } = await loadFolder({ space, path: '/k2' })
+
+      expect(resourcesStore.initResourceList).toHaveBeenCalledWith({
+        currentFolder: expect.objectContaining({ id: 'k2', remoteItemId: 'share-space-id' }),
+        resources: [expect.objectContaining({ id: 'j1', remoteItemId: 'share-space-id' })]
+      })
+    })
+
+    it('keeps the webdav permissions, favorite state and tags on the share root', async () => {
+      vi.mocked(getSharedDriveItem).mockResolvedValueOnce({
+        id: 'mount-id',
+        name: 'f1',
+        folder: {},
+        remoteItem: {
+          id: 'share-space-id',
+          permissions: [
+            {
+              id: 'p1',
+              grantedToV2: { user: { id: 'u1' } },
+              invitation: { invitedBy: { user: { id: 'u2' } } }
+            }
+          ]
+        }
+      } as DriveItem)
+      const space = {
+        id: 'share-space-id',
+        driveType: 'share',
+        graphPermissions: [],
+        getDriveAliasAndItem: () => 'share/f1'
+      } as unknown as SpaceResource
+      const root = {
+        id: 'share-space-id',
+        path: '/',
+        isFolder: true,
+        permissions: 'SNVCK',
+        starred: true,
+        tags: ['important']
+      }
+
+      const { resourcesStore } = await loadFolder({ space, path: '/', resource: root as Resource })
+
+      expect(resourcesStore.initResourceList).toHaveBeenCalledWith(
+        expect.objectContaining({
+          currentFolder: expect.objectContaining({
+            id: 'mount-id',
+            permissions: 'SNVCK',
+            starred: true,
+            tags: ['important']
+          })
+        })
+      )
+    })
+
+    it('lists the root of a single file share as the only resource', async () => {
+      const space = {
+        id: 'share-space-id',
+        driveType: 'share',
+        graphPermissions: [],
+        getDriveAliasAndItem: () => 'share/doc.txt'
+      } as unknown as SpaceResource
+      const file = { id: 'f1', path: '/', isFolder: false } as Resource
+
+      const { resourcesStore } = await loadFolder({ space, path: '/', resource: file })
+
+      expect(resourcesStore.initResourceList).toHaveBeenCalledWith({
+        currentFolder: expect.objectContaining({ id: 'f1' }),
+        resources: [expect.objectContaining({ id: 'f1' })]
+      })
+    })
+  })
+
+  it('leaves the remote item unset outside of share spaces', async () => {
+    const space = {
+      id: 'personal-space-id',
+      driveType: 'personal',
+      getDriveAliasAndItem: () => 'personal/admin/k2'
+    } as unknown as SpaceResource
+
+    const { resourcesStore } = await loadFolder({ space, path: '/k2' })
+
+    const { currentFolder } = vi.mocked(resourcesStore.initResourceList).mock.calls[0][0]
+    expect(currentFolder.remoteItemId).toBeUndefined()
+  })
+
+  describe('path pointing to a file', () => {
+    const space = {
+      id: 'personal-space-id',
+      driveType: 'personal',
+      getDriveAliasAndItem: ({ path }: Resource) => `personal/admin${path}`
+    } as unknown as SpaceResource
+    const file = {
+      id: 'f1',
+      path: '/k2/doc.txt',
+      isFolder: false,
+      parentFolderId: 'k2'
+    } as Resource
+
+    it('redirects to the parent folder and scrolls to the file', async () => {
+      const { resourcesStore, router } = await loadFolder({
+        space,
+        path: '/k2/doc.txt',
+        resource: file
+      })
+
+      expect(router.replace).toHaveBeenCalledWith({
+        params: { driveAliasAndItem: 'personal/admin/k2' },
+        query: { fileId: 'k2', scrollTo: 'f1' }
+      })
+      expect(resourcesStore.initResourceList).not.toHaveBeenCalled()
+    })
+
+    it('drops a stale file id from the query if the parent id is unknown', async () => {
+      const { router } = await loadFolder({
+        space,
+        path: '/k2/doc.txt',
+        resource: { ...file, parentFolderId: undefined },
+        query: { fileId: 'f1' }
+      })
+
+      expect(router.replace).toHaveBeenCalledWith({
+        params: { driveAliasAndItem: 'personal/admin/k2' },
+        query: { scrollTo: 'f1' }
+      })
+    })
+  })
+})
+
+async function loadFolder({
+  space,
+  path,
+  resource = { id: 'k2', path: '/k2', isFolder: true } as Resource,
+  query = {}
+}: {
+  space: SpaceResource
+  path: string
+  resource?: Resource
+  query?: Record<string, string>
+}) {
+  const mocks = defaultComponentMocks({
+    currentRoute: mock<RouteLocationNormalizedLoaded>({ query })
+  })
+  mocks.$clientService.webdav.listFiles.mockResolvedValue({
+    resource,
+    children: [{ id: 'j1', path: '/k2/j1' } as Resource]
+  })
+
+  let resourcesStore!: ReturnType<typeof useResourcesStore>
+  let task!: ReturnType<FolderLoaderSpace['getTask']>
+
+  getComposableWrapper(
+    () => {
+      resourcesStore = useResourcesStore()
+      const context: TaskContext = {
+        router: mocks.$router,
+        clientService: mocks.$clientService,
+        resourcesStore,
+        spacesStore: useSpacesStore(),
+        sharesStore: useSharesStore(),
+        configStore: useConfigStore(),
+        userStore: useUserStore(),
+        capabilityStore: useCapabilityStore(),
+        authService: mock<AuthServiceInterface>(),
+        extensionRegistry: mock<ExtensionRegistry>()
+      }
+      task = new FolderLoaderSpace().getTask(context)
+    },
+    { mocks, provide: mocks }
+  )
+
+  // the folder service passes its own abort signal as first argument
+  await task.perform(new AbortController().signal, space, path)
+
+  return { resourcesStore, router: mocks.$router }
+}

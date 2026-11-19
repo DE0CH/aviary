@@ -1,0 +1,539 @@
+#!/usr/bin/env node
+// Assembles the files of a pigeon-app image (pigeon spec 17.1 steps 6-7, cutover D13, DESIGN 9.6): the new web export,
+// plus the hashed assets of recent builds and of every seeded yyc-ai-ui image, so a tab loaded from any of them keeps
+// fetching its own lazy chunks from pigeon.
+//
+//   node assemble.mjs --dist DIR --sw FILE --commit SHA --out DIR [--previous DIR] [--seeds DIR --seed TAG=COMMIT]...
+//                     [--served-build COMMIT]... [--restore COMMIT=DIR]... [--budget-mib N] [--now ISO]
+//                     [--pins FILE [--growth-days 7]]
+//
+// --dist          the export (scripts/build-paseo-ui.mjs writes dist/)
+// --sw            public/sw.js, served at /sw.js (the old service worker's kill switch)
+// --previous      the filesystem of the previous pigeon-app image (its app/ and meta/), absent on the first build
+// --seeds         a directory of fetch-seeds.mjs output, one <tag>/ per yyc-ai-ui image; --seed names each image served
+//                 within the Access session lifetime with its claudecodeui commit
+// --served-build  the commit of a pigeon-app image served within the Access session lifetime (DE0CH/yyc-code's pigeon-app
+//                 pin history); its build stays whatever its age
+// --restore       the filesystem of the pigeon-app image of a served build that the previous image no longer holds (a
+//                 rollback to a pruned build): its build's files are taken from there
+// --budget-mib    the most the served tree may take, counted as the filesystem stores it (4 KiB blocks, one per
+//                 directory too); over it, optional builds are pruned (below), and if it is still over, the assembly
+//                 fails and prints what takes the space
+// --pins          pins.mjs's output for the seeds (`<tag> <from> <until or now>`): with it, the report projects the
+//                 mandatory part over the next 744 h (projectMandatory below); a seed it does not list counts as pinned now
+// --growth-days   the projection's seed growth is what the seeds first pinned within this many days added, per day
+// --out           writes <out>/app (served, copied by the image's /cp into pigeon's /srv/app) and <out>/meta (not served):
+//                 assets-history.json {file: firstSeenISO}, builds.json (the builds whose assets are kept, newest first,
+//                 each with its own hashed files) and seeds.json (each seed listed now: its commit, image digest and
+//                 files with their sha256, and under `older` the files of earlier digests of the same tag)
+//
+// Hashed assets are the files under _expo/static/ and assets/ (their names carry a content hash). Kept:
+// - every file of the new build, and of each earlier build served within the Access session lifetime (--served-build);
+// - every file of each earlier build among the last 5 or built within the last 30 days (pigeon spec 17.1), as long as
+//   the tree fits the budget. Over it, the builds YYC has not served are pruned oldest first, those beyond the last 5
+//   before those among them, never the newest 2 (this build and the one before it, which YYC may be about to pin). A
+//   build YYC never served has no tab that needs its chunks; the last 5 are a margin for a pin that lands after a run
+//   read the pin history. (Spec 17.1's "30 days or last 5" alone does not fit pigeon's emptyDir: one build whose files
+//   all changed takes about 36 MiB, and the app gets dozens of commits a week.)
+// - every file of each seed listed now (a yyc-ai-ui image served within the Access session lifetime, cutover D13), and
+//   of the earlier digests of a listed tag (a re-pushed tag: tabs from the old digest may still be open).
+// A seed leaves when its tag leaves the list: a tab loaded from an image last served more than 720 h ago holds no live
+// Access session. A kept path whose bytes differ between two sources (a chunk name reused for other content) fails the
+// assembly: no tab could be served both. Finally every js/css/html/json/svg/wasm file of a pigeon-app build, and the
+// unhashed files, get a .br (quality 11) and a .gz (level 9) sibling, reused from the previous image when the file's
+// bytes are unchanged. Files kept only for seeds get none (pigeon serves the file itself when a sibling is missing,
+// pigeon spec 5.2.1): they are the old ui builds' chunks, about a quarter of their size again in siblings.
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
+
+export const HASHED_TREES = ['_expo/static/', 'assets/'];
+export const KEEP_BUILDS = 5;
+export const KEEP_DAYS = 30;
+// under budget pressure: this build and the one before it are never pruned
+export const KEEP_MIN = 2;
+// a seed stays this long after its last serving: the 720 h Access session lifetime plus pins.mjs's 24 h margin
+export const SEED_HOURS = 744;
+const COMPRESSIBLE = /\.(js|css|html|json|svg|wasm)$/;
+const SIBLING = /\.(br|gz)$/;
+const BLOCK = 4096;
+const DAY_MS = 86400 * 1000;
+
+const isHashed = (rel) => HASHED_TREES.some((tree) => rel.startsWith(tree));
+const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const mib = (bytes) => `${(bytes / 1048576).toFixed(1)} MiB`;
+const blocks = (bytes) => Math.max(1, Math.ceil(bytes / BLOCK)) * BLOCK;
+
+// relative paths of the regular files under dir, '/'-separated, sorted
+export function walk(dir) {
+  const out = [];
+  const visit = (sub) => {
+    for (const entry of readdirSync(path.join(dir, sub), { withFileTypes: true })) {
+      const rel = sub ? `${sub}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) visit(rel);
+      else if (entry.isFile()) out.push(rel);
+    }
+  };
+  if (existsSync(dir)) visit('');
+  return out.sort();
+}
+
+// what a tree takes on disk: its files in 4 KiB blocks and one block per directory (what kubelet counts against the
+// emptyDir's sizeLimit, whatever filesystem this runs on)
+export function diskUsage(dir) {
+  const dirs = new Set(['']);
+  let bytes = 0;
+  for (const rel of walk(dir)) {
+    bytes += blocks(statSync(path.join(dir, rel)).size);
+    for (let parent = path.posix.dirname(rel); parent !== '.'; parent = path.posix.dirname(parent)) dirs.add(parent);
+  }
+  return bytes + dirs.size * BLOCK;
+}
+
+function removeEmptyDirs(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const sub = path.join(dir, entry.name);
+    removeEmptyDirs(sub);
+    if (readdirSync(sub).length === 0) rmSync(sub, { recursive: true });
+  }
+}
+
+// The mandatory part of the tree (what pruning never removes) over the next `hours`, sampled hourly: `fixedBytes` (this
+// build, the one before it, the served builds, the unhashed files) stays as it is; each seed-only file leaves at its
+// `expires` (the last serving of the last seed holding it, plus SEED_HOURS); and new ui pins add `growthBytesPerDay`
+// (none of them leaves within the horizon: a pin made now is served at least until now, so it stays SEED_HOURS more).
+// Returns the value now, the peak, and when it first goes over the budget and next fits again (null when it does not).
+// A projection only: the assembly fails on the real tree, never on this.
+export function projectMandatory({ fixedBytes, seedFiles, growthBytesPerDay, budgetBytes = null, now, hours = SEED_HOURS }) {
+  const start = now.getTime();
+  const expiries = seedFiles.map((file) => ({ at: file.expires, bytes: file.bytes })).sort((a, b) => a.at - b.at);
+  let remaining = expiries.reduce((sum, file) => sum + file.bytes, 0);
+  let next = 0;
+  const samples = [];
+  for (let hour = 0; hour <= hours; hour++) {
+    const at = start + hour * 3600 * 1000;
+    while (next < expiries.length && expiries[next].at <= at) remaining -= expiries[next++].bytes;
+    samples.push({ at, bytes: fixedBytes + remaining + (growthBytesPerDay * hour) / 24 });
+  }
+  const peak = samples.reduce((best, sample) => (sample.bytes > best.bytes ? sample : best), samples[0]);
+  let overAt = null;
+  let fitsAgainAt = null;
+  if (budgetBytes !== null) {
+    const over = samples.findIndex((sample) => sample.bytes > budgetBytes);
+    if (over >= 0) {
+      overAt = samples[over].at;
+      const fits = samples.findIndex((sample, index) => index > over && sample.bytes <= budgetBytes);
+      fitsAgainAt = fits >= 0 ? samples[fits].at : null;
+    }
+  }
+  return { now: samples[0].bytes, peak, overAt, fitsAgainAt, end: samples.at(-1) };
+}
+
+// pins.mjs's text output: tag -> {from, until} in ms (until null: pinned now)
+export function readPins(text) {
+  const pins = new Map();
+  for (const line of text.split('\n').filter(Boolean)) {
+    const [tag, from, until] = line.split(' ');
+    pins.set(tag, { from: new Date(from).getTime(), until: until === 'now' ? null : new Date(until).getTime() });
+  }
+  return pins;
+}
+
+const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
+
+export function assemble({
+  dist,
+  sw,
+  previous = null,
+  seedsDir = null,
+  seeds = [],
+  servedBuilds = [],
+  restore = [],
+  budgetBytes = null,
+  commit,
+  now = new Date(),
+  out,
+  pins = null,
+  growthDays = 7,
+}) {
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`--commit ${commit}: not a 40-hex commit`);
+  const nowIso = now.toISOString();
+  const app = path.join(out, 'app');
+  const meta = path.join(out, 'meta');
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(meta, { recursive: true });
+  cpSync(dist, app, { recursive: true });
+  cpSync(sw, path.join(app, 'sw.js'));
+
+  const own = walk(app).filter(isHashed);
+  if (!own.some((rel) => rel.startsWith('_expo/static/js/'))) throw new Error(`${dist}: no _expo/static/js (not a web export)`);
+
+  const prevApp = previous ? path.join(previous, 'app') : null;
+  const prevMeta = previous ? path.join(previous, 'meta') : null;
+  if (previous && !existsSync(path.join(prevMeta, 'builds.json'))) throw new Error(`${previous}: no meta/builds.json`);
+  const prevBuilds = previous ? readJson(path.join(prevMeta, 'builds.json'), []) : [];
+  const prevSeeds = previous ? readJson(path.join(prevMeta, 'seeds.json'), {}) : {};
+  const prevHistory = previous ? readJson(path.join(prevMeta, 'assets-history.json'), {}) : {};
+
+  // the seeds listed now, from the fetched images, with the earlier digests of the same tags from the previous image
+  const seedsMeta = {};
+  for (const { tag, commit: seedCommit } of seeds) {
+    const dir = path.join(seedsDir, tag);
+    if (!existsSync(path.join(dir, '.digest'))) throw new Error(`seed ${tag}: not fetched (${dir}/.digest missing)`);
+    const files = {};
+    for (const rel of walk(dir).filter(isHashed)) files[rel] = sha256(path.join(dir, rel));
+    const digest = readFileSync(path.join(dir, '.digest'), 'utf8').trim();
+    const before = prevSeeds[tag];
+    const older = [];
+    if (before) {
+      for (const earlier of [{ digest: before.digest, files: before.files }, ...(before.older ?? [])]) {
+        if (earlier.digest !== digest && !older.some((o) => o.digest === earlier.digest)) older.push(earlier);
+      }
+    }
+    seedsMeta[tag] = { commit: seedCommit, digest, files, ...(older.length ? { older } : {}) };
+  }
+
+  // a served build the previous image no longer holds, from its own image (its builds.json lists its build first)
+  const restored = [];
+  for (const { commit: sha, dir } of restore) {
+    const entry = readJson(path.join(dir, 'meta', 'builds.json'), []).find((build) => build.commit === sha);
+    if (!entry) throw new Error(`--restore ${sha}: ${dir}/meta/builds.json does not list that build`);
+    restored.push({ commit: sha, builtAt: entry.builtAt, files: entry.files, from: path.join(dir, 'app') });
+  }
+
+  // the builds whose assets stay: this one, any served now or recently, and (while the budget allows) the newest
+  // KEEP_BUILDS and any built within KEEP_DAYS
+  const cutoff = now.getTime() - KEEP_DAYS * 86400 * 1000;
+  const served = new Set(servedBuilds);
+  const known = new Set([commit, ...prevBuilds.map((build) => build.commit), ...restored.map((build) => build.commit)]);
+  const lost = [...served].filter((sha) => !known.has(sha));
+  if (lost.length) {
+    throw new Error(
+      `pigeon-app builds served within the Access session lifetime but neither in the previous image's builds.json nor restored (--restore): ${lost.join(', ')}`,
+    );
+  }
+  let builds = [
+    { commit, builtAt: nowIso, files: own },
+    ...prevBuilds.filter((build) => build.commit !== commit).map(({ commit: c, builtAt, files }) => ({ commit: c, builtAt, files, from: null })),
+    ...restored.filter((build) => build.commit !== commit && !prevBuilds.some((prev) => prev.commit === build.commit)),
+  ]
+    .sort((a, b) => (a.commit === commit ? -1 : b.commit === commit ? 1 : b.builtAt.localeCompare(a.builtAt)))
+    .filter((build, index) => index < KEEP_BUILDS || new Date(build.builtAt).getTime() >= cutoff || served.has(build.commit));
+
+  // every kept path with the sources that hold it
+  const ownSet = new Set(own);
+  const buildFiles = new Set(own);
+  const kept = new Map(); // rel -> [{label, file, hash?}]
+  const add = (rel, source) => {
+    if (!kept.has(rel)) kept.set(rel, []);
+    kept.get(rel).push(source);
+  };
+  for (const rel of own) add(rel, { label: `this build ${commit.slice(0, 12)}`, file: path.join(app, rel) });
+  for (const [tag, seed] of Object.entries(seedsMeta)) {
+    for (const [rel, hash] of Object.entries(seed.files)) add(rel, { label: `yyc-ai-ui:${tag}`, file: path.join(seedsDir, tag, rel), hash });
+    for (const earlier of seed.older ?? []) {
+      for (const [rel, hash] of Object.entries(earlier.files)) add(rel, { label: `yyc-ai-ui:${tag}@${earlier.digest.slice(0, 19)}`, file: null, hash });
+    }
+  }
+  for (const build of builds.slice(1)) {
+    for (const rel of build.files) {
+      add(rel, { label: `build ${build.commit.slice(0, 12)}`, file: build.from ? path.join(build.from, rel) : null });
+      buildFiles.add(rel);
+    }
+  }
+
+  const conflicts = [];
+  let copied = 0;
+  for (const [rel, sources] of kept) {
+    const prevFile = prevApp && existsSync(path.join(prevApp, rel)) ? path.join(prevApp, rel) : null;
+    const hashes = new Map();
+    for (const source of sources) {
+      const file = source.file ?? prevFile;
+      if (!file) throw new Error(`${rel} (${source.label}) is kept but the previous image does not hold it`);
+      const hash = sha256(file);
+      if (source.hash && source.hash !== hash) conflicts.push(`${rel}: ${source.label} recorded ${source.hash}, the file is ${hash}`);
+      if (!hashes.has(hash)) hashes.set(hash, []);
+      hashes.get(hash).push(source.label);
+    }
+    if (hashes.size > 1) {
+      conflicts.push(`${rel}: ${[...hashes].map(([hash, labels]) => `${hash.slice(0, 12)} in ${labels.join(', ')}`).join('; ')}`);
+      continue;
+    }
+    if (ownSet.has(rel)) continue;
+    const from = sources.find((source) => source.file)?.file ?? prevFile;
+    mkdirSync(path.dirname(path.join(app, rel)), { recursive: true });
+    cpSync(from, path.join(app, rel));
+    copied++;
+  }
+  if (conflicts.length) throw new Error(`hashed asset names with different bytes:\n  ${conflicts.join('\n  ')}`);
+
+  // .br and .gz siblings for the builds' files and the unhashed ones, reused when the previous image (or a restored
+  // one) has them for the same bytes
+  let compressed = 0;
+  let reused = 0;
+  const siblingSources = [prevApp, ...restored.map((build) => build.from)].filter(Boolean);
+  for (const rel of walk(app)) {
+    if (!COMPRESSIBLE.test(rel) || SIBLING.test(rel)) continue;
+    // branding/ holds the files a deployment replaces where it deploys the bundle (paseo/packages/app
+    // src/yyc/brand.ts): a sibling of the bundle's neutral file would be served in place of the deployment's
+    if (rel.startsWith('branding/')) continue;
+    if (isHashed(rel) && !buildFiles.has(rel)) continue;
+    const file = path.join(app, rel);
+    const hash = sha256(file);
+    const prev = siblingSources
+      .map((dir) => path.join(dir, rel))
+      .find((candidate) => existsSync(candidate) && existsSync(`${candidate}.br`) && existsSync(`${candidate}.gz`) && sha256(candidate) === hash);
+    if (prev) {
+      cpSync(`${prev}.br`, `${file}.br`);
+      cpSync(`${prev}.gz`, `${file}.gz`);
+      reused++;
+      continue;
+    }
+    const source = readFileSync(file);
+    writeFileSync(
+      `${file}.br`,
+      brotliCompressSync(source, {
+        params: {
+          [constants.BROTLI_PARAM_QUALITY]: 11,
+          [constants.BROTLI_PARAM_SIZE_HINT]: source.length,
+        },
+      }),
+    );
+    writeFileSync(`${file}.gz`, gzipSync(source, { level: 9 }));
+    compressed++;
+  }
+
+  // over the budget: prune the builds YYC has not served, oldest first, beyond the last KEEP_BUILDS before those among
+  // them, never the newest KEEP_MIN; a pruned build's files go unless another kept source holds them
+  let bytes = diskUsage(app);
+  const pruned = [];
+  if (budgetBytes !== null && bytes > budgetBytes) {
+    const candidates = builds
+      .map((build, index) => ({ build, index }))
+      .filter(({ build, index }) => index >= KEEP_MIN && !served.has(build.commit))
+      .sort((a, b) => (b.index >= KEEP_BUILDS) - (a.index >= KEEP_BUILDS) || b.index - a.index)
+      .map(({ build }) => build);
+    for (const victim of candidates) {
+      if (bytes <= budgetBytes) break;
+      builds = builds.filter((build) => build !== victim);
+      pruned.push(victim);
+      const inBuilds = new Set(builds.flatMap((build) => build.files));
+      const inSeeds = new Set(
+        Object.values(seedsMeta).flatMap((seed) => [...Object.keys(seed.files), ...(seed.older ?? []).flatMap((earlier) => Object.keys(earlier.files))]),
+      );
+      for (const rel of victim.files) {
+        if (inBuilds.has(rel)) continue;
+        // a seed's file stays, without the siblings only builds' files get
+        if (!inSeeds.has(rel)) {
+          rmSync(path.join(app, rel), { force: true });
+          kept.delete(rel);
+        }
+        rmSync(path.join(app, `${rel}.br`), { force: true });
+        rmSync(path.join(app, `${rel}.gz`), { force: true });
+      }
+      removeEmptyDirs(app);
+      bytes = diskUsage(app);
+    }
+  }
+
+  const history = {};
+  for (const rel of [...kept.keys()].sort()) history[rel] = prevHistory[rel] ?? nowIso;
+  writeFileSync(path.join(meta, 'assets-history.json'), `${JSON.stringify(history, null, 1)}\n`);
+  writeFileSync(path.join(meta, 'builds.json'), `${JSON.stringify(builds.map(({ commit: c, builtAt, files }) => ({ commit: c, builtAt, files })), null, 1)}\n`);
+  writeFileSync(path.join(meta, 'seeds.json'), `${JSON.stringify(seedsMeta, null, 1)}\n`);
+
+  // what takes the space: each file (with its siblings) counted once, under the first of: this build, the earlier
+  // builds newest first, the seeds newest pin first (--seed comes in pin order, oldest first, as pins.mjs prints it),
+  // the rest (index.html, sw.js, icons)
+  const size = (rel) => (existsSync(path.join(app, rel)) ? blocks(statSync(path.join(app, rel)).size) : 0);
+  const withSiblings = (rel) => size(rel) + size(`${rel}.br`) + size(`${rel}.gz`);
+  const counted = new Set();
+  const usage = [];
+  const charge = (label, rels) => {
+    let bytes = 0;
+    for (const rel of rels) {
+      if (counted.has(rel)) continue;
+      counted.add(rel);
+      bytes += withSiblings(rel);
+    }
+    usage.push({ label, bytes });
+  };
+  charge(`this build ${commit.slice(0, 12)}`, own);
+  for (const build of builds.slice(1)) charge(`build ${build.commit.slice(0, 12)} (${build.builtAt.slice(0, 10)})`, build.files);
+  for (const [tag, seed] of Object.entries(seedsMeta).reverse()) {
+    charge(`yyc-ai-ui:${tag}`, [...Object.keys(seed.files), ...(seed.older ?? []).flatMap((earlier) => Object.keys(earlier.files))]);
+  }
+  charge('unhashed files', walk(app).filter((rel) => !SIBLING.test(rel) && !isHashed(rel)));
+
+  // the mandatory part: what the tree would take with every prunable build pruned (this build, the one before it, the
+  // served builds and the unhashed files with their siblings; the seeds' other files without)
+  const unhashed = walk(app).filter((rel) => !SIBLING.test(rel) && !isHashed(rel));
+  const mandatoryBuildFiles = new Set([
+    ...unhashed,
+    ...builds.filter((build, index) => index < KEEP_MIN || served.has(build.commit)).flatMap((build) => build.files),
+  ]);
+  const seedHolders = new Map(); // seed-only rel -> the tags holding it
+  for (const [tag, seed] of Object.entries(seedsMeta)) {
+    for (const rel of [...Object.keys(seed.files), ...(seed.older ?? []).flatMap((earlier) => Object.keys(earlier.files))]) {
+      if (mandatoryBuildFiles.has(rel)) continue;
+      if (!seedHolders.has(rel)) seedHolders.set(rel, new Set());
+      seedHolders.get(rel).add(tag);
+    }
+  }
+  const mandatoryDirs = new Set(['']);
+  for (const rel of [...mandatoryBuildFiles, ...seedHolders.keys()]) {
+    for (let parent = path.posix.dirname(rel); parent !== '.'; parent = path.posix.dirname(parent)) mandatoryDirs.add(parent);
+  }
+  let seedOnlyBytes = 0;
+  for (const rel of seedHolders.keys()) seedOnlyBytes += size(rel);
+  let buildBytes = mandatoryDirs.size * BLOCK;
+  for (const rel of mandatoryBuildFiles) buildBytes += withSiblings(rel);
+  const mandatory = { bytes: buildBytes + seedOnlyBytes, seedBytes: seedOnlyBytes, headroom: budgetBytes === null ? null : budgetBytes - buildBytes - seedOnlyBytes };
+
+  // the projection: each seed-only file leaves SEED_HOURS after the last serving of the last seed holding it, and the
+  // seeds grow at what the seeds first pinned within growthDays added (their files no earlier-pinned seed holds)
+  let projection = null;
+  if (pins) {
+    const times = (tag) => pins.get(tag) ?? { from: now.getTime(), until: null };
+    // a seed pinned now stays past the horizon: it is served at least until it is replaced, then SEED_HOURS more
+    const servedUntil = (tag) => times(tag).until ?? Infinity;
+    const seedFiles = [...seedHolders].map(([rel, tags]) => ({
+      bytes: size(rel),
+      expires: Math.max(...[...tags].map(servedUntil)) + SEED_HOURS * 3600 * 1000,
+    }));
+    const growthStart = now.getTime() - growthDays * DAY_MS;
+    const byPin = Object.keys(seedsMeta).sort((a, b) => times(a).from - times(b).from || a.localeCompare(b));
+    const seen = new Set();
+    let grown = 0;
+    let recentPins = 0;
+    for (const tag of byPin) {
+      const recent = times(tag).from >= growthStart;
+      if (recent) recentPins++;
+      for (const rel of seedHolders.keys()) {
+        if (!seedHolders.get(rel).has(tag) || seen.has(rel)) continue;
+        seen.add(rel);
+        if (recent) grown += size(rel);
+      }
+    }
+    const growthBytesPerDay = grown / growthDays;
+    projection = {
+      growthDays,
+      recentPins,
+      growthBytesPerDay,
+      ...projectMandatory({ fixedBytes: buildBytes, seedFiles, growthBytesPerDay, budgetBytes, now }),
+    };
+  }
+  const result = {
+    own: own.length,
+    kept: kept.size,
+    copied,
+    builds: builds.length,
+    pruned: pruned.map((build) => build.commit),
+    seeds: Object.keys(seedsMeta).length,
+    compressed,
+    reused,
+    bytes,
+    usage,
+    mandatory,
+    projection,
+  };
+  if (budgetBytes !== null && bytes > budgetBytes) {
+    const lines = usage.filter((entry) => entry.bytes).map((entry) => `  ${mib(entry.bytes).padStart(10)}  ${entry.label}`);
+    const error = new Error(
+      `/app takes ${mib(bytes)} on disk, over the ${mib(budgetBytes)} budget (pigeon's emptyDir, pigeon spec 17.1), with every ` +
+        `build YYC has not served pruned but the newest ${KEEP_MIN}. What takes it:\n${lines.join('\n')}\n` +
+        'What is left is mandatory: the seeds (ui images served within 720 h) and the pigeon-app builds YYC served within ' +
+        '720 h. They age out by themselves, so a later run fits again without a change; to ship sooner, the emptyDir ' +
+        'sizeLimit (with pigeon\'s ephemeral-storage limit) and this budget are the lever.',
+    );
+    error.result = result;
+    throw error;
+  }
+  return result;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = process.argv.slice(2);
+  const opts = { seeds: [], servedBuilds: [], restore: [] };
+  for (let i = 0; i < args.length; i++) {
+    const value = args[++i];
+    if (value === undefined) throw new Error(`${args[i - 1]} needs a value`);
+    switch (args[i - 1]) {
+      case '--dist': opts.dist = value; break;
+      case '--sw': opts.sw = value; break;
+      case '--previous': opts.previous = value; break;
+      case '--seeds': opts.seedsDir = value; break;
+      case '--seed': {
+        const [tag, seedCommit] = value.split('=');
+        if (!/^[0-9a-f]{12,40}$/.test(tag ?? '') || !/^[0-9a-f]{40}$/.test(seedCommit ?? '')) throw new Error(`--seed ${value}: not TAG=COMMIT`);
+        opts.seeds.push({ tag, commit: seedCommit });
+        break;
+      }
+      case '--served-build':
+        if (!/^[0-9a-f]{40}$/.test(value)) throw new Error(`--served-build ${value}: not a 40-hex commit`);
+        opts.servedBuilds.push(value);
+        break;
+      case '--restore': {
+        const at = value.indexOf('=');
+        const sha = value.slice(0, at);
+        if (at < 0 || !/^[0-9a-f]{40}$/.test(sha)) throw new Error(`--restore ${value}: not COMMIT=DIR`);
+        opts.restore.push({ commit: sha, dir: value.slice(at + 1) });
+        break;
+      }
+      case '--budget-mib': opts.budgetBytes = Number(value) * 1048576; break;
+      case '--commit': opts.commit = value; break;
+      case '--now': opts.now = new Date(value); break;
+      case '--pins': opts.pins = readPins(readFileSync(value, 'utf8')); break;
+      case '--growth-days': opts.growthDays = Number(value); break;
+      case '--out': opts.out = value; break;
+      default: throw new Error(`unknown option ${args[i - 1]}`);
+    }
+  }
+  for (const required of ['dist', 'sw', 'commit', 'out']) if (!opts[required]) throw new Error(`--${required} is required`);
+  if (opts.seeds.length && !opts.seedsDir) throw new Error('--seed needs --seeds');
+  let result;
+  try {
+    result = assemble(opts);
+  } catch (error) {
+    console.error(`::error::${error.message.split('\n')[0]}`);
+    console.error(error.message);
+    if (error.result) for (const line of mandatoryReport(error.result, opts.budgetBytes)) console.error(line);
+    process.exit(1);
+  }
+  console.log(
+    `pigeon-app: ${result.own} hashed files of this build, ${result.kept} kept in all (${result.copied} from seeds and earlier builds), ` +
+      `${result.builds} builds and ${result.seeds} seeds kept${result.pruned.length ? ` (${result.pruned.length} pruned for the budget: ${result.pruned.map((c) => c.slice(0, 12)).join(' ')})` : ''}; ${result.compressed} compressed, ${result.reused} reused; ` +
+      `${mib(result.bytes)} on disk${opts.budgetBytes ? ` of the ${mib(opts.budgetBytes)} budget` : ''}`,
+  );
+  for (const entry of result.usage) if (entry.bytes) console.log(`  ${mib(entry.bytes).padStart(10)}  ${entry.label}`);
+  for (const line of mandatoryReport(result, opts.budgetBytes)) console.log(line);
+}
+
+// the headroom of the mandatory part, and (with --pins) its projection, as workflow annotations
+function mandatoryReport({ mandatory, projection }, budgetBytes) {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+  const lines = [
+    `mandatory part (this build, the one before it, the served builds, the seeds): ${mib(mandatory.bytes)}, of it seeds' own files ${mib(mandatory.seedBytes)}` +
+      (budgetBytes ? `; headroom ${mib(mandatory.headroom)} of the ${mib(budgetBytes)} budget` : ''),
+  ];
+  if (budgetBytes) lines.push(`::notice::pigeon-app mandatory part ${mib(mandatory.bytes)} of ${mib(budgetBytes)}: headroom ${mib(mandatory.headroom)}`);
+  if (projection) {
+    lines.push(
+      `projection over ${SEED_HOURS} h (seeds leave ${SEED_HOURS} h after their last serving; new seeds add ${mib(projection.growthBytesPerDay)} a day, ` +
+        `what the ${projection.recentPins} ui pins of the last ${projection.growthDays} days added): peak ${mib(projection.peak.bytes)} at ${day(projection.peak.at)}, ` +
+        `${mib(projection.end.bytes)} at ${day(projection.end.at)}`,
+    );
+    if (projection.overAt !== null) {
+      lines.push(
+        `::warning::pigeon-app: at this ui pin rate the mandatory part goes over the ${mib(budgetBytes)} budget at ${day(projection.overAt)} ` +
+          `(peak ${mib(projection.peak.bytes)} at ${day(projection.peak.at)})` +
+          (projection.fitsAgainAt !== null ? ` and fits again at ${day(projection.fitsAgainAt)}, as old seeds leave` : ', and does not fit again within the horizon') +
+          '; builds in that time fail on the budget (scripts/pigeon-app/README.md, design gap 1)',
+      );
+    }
+  }
+  return lines;
+}

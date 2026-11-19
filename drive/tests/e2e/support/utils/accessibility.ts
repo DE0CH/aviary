@@ -1,0 +1,182 @@
+import { Page, expect } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+import { franc } from 'franc-min'
+
+const wcagRuleTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
+const a11yRuleTags = [...wcagRuleTags, 'best-practice']
+
+type Violation = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number]
+
+// best-practice rules aren't required for WCAG conformance, only their critical and serious findings fail the check
+function isRelevantViolation(violation: Violation): boolean {
+  if (violation.tags.some((tag) => wcagRuleTags.includes(tag))) {
+    return true
+  }
+  return ['critical', 'serious'].includes(violation.impact)
+}
+
+export async function checkA11yOrLocalization(
+  page: Page,
+  context: string,
+  selector?: string
+): Promise<void> {
+  if (process.env.RUN_LOCALIZATION_TEST_FOR_LANG === 'de') {
+    await checkGermanLanguage(page, selector ?? 'body', context)
+  } else {
+    await checkAccessibility(page, context, selector)
+  }
+}
+
+// without an includeSelector the whole page is scanned, which also enables page-level rules
+// (landmarks, headings, document title) that don't apply to a single subtree
+async function checkAccessibility(
+  page: Page,
+  context: string = '',
+  includeSelector?: string
+): Promise<void> {
+  if (includeSelector) {
+    await expect(page.locator(includeSelector)).toBeVisible()
+  }
+  if (includeSelector?.includes('oc-drop')) {
+    // wait for drop animation
+    await page.waitForTimeout(300)
+  }
+
+  async function analyze(): Promise<Violation[]> {
+    // tooltips are transient and appended to <body>, they only show up when a previous step left focus or hover on a trigger
+    const builder = new AxeBuilder({ page }).withTags(a11yRuleTags).exclude('[role="tooltip"]')
+    if (includeSelector) {
+      builder.include(includeSelector)
+    }
+    const results = await builder.analyze()
+    return results.violations.filter(isRelevantViolation)
+  }
+
+  let violations = await analyze()
+  if (violations.length > 0) {
+    await page.waitForTimeout(500)
+    violations = await analyze()
+  }
+
+  if (violations.length > 0) {
+    console.error(`♿ Accessibility violations detected${context ? ` in ${context}` : ''}:`)
+    for (const violation of violations) {
+      console.error(`\n[${violation.id}] ${violation.help}`)
+      console.error(`  Impact: ${violation.impact}`)
+      console.error(`  Description: ${violation.description}`)
+      console.error(`  Help: ${violation.helpUrl}`)
+      violation.nodes.forEach((node, idx) => {
+        console.error(`  Node ${idx + 1}: ${node.html}`)
+      })
+    }
+  }
+
+  // soft assertion: the scenario continues and all violations are reported at the end
+  expect
+    .soft(
+      violations.map(
+        (violation) =>
+          `[${violation.id}] ${violation.help}: ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`
+      ),
+      `Accessibility check failed${context ? ` in ${context}` : ''}`
+    )
+    .toEqual([])
+}
+
+async function checkGermanLanguage(
+  page: Page,
+  includeSelector: string,
+  context: string
+): Promise<void> {
+  await expect(page.locator(includeSelector)).toBeVisible()
+
+  // wait a bit for dynamic content to load
+  await page.waitForTimeout(1000)
+
+  const texts: string[] = await page.evaluate((includeSelector: string) => {
+    const allowList = [
+      'OpenCloud',
+      'web',
+      'Spaces',
+      'space',
+      'parent',
+      'lorem',
+      'alice',
+      'brian',
+      'admin',
+      'testavatar',
+      'A-Z',
+      'my_space',
+      'GB',
+      'MB',
+      'KB',
+      'B',
+      'TB',
+      'Gb',
+      'Mb',
+      'Kb',
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '0',
+      'Ctrl',
+      '⌘',
+      'Name',
+      'Status',
+      'E-Mail',
+      'Neu',
+      'Aktionen',
+      'Tags',
+      'Personen',
+      'CalDAV',
+      'CalCAV',
+      'Typ',
+      'Link',
+      '...',
+      'Version',
+      'Passwort',
+      'Avatar',
+      'Manager',
+      'Titel'
+    ]
+
+    const shouldIgnore = (text: string) => {
+      if (text.length < 3) return true
+      if (/\.(txt|jpeg|md|.odt|png|pdf|docx)$/i.test(text)) return true
+      if (allowList.some((a) => text.toLowerCase().includes(a.toLowerCase()))) return true
+      return /function|var |const |let |=>|return/.test(text)
+    }
+
+    const root = document.querySelector(includeSelector)
+    if (!root) return []
+    const arr: string[] = []
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null)
+    while (walker.nextNode()) {
+      const text = walker.currentNode.nodeValue?.trim()
+      if (text && text.length > 2 && !shouldIgnore(text)) {
+        arr.push(text)
+      }
+    }
+    return arr
+  }, includeSelector)
+
+  const nonGerman: string[] = []
+  for (const t of texts) {
+    const lang = franc(t, { minLength: 3, only: ['deu', 'eng'] })
+    if (lang !== 'deu') {
+      nonGerman.push(`${t} [${lang}]`)
+    }
+  }
+
+  if (nonGerman.length > 0) {
+    console.log(`🌐 Language check failed${context ? ` in ${context}` : ''}. Non-German texts:`)
+    nonGerman.forEach((text) => console.log(` - ${text}`))
+  }
+}

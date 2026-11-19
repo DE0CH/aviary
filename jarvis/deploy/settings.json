@@ -1,0 +1,38 @@
+{
+  "product": { "name": "Jarvis 4", "locale": "en" },
+  "signIn": { "appScheme": "dev.de0ch.jarvis4chat" },
+  "features": { "personCards": true },
+  "smallModel": "claude-haiku-5-5",
+  "embedding": {
+    "id": "qwen/qwen3-embedding-8b",
+    "queryInstruction": "Instruct: Given a search query, retrieve the messages of a person's chat conversations that are relevant to it\nQuery: "
+  },
+  "models": [
+    { "id": "claude-opus-5-5", "label": "Opus 5.5", "reasoning": "high", "thinking": ["none", "low", "medium", "high", "xhigh", "max"] },
+    { "id": "claude-fable-5-2", "label": "Fable 5.2", "reasoning": "high", "thinking": ["none", "low", "medium", "high", "xhigh", "max"] },
+    {
+      "id": "z-ai/glm-5.3",
+      "label": "GLM 5.3",
+      "reasoning": "high",
+      "thinking": ["low", "high", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["z-ai/fp8"] }
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "label": "DeepSeek V4.1 Flash",
+      "reasoning": "high",
+      "thinking": ["none", "low", "high", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["deepseek"] }
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "label": "Kimi K3.1 Pro",
+      "reasoning": "high",
+      "thinking": ["none", "low", "high", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["moonshotai/mxfp4"] }
+    }
+  ]
+}

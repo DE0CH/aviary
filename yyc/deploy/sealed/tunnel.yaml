@@ -1,0 +1,16 @@
+# SealedSecret made by infra/seal.py from the store `yyc` (map: infra/secrets.txt). Don't edit: re-seal.
+# cert: infra/sealed-secrets-talos.pem sha256:81f61330757d262c
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: tunnel
+  namespace: yyc-ai
+spec:
+  encryptedData:
+    token: AgAKrQ9B8nk915BQp9QRoOaKTUONhd4vjlF6ViaOv7QK/jdTIBBnmOyHHlD012oxVFepLmnPrUkqptqK/youHEpH1TL7d84ZjmuyiEaOvsE/7JpPJxzMYo26Tznq9hdTI+AjQ2ZKp56H0WkUyYpZBinFB2WCLv5VX8DfpDFcQELscY3TtVv70h3ATWT2L8yHRX0odMwLoNwMFBefNtiUZhWv7KP2Y5Q9aqg4eHifdOq/v/1cnDPnPqDnxIki0v/bwVmujTNuivqD3SUMl8B0GD+/8RIjH6SdOG/mH5lK7wPAG1gC+qydoaNM8urs0OmZLBifnHlN+i/RTLgUYlYQ3LHq/OVeUSIIOVqLVZ6nPySQHa7c2yeqPSF8IjARQbWVSaRuJyC7yLv5BKVkmoondBwtfEAYf36h+GIgtrTnnU1B/vP4gJuO1hB4T+Tr9hXmm/LJ094pl/Cfgu3G56p4aD4qesbJTt53Oji/w3Sf6iFFmKBgvseIr1TlD5y3TXHMTowGoSQwCFK/OGwWmyZGDGCmF0w57KOBCx6hx9WVmNAUiqDUd+0HzgAmWFL2dWd5JTtJBwJCso+Dx+V21xFgVtL4A0pTekqKoETUhrWME1GMniSMfi2F4znXhr2mgrex8p52zrqnmHC8d6lBxKMbERZ5Icmc3I1CBFkLHERiOESbeGp3q6t2zLyzuqZXprT68/2UGrLiwULDpTKWe21AZa5FZV1LKN1d4vQOR/35vXuNOiW7E53K5KvlDQTEDpg6Dta/E8JoaCF20R3s9XafjGfpKJp5wqJnS8f0H4aReiwoCA5H5seKlZ/vnN4YdWenh6iElMrDyiSuh/lms4pvmfXDB8rpSuBA3M9TcgR7aOwl1KEYsqs5smAgImj4csrwlAaOzM2Vd7AmGpREQxGWpjipPgMhAoWFPDks1aEcHnfGXHxbCZEjcpLttO7x9Ooo6gCmx7gO+/Vq5Ld50fr0R6VkKwZ5uruTzaw4vV+r98t22EyEOA2iWw29P9Mkf0O8Fco=
+  template:
+    metadata:
+      name: tunnel
+      namespace: yyc-ai
+    type: Opaque

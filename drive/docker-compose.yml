@@ -1,0 +1,507 @@
+x-opencloud-server: &opencloud-service
+  image: ${OC_IMAGE:-opencloudeu/opencloud-rolling:daily}
+  entrypoint: /bin/sh
+  command: ['-c', 'opencloud init || true && opencloud server']
+  environment: &opencloud-environment
+    OC_INSECURE: '${OC_INSECURE:-true}'
+    OC_LOG_LEVEL: '${OC_LOG_LEVEL:-error}'
+    OC_LOG_PRETTY: '${OC_LOG_PRETTY:-true}'
+    OC_LOG_COLOR: '${OC_LOG_COLOR:-true}'
+    OC_PASSWORD_POLICY_MIN_CHARACTERS: '3'
+    OC_PASSWORD_POLICY_MIN_LOWERCASE_CHARACTERS: '0'
+    OC_PASSWORD_POLICY_MIN_UPPERCASE_CHARACTERS: '0'
+    OC_PASSWORD_POLICY_MIN_DIGITS: '0'
+    OC_PASSWORD_POLICY_MIN_SPECIAL_CHARACTERS: '0'
+    OC_PASSWORD_POLICY_BANNED_PASSWORDS_LIST: '/etc/opencloud/password-policy-banned-passwords.txt'
+    OC_SHOW_USER_EMAIL_IN_RESULTS: 'true'
+    ACTIVITYLOG_WRITE_BUFFER_DURATION: '0'
+
+    # WEB
+    WEB_ASSET_CORE_PATH: ${WEB_ASSET_CORE_PATH:-/web/dist}
+    WEB_ASSET_APPS_PATH: ${WEB_ASSET_APPS_PATH:-/web/apps}
+    WEB_UI_CONFIG_FILE: ${WEB_UI_CONFIG_FILE:-/web/config.json}
+
+    # FRONTEND
+    FRONTEND_SEARCH_MIN_LENGTH: '2'
+    FRONTEND_FULL_TEXT_SEARCH_ENABLED: 'true'
+    FRONTEND_GROUPWARE_ENABLED: 'true'
+    #FRONTEND_APP_HANDLER_SECURE_VIEW_APP_ADDR: eu.opencloud.api.collaboration
+    GRAPH_INCLUDE_OCM_SHAREES: 'true'
+    OC_ENABLE_GUEST_LINKS: 'true'
+    FRONTEND_OPENXCHANGE_ENABLED: 'true'
+    FRONTEND_OPENXCHANGE_API_URL: 'bogus'
+
+    # IDM
+    IDM_CREATE_DEMO_USERS: '${DEMO_USERS:-true}'
+    IDM_ADMIN_PASSWORD: '${ADMIN_PASSWORD:-admin}' # override the random admin password from `opencloud init`
+    IDM_SVC_PASSWORD: '${IDM_SVC_PASSWORD:-some-ldap-idm-password}'
+    IDM_REVASVC_PASSWORD: '${IDM_REVASVC_PASSWORD:-admin}'
+    IDM_IDPSVC_PASSWORD: '${IDM_IDPSVC_PASSWORD:-some-ldap-idp-password}'
+
+    # IDP
+    IDP_LDAP_BIND_PASSWORD: '${IDP_LDAP_BIND_PASSWORD:-some-ldap-idp-password}'
+    IDM_LDAPS_ADDR: 0.0.0.0:9235
+    IDM_LDAPS_CERT: /certificates/server.crt
+    IDM_LDAPS_KEY: /certificates/server.key
+    OC_LDAP_CACERT: /certificates/server.crt
+
+    # STORAGE
+    STORAGE_USERS_DRIVER: '${STORAGE_USERS_DRIVER:-posix}'
+    STORAGE_USERS_ID_CACHE_STORE: 'nats-js-kv'
+    STORAGE_TRANSFER_SECRET: '${STORAGE_TRANSFER_SECRET:-some-opencloud-transfer-secret}'
+
+    # LDAP
+    GROUPS_LDAP_BIND_PASSWORD: '${GROUPS_LDAP_BIND_PASSWORD:-admin}'
+    USERS_LDAP_BIND_PASSWORD: '${USERS_LDAP_BIND_PASSWORD:-admin}'
+    AUTH_BASIC_LDAP_BIND_PASSWORD: '${AUTH_BASIC_LDAP_BIND_PASSWORD:-admin}'
+    GRAPH_APPLICATION_ID: '${GRAPH_APPLICATION_ID:-some-graph-app-id}'
+    GRAPH_LDAP_BIND_PASSWORD: '${GRAPH_LDAP_BIND_PASSWORD:-some-ldap-idm-password}'
+    LDAP_GROUP_SUBSTRING_FILTER_TYPE: 'any'
+    LDAP_USER_SUBSTRING_FILTER_TYPE: 'any'
+
+    # GROUPWARE
+    GROUPWARE_JMAP_BASE_URL: https://${STALWART_DOMAIN:-stalwart.opencloud.test}
+    GROUPWARE_JMAP_MASTER_USERNAME: 'admin@example.org'
+    GROUPWARE_JMAP_MASTER_PASSWORD: 'admin'
+
+    # PROXY
+    PROXY_ENABLE_BASIC_AUTH: '${PROXY_ENABLE_BASIC_AUTH:-true}'
+    PROXY_TLS: 'false'
+
+    # THUMBNAILS
+    WEBDAV_THUMBNAILS_GENERATOR_URL: 'http://imagor:8000'
+    OC_THUMBNAILS_ADDITIONAL_SOURCE_TYPES: 'image/heic,image/heif,image/avif,image/heic-sequence,image/heif-sequence'
+
+    # TIKA
+    SEARCH_EXTRACTOR_TYPE: 'tika'
+    SEARCH_EXTRACTOR_TIKA_TIKA_URL: 'http://host.docker.internal:9998'
+    SEARCH_EXTRACTOR_CS3SOURCE_INSECURE: 'true'
+
+    # App Provider
+    GATEWAY_GRPC_ADDR: 0.0.0.0:9142 # make the REVA gateway accessible to the app drivers
+    NATS_NATS_HOST: 0.0.0.0
+    NATS_NATS_PORT: 9233
+
+    # OCM
+    OCM_OCM_PROVIDER_AUTHORIZER_PROVIDERS_FILE: '/etc/opencloud/ocmproviders.json'
+    OCM_OCM_INVITE_MANAGER_INSECURE: 'true'
+    OCM_OCM_SHARE_PROVIDER_INSECURE: 'true'
+    OCM_OCM_STORAGE_PROVIDER_INSECURE: 'true'
+
+    # Yjs collaboration
+    WEB_OPTION_YJS_SERVER_URL: 'wss://host.docker.internal:9200/yjs'
+
+  extra_hosts:
+    - host.docker.internal:${DOCKER_HOST:-host-gateway}
+    - oc.opencloud.test:${DOCKER_HOST:-host-gateway}
+  restart: unless-stopped
+  depends_on:
+    - traefik
+    - tika-service
+
+services:
+  opencloud:
+    <<: *opencloud-service
+    container_name: web_oc
+    entrypoint: ['/bin/sh', '-c']
+    command: ['mkdir -p /var/lib/opencloud/idm && (opencloud init || true) && opencloud server']
+    environment:
+      <<: *opencloud-environment
+      OC_URL: ${OC_URL:-https://host.docker.internal:9200}
+      OC_ADD_RUN_SERVICES: auth-api,groupware,collaboration,notifications
+      OC_CORS_ALLOW_ORIGINS: https://host.docker.internal:9200,https://host.docker.internal:9201
+      OCM_WEBAPP_TEMPLATE: https://host.docker.internal:9201/o/{{.Token}}/{relative-path-to-shared-resource}
+      # make the registry available to the app provider containers
+      MICRO_REGISTRY: 'nats-js-kv'
+      MICRO_REGISTRY_ADDRESS: 0.0.0.0:9233
+      PROXY_CSP_CONFIG_FILE_LOCATION: /etc/opencloud/csp.yaml
+      # Needed for enabling all roles
+      GRAPH_AVAILABLE_ROLES: b1e2218d-eef8-4d4c-b82d-0f1a1b48f3b5,a8d5fe5e-96e3-418d-825b-534dbdf22b99,fb6c3e19-e378-47e5-b277-9732f9de6e21,58c63c02-1d89-4572-916a-870abc5a1b7d,2d00ce52-1fc2-4dbc-8b95-a73b73395f5a,1c996275-f1c9-4e71-abdf-a42f6495e960,312c0871-5ef7-4b3a-85b6-0e4074c64049,aa97fe03-7980-45ac-9e50-b325749fd7e6,63e64e19-8d43-42ec-a738-2b6af2610efa
+      # Collabora configuration
+      COLLABORA_DOMAIN: host.docker.internal:9980
+      COLLABORATION_WOPI_SRC: ${OC_URL:-https://host.docker.internal:9200}
+      COLLABORATION_APP_NAME: 'CollaboraOnline'
+      COLLABORATION_APP_PRODUCT: 'Collabora'
+      COLLABORATION_APP_ADDR: https://host.docker.internal:9980
+      COLLABORATION_APP_ICON: https://host.docker.internal:9980/favicon.ico
+      COLLABORATION_APP_INSECURE: '${OC_INSECURE:-true}'
+      COLLABORATION_CS3API_DATAGATEWAY_INSECURE: '${OC_INSECURE:-true}'
+      # Mails (e.g. guest links) are caught by mailpit, see http://localhost:8025
+      NOTIFICATIONS_SMTP_HOST: mailpit
+      NOTIFICATIONS_SMTP_PORT: '1025'
+      NOTIFICATIONS_SMTP_SENDER: 'OpenCloud <noreply@example.com>'
+    labels:
+      traefik.enable: true
+      traefik.docker.network: ${COMPOSE_PROJECT_NAME:-web}_traefik
+      traefik.http.routers.opencloud.tls: true
+      traefik.http.routers.opencloud.rule: Host(`host.docker.internal`) && PathPrefix(`/`)
+      traefik.http.routers.opencloud.entrypoints: opencloud
+      traefik.http.services.opencloud.loadbalancer.server.port: 9200
+      traefik.http.routers.opencloud.middlewares: cors
+    networks:
+      - traefik
+      - default
+    volumes:
+      - ./dev/docker/traefik/certificates:/certificates:ro
+      - ./dev/docker/opencloud/csp.yaml:/etc/opencloud/csp.yaml
+      - ./dev/docker/opencloud/proxy.yaml:/etc/opencloud/proxy.yaml
+      - ./dev/docker/opencloud/password-policy-banned-passwords.txt:/etc/opencloud/password-policy-banned-passwords.txt
+      - ./dev/docker/opencloud.idp.config.yaml:/etc/opencloud/idp.yaml
+      - ./dev/docker/opencloud-ca:/var/lib/opencloud/proxy
+      - ./dev/docker/opencloud.storage.ocmproviders.json:/etc/opencloud/ocmproviders.json
+      - ./dev/docker/apps:/web/apps
+      - ./dist:/web/dist
+      - ./dev/docker/opencloud/app-registry.yaml:/etc/opencloud/app-registry.yaml
+      - opencloud-config:/etc/opencloud
+      - ${OC_WEB_CONFIG:-./dev/docker/opencloud.web.config.json}:/web/config.json:ro
+    depends_on:
+      collabora:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      imagor:
+        condition: service_started
+
+  opencloud-federated:
+    <<: *opencloud-service
+    container_name: web_opencloud_federated
+    environment:
+      <<: *opencloud-environment
+      OC_URL: https://oc.opencloud.test:10200
+      OC_CORS_ALLOW_ORIGINS: https://oc.opencloud.test:10201
+      OCM_WEBAPP_TEMPLATE: https://oc.opencloud.test:10201/o/{{.Token}}/{relative-path-to-shared-resource}
+    labels:
+      traefik.enable: true
+      traefik.docker.network: ${COMPOSE_PROJECT_NAME:-web}_traefik
+      traefik.http.routers.opencloud-federated.tls: true
+      traefik.http.routers.opencloud-federated.rule: Host(`oc.opencloud.test`) && PathPrefix(`/`)
+      traefik.http.routers.opencloud-federated.entrypoints: opencloud-federated
+      traefik.http.services.opencloud-federated.loadbalancer.server.port: 9200
+      traefik.http.routers.opencloud-federated.middlewares: cors
+    networks:
+      - traefik
+      - default
+    volumes:
+      - ./dev/docker/traefik/certificates:/certificates:ro
+      - ./dev/docker/opencloud/password-policy-banned-passwords.txt:/etc/opencloud/password-policy-banned-passwords.txt
+      - ./dev/docker/opencloud.idp.config.yaml:/etc/opencloud/idp.yaml
+      - ./dev/docker/opencloud-ca:/var/lib/opencloud/proxy
+      - ./dev/docker/opencloud.storage.ocmproviders.json:/etc/opencloud/ocmproviders.json
+      - ./dist:/web/dist
+      - ./dev/docker/opencloud/app-registry.yaml:/etc/opencloud/app-registry.yaml
+      - opencloud-federated-config:/etc/opencloud
+      - ${OC_WEB_CONFIG:-./dev/docker/opencloud.web-federated.config.json}:/web/config.json:ro
+
+  collabora:
+    image: collabora/code:26.04.5.2.1
+    environment:
+      aliasgroup1: ${OC_URL:-https://host.docker.internal:9200}
+      extra_params: --o:ssl.enable=false --o:ssl.ssl_verification=false --o:welcome.enable=false --o:home_mode.enable=true --o:ssl.termination=true --o:net.frame_ancestors=${OC_URL:-https://host.docker.internal:9200} --o:net.lok_allow.host[14]=${OC_URL:-https://host.docker.internal:9200}
+      username: ${COLLABORA_ADMIN_USER:-admin}
+      password: ${COLLABORA_ADMIN_PASSWORD:-admin}
+    cap_add:
+      - MKNOD
+    extra_hosts:
+      - host.docker.internal:${DOCKER_HOST:-host-gateway}
+    healthcheck:
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    labels:
+      traefik.enable: true
+      traefik.http.routers.collabora.tls: true
+      traefik.http.routers.collabora.rule: PathPrefix(`/`)
+      traefik.http.routers.collabora.entrypoints: collabora
+      traefik.http.services.collabora.loadbalancer.server.port: 9980
+    networks:
+      - traefik
+    volumes:
+      - type: volume
+        source: collabora-proof-key
+        target: /etc/coolwsd/proof_key
+        read_only: true
+        volume:
+          subpath: proof_key
+    restart: unless-stopped
+    depends_on:
+      collabora-proof-key:
+        condition: service_completed_successfully
+      traefik:
+        condition: service_started
+      imagor:
+        condition: service_started
+
+  # generates the WOPI proof key on first start and keeps it in a named volume
+  collabora-proof-key:
+    image: alpine/openssl:3.5.9
+    entrypoint: ['/bin/sh']
+    command:
+      - -ec
+      - |
+        if [ ! -s /proof/proof_key ]; then
+          openssl genrsa -traditional -out /proof/proof_key.tmp 4096
+          chown 1001:1001 /proof/proof_key.tmp
+          chmod 400 /proof/proof_key.tmp
+          mv /proof/proof_key.tmp /proof/proof_key
+          echo "WOPI proof key generated"
+        else
+          echo "WOPI proof key already exists"
+        fi
+    volumes:
+      - collabora-proof-key:/proof
+    logging:
+      driver: ${LOG_DRIVER:-local}
+    restart: 'no'
+
+  traefik:
+    image: traefik:v3.7.18
+    restart: unless-stopped
+    entrypoint:
+      [
+        '/bin/sh',
+        '-c',
+        "[ -f /certificates/server.key ] && ./entrypoint.sh $$@ || (apk add openssl && openssl req -subj '/CN=opencloud.test' -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -keyout /certificates/server.key -out /certificates/server.crt && chmod -R 777 /certificates && ./entrypoint.sh $$@)"
+      ]
+    command:
+      - '--pilot.dashboard=false'
+      - '--log.level=DEBUG'
+      - '--api.dashboard=true'
+      - '--api.insecure=true'
+      - '--providers.file.directory=/configs'
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.opencloud.address=:9200'
+      - '--entrypoints.opencloud-federated.address=:10200'
+      - '--entrypoints.collabora.address=:9980'
+      - '--entrypoints.wopi.address=:8880'
+      - '--entrypoints.stalwart-tls.address=:443'
+      - '--entrypoints.stalwart-tls.http.middlewares=https_config@docker'
+      - '--entrypoints.stalwart-tls.http.tls.options=default'
+      - '--entrypoints.stalwart.address=:8180'
+    labels:
+      traefik.enable: true
+      traefik.http.routers.http_catchall.rule: HostRegexp(`{any:.+}`)
+      traefik.http.routers.http_catchall.entrypoints: web
+      traefik.http.routers.http_catchall.middlewares: https_config
+      traefik.http.middlewares.https_config.headers.sslRedirect: true
+      traefik.http.middlewares.https_config.headers.stsSeconds: 63072000
+      traefik.http.middlewares.https_config.headers.stsIncludeSubdomains: true
+      traefik.http.middlewares.cors.headers.accesscontrolallowmethods: '*'
+      traefik.http.middlewares.cors.headers.accesscontrolallowheaders: '*, Authorization'
+      traefik.http.middlewares.cors.headers.accesscontrolalloworiginlistregex: '^https://(host\.docker\.internal|oc\.opencloud\.test|localhost)(:[0-9]+)?$$'
+      traefik.http.middlewares.cors.headers.accesscontrolallowcredentials: true
+      # explicit list, traefik drops `*` when credentials are allowed (guest links)
+      traefik.http.middlewares.cors.headers.accesscontrolexposeheaders: 'ETag, OC-ETag, OC-FileId, Content-Disposition, Content-Range, Location, DAV, Tus-Version, Tus-Extension, Tus-Resumable, Tus-Max-Size, Upload-Offset, Upload-Length, Upload-Expires'
+      traefik.http.middlewares.cors.headers.accesscontrolmaxage: 100
+      traefik.http.middlewares.cors.headers.addvaryheader: true
+
+    ports:
+      - '80:80'
+      - '8180:8180'
+      - '9200:9200'
+      - '10200:10200'
+      - '9980:9980'
+      - '8880:8880'
+      - '443:443'
+    volumes:
+      - './dev/docker/traefik/certificates:/certificates'
+      - './dev/docker/traefik/configs:/configs'
+      - '/var/run/docker.sock:/var/run/docker.sock:ro'
+    networks:
+      traefik:
+        aliases:
+          - ${STALWART_DOMAIN:-stalwart.opencloud.test}
+
+  tika-service:
+    image: dadarek/wait-for-dependencies:latest
+    container_name: web_tika_service
+    depends_on:
+      - tika
+    command: 'tika:9998'
+    networks:
+      - traefik
+
+  tika:
+    image: apache/tika:4.3.0-SNAPSHOT
+    container_name: web_tika
+    ports:
+      - 9998:9998
+    restart: unless-stopped
+    networks:
+      - traefik
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bash',
+          '-c',
+          "exec 3<>/dev/tcp/127.0.0.1/9998 && echo -e 'GET /version HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ."
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  imagor:
+    image: shumc/imagor:1.10.1
+    container_name: web_imagor
+    restart: unless-stopped
+    environment:
+      IMAGOR_UNSAFE: 'true'
+      UPLOAD_LOADER_ENABLE: 'true'
+      HTTP_LOADER_DISABLE: 'true'
+      VIPS_MAX_WIDTH: '7680'
+      VIPS_MAX_HEIGHT: '7680'
+      VIPS_MAX_ANIMATION_FRAMES: '100'
+      UPLOAD_LOADER_MAX_ALLOWED_SIZE: '50000000'
+    networks:
+      - default
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    container_name: web_mailpit
+    ports:
+      - '127.0.0.1:8025:8025' # web UI and REST API
+    networks:
+      - traefik
+    restart: unless-stopped
+
+  radicale:
+    image: ${RADICALE_DOCKER_IMAGE:-opencloudeu/radicale}:${RADICALE_DOCKER_TAG:-latest}
+    container_name: web_radicale
+    environment:
+      RADICALE_LOG_LEVEL: ${RADICALE_LOG_LEVEL:-info}
+      RADICALE_STORAGE_BACKEND: ${RADICALE_STORAGE_BACKEND:-filesystem} # Map  9201 to 5232
+      RADICALE_STORAGE_FILESYSTEM_FOLDER: /data
+    ports:
+      - '5232:5232'
+    volumes:
+      - ./dev/docker/radicale/data:/data
+    restart: unless-stopped
+
+  stalwart:
+    image: ghcr.io/stalwartlabs/stalwart:v0.16.20-alpine
+    hostname: ${STALWART_DOMAIN:-stalwart.opencloud.test}
+    depends_on:
+      opencloud:
+        condition: service_started
+    ports:
+      - '127.0.0.1:143:143'
+      - '127.0.0.1:993:993'
+      - '127.0.0.1:1465:465'
+    networks:
+      - traefik
+    volumes:
+      - ./dev/docker/stalwart/stalwart-config.json:/etc/stalwart/config.json
+      - stalwart-data:/var/lib/stalwart
+    environment:
+      STALWART_RECOVERY_ADMIN: 'admin:secret'
+      STALWART_RECOVERY_MODE_PORT: 8180
+      STALWART_PUBLIC_URL: 'https://${STALWART_DOMAIN:-stalwart.opencloud.test}'
+    labels:
+      traefik.enable: true
+      traefik.http.routers.stalwart.entrypoints: stalwart-tls
+      #traefik.http.routers.stalwart.entrypoints: https
+      #traefik.http.routers.stalwart.rule: Host(`host.docker.internal`) && PathPrefix(`/`)
+      traefik.http.routers.stalwart.rule: Host(`stalwart.opencloud.test`)
+      #traefik.http.routers.stalwart.tls.certresolver: http
+      traefik.http.routers.stalwart.service: stalwart
+      traefik.http.routers.stalwart-http.entrypoints: stalwart
+      traefik.http.routers.stalwart-http.rule: Host(`stalwart.opencloud.test`)
+      traefik.http.routers.stalwart-http.service: stalwart
+      traefik.http.services.stalwart.loadbalancer.server.port: 8180
+    logging:
+      driver: ${LOG_DRIVER:-local}
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        if [ ! -f /var/lib/stalwart/.initialized ]; then
+          echo "Not initialized, starting in recovery mode"
+          STALWART_RECOVERY_MODE=1 /usr/local/bin/stalwart --config /etc/stalwart/config.json &
+          pid=$$!
+          while [ ! -f /var/lib/stalwart/.initialized ]; do sleep 1; done
+          echo "Initialized, stopping recovery mode"
+          kill -TERM $$pid
+          wait $$pid
+        fi
+        echo "Starting Stalwart in production mode"
+        exec /usr/local/bin/stalwart --config /etc/stalwart/config.json
+
+  stalwart-import:
+    build:
+      context: ./config/
+      args:
+        VERSION: '1.0.8'
+      dockerfile_inline: |
+        FROM alpine:latest AS downloader
+        ARG VERSION
+        RUN apk add --no-cache curl tar xz wget
+        RUN arch=$(apk --print-arch) && \
+            mkdir /cli && \
+            curl --proto '=https' --tlsv1.2 -LsSf \
+              https://github.com/stalwartlabs/cli/releases/download/v$${VERSION}/stalwart-cli-$${arch}-unknown-linux-musl.tar.xz \
+              | tar xJf - --strip-components=1 -C /cli
+        RUN mv /cli/stalwart-cli /stalwart-cli && rm -rf /cli/
+        CMD ["/stalwart-cli"]
+
+    networks:
+      - traefik
+    volumes:
+      - ./dev/docker/stalwart/${STALWART_AUTH_DIRECTORY:-idmldap}.json:/snapshot.json:ro
+      - stalwart-data:/var/lib/stalwart
+    environment:
+      STALWART_URL: 'http://stalwart:8180'
+      STALWART_USER: 'admin'
+      STALWART_PASSWORD: 'secret'
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        if [ -f /var/lib/stalwart/.initialized ]; then
+          echo "Already initialized, skipping stalwart-cli."
+          exit 0
+        fi
+        echo "Waiting for the Stalwart recovery API to become live"
+        until wget -qO- $$STALWART_URL/healthz/live >/dev/null 2>&1; do sleep 1; done
+        echo "Applying configuration"
+        /stalwart-cli --debug apply --file /snapshot.json
+        touch /var/lib/stalwart/.initialized
+        echo "Successfully initialized"
+
+    depends_on:
+      - stalwart
+
+  yjs:
+    build:
+      # Repository root, the pnpm lockfile is needed for the install
+      context: .
+      dockerfile: services/yjs/Dockerfile
+    extra_hosts:
+      - host.docker.internal:${DOCKER_HOST:-host-gateway}
+    environment:
+      PORT: '1234'
+      OPENCLOUD_URL: https://host.docker.internal:9200
+      # Dev only: accept the self-signed cert from OC's Traefik
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
+    volumes:
+      # Dev only: edit the server without rebuilding the image
+      - ./services/yjs/src:/app/src:ro
+    networks:
+      # On the traefik network so OC (which is also on it) can reach the
+      # service by name. Browser-facing routing is not done at the Traefik
+      # layer - OC's reverse proxy forwards /yjs via
+      # `additional_policies` in opencloud/proxy.yaml. This keeps the routing
+      # model identical to what CI uses (CI has no Traefik).
+      - traefik
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  uploads:
+  opencloud-config:
+  opencloud-federated-config:
+  stalwart-data:
+  collabora-proof-key:
+
+networks:
+  traefik:

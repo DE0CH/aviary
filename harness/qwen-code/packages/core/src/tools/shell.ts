@@ -1,0 +1,7238 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { measureToolOutput } from './tool-output-size.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import * as childProcess from 'node:child_process';
+import { ApprovalMode, type Config } from '../config/config.js';
+import { executeRuntimeShell } from '../sandbox/runtime-shell.js';
+import { assertShellSandboxCwd } from '../sandbox/runtime-shell-policy.js';
+import { ToolNames, ToolDisplayNames } from './tool-names.js';
+import { ToolErrorType } from './tool-error.js';
+import type {
+  FileDiff,
+  ToolInvocation,
+  ToolResult,
+  ToolResultDisplay,
+  ToolCallConfirmationDetails,
+  ToolEditConfirmationDetails,
+  ToolExecuteConfirmationDetails,
+  ToolConfirmationPayload,
+} from './tools.js';
+import type { PermissionDecision } from '../permissions/types.js';
+import {
+  getSessionCommitGeneration,
+  registerSessionCommit,
+} from '../permissions/destructive-commands.js';
+import {
+  BaseDeclarativeTool,
+  BaseToolInvocation,
+  Kind,
+  ToolConfirmationOutcome,
+} from './tools.js';
+import { getErrorMessage, isNodeError } from '../utils/errors.js';
+import { truncateToolOutput } from './truncation.js';
+import { getCurrentToolCallSource } from '../code-mode/tool-call-runtime.js';
+import {
+  CommitAttributionService,
+  type StagedFileInfo,
+} from '../services/commitAttribution.js';
+import { buildGitNotesCommand } from '../services/attributionTrailer.js';
+import { SshExecutionEnvironment } from '../services/ssh-execution-environment.js';
+import {
+  commandRunsGhPrCreate,
+  ghPrCreateInlineEnv,
+  upsertSessionPrs,
+} from '../services/session-pr-service.js';
+import {
+  fetchAttributionRepoKeys,
+  fetchCurrentBranchName,
+  fetchCurrentBranchPullRequest,
+  repoKeyFromWebUrl,
+  type AttributionRepoKeys,
+  type BranchPullRequestSnapshot,
+} from '../utils/github-prs.js';
+import { findGitRoot } from '../utils/gitUtils.js';
+import type {
+  ShellExecutionConfig,
+  ShellExecutionResult,
+  ShellOutputEvent,
+  ShellPostPromoteHandlers,
+  ShellPostPromoteSettleInfo,
+  ShellRawCaptureSink,
+} from '../services/shellExecutionService.js';
+import {
+  getShellAbortReasonKind,
+  isSignalTermination,
+  ShellExecutionService,
+} from '../services/shellExecutionService.js';
+import {
+  statusFilePathFor,
+  type ShellTaskRegistration,
+} from '../services/backgroundShellRegistry.js';
+import stripAnsi from 'strip-ansi';
+import { formatMemoryUsage } from '../utils/formatters.js';
+import type { AnsiOutput } from '../utils/terminalSerializer.js';
+import { isSubpaths, makeRelative, shortenPath } from '../utils/paths.js';
+import {
+  buildOutsideWorkspaceWarning,
+  buildShellExecWarnings,
+  detectSelfKillCommand,
+  getCommandRoot,
+  getCommandRoots,
+  getShellConfiguration,
+  getShellDisplayName,
+  hasShellSubstitution,
+  SHELL_SELF_KILL_REJECTION,
+  type ShellConfiguration,
+  type ShellType,
+  splitCommands,
+  stripShellWrapper,
+} from '../utils/shell-utils.js';
+import { parse, type ControlOperator } from 'shell-quote';
+import { createDebugLogger } from '../utils/debugLogger.js';
+import { checkPriorRead, StructuredToolError } from './priorReadEnforcement.js';
+import {
+  isShellCommandReadOnlyASTInDirectory,
+  extractCommandRules,
+  parseShellCommand,
+} from '../utils/shellAstParser.js';
+import type Parser from 'web-tree-sitter';
+import {
+  applySedSubstitution,
+  parseSedEditCommand,
+  type SedEditInfo,
+} from '../utils/sedEditParser.js';
+import {
+  detectLineEnding,
+  ensureCrlfLineEndings,
+  needsCrlfLineEndings,
+  type ReadTextFileResponse,
+} from '../services/fileSystemService.js';
+import { createPatchSmart, getDiffStat } from './diffOptions.js';
+
+const debugLogger = createDebugLogger('SHELL');
+const DEFAULT_SHELL_OUTPUT_THRESHOLD = 30_000;
+// Separator between the formatted body and each appended metadata string
+// (long-run advisory, attribution warning). The reservation math and the
+// append loop share it so the two cannot drift.
+const APPENDED_METADATA_SEPARATOR = '\n\n';
+
+type GitHeadBeforeCommand =
+  | { sha: string; unborn: false }
+  | { sha: null; unborn: true };
+
+export const SHELL_RECORD_ARTIFACT_REMINDER =
+  'If this command created or rewrote a deliverable file (csv, html, sql, py, md, json, notebook, image, pdf, or an office document), call record_artifact for each one. workspacePath is relative to the current execution directory, and title is required. Do not call it for files already recorded by write_file, edit, or notebook_edit.';
+
+/**
+ * Appended when a `gh pr create` command changes directory in a way the
+ * binder cannot resolve statically. Attribution then falls back to the
+ * launch directory, which usually has no PR on its branch, so the create
+ * would otherwise miss silently — the decline is only a debug log.
+ */
+export const SHELL_PR_BINDING_DIRECTORY_NOTICE =
+  'PR auto-binding fell back to the launch directory: this command\'s directory change is not statically resolvable. Set the shell tool\'s "directory" parameter to the repository you create the PR in, or register the PR on the session after creating it.';
+
+function getShellOutputThreshold(config: Config): number {
+  return config.isTruncateToolOutputThresholdExplicit()
+    ? config.getTruncateToolOutputThreshold()
+    : DEFAULT_SHELL_OUTPUT_THRESHOLD;
+}
+
+/**
+ * Model-facing liveness guidance shared verbatim by both background
+ * launch paths (`executeBackground` and the foreground→background
+ * promote), so the two copies cannot drift (#7626).
+ */
+function statusFileGuidance(outputPath: string): string {
+  return (
+    `status file: ${statusFilePathFor(outputPath)}\n` +
+    `To check whether this process is still running, Read the status file (status: running|completed|failed|cancelled). ` +
+    `Do NOT infer liveness from the output file: programs often block-buffer stdout when not attached to a TTY, so an empty output file is normal while the process is alive (for live output, re-run with e.g. \`python -u\` or \`stdbuf -oL\`).`
+  );
+}
+
+/**
+ * Strip a single bare trailing `&` (bash background operator) from a
+ * command string. Returns the input unchanged if the trailing form is
+ * `&&` (logical AND), `\&` (escaped literal `&`), or there is no `&`
+ * at the end at all. Linear time, no regex backtracking risk.
+ */
+function stripTrailingBackgroundAmp(command: string): string {
+  const trimmed = command.trimEnd();
+  if (!trimmed.endsWith('&')) return command;
+  if (trimmed.endsWith('&&')) return command;
+  if (trimmed.endsWith('\\&')) return command;
+  return trimmed.slice(0, -1).trimEnd();
+}
+
+/**
+ * Escape `s` so it is safe to interpolate inside a bash double-quoted
+ * string. Inside `"..."`, bash still interprets `$`, backtick, `\`, and
+ * `"`; escape those four. Newlines and other characters are literal.
+ */
+function escapeForBashDoubleQuote(s: string): string {
+  return s.replace(/[\\"$`]/g, '\\$&');
+}
+
+/**
+ * Escape `s` so it is safe to interpolate inside a bash single-quoted
+ * string. Bash single quotes have no escape mechanism — the standard
+ * trick is to close the quote, emit a backslash-escaped `'`, and reopen.
+ */
+function escapeForBashSingleQuote(s: string): string {
+  return s.replace(/'/g, "'\\''");
+}
+
+/**
+ * Return the LAST match from a RegExp.matchAll iterator, or `null` if
+ * the iterator is empty. Used to find the final `-m` / `--body` flag
+ * in a command segment: git/gh both honour the LAST occurrence when
+ * multiple are passed, so the trailer has to land in that match to be
+ * picked up by the actual commit / PR body.
+ */
+function lastMatchOf<T extends RegExpMatchArray>(
+  matches: IterableIterator<T>,
+): T | null {
+  let result: T | null = null;
+  for (const m of matches) result = m;
+  return result;
+}
+
+/**
+ * Return the position of the first unquoted `#` (start-of-comment) in
+ * `s`, or -1 if none. Bash treats `#` as a comment marker only when it
+ * begins a word — at start of input or preceded by whitespace — and
+ * not when it appears inside a single- or double-quoted region. This
+ * mirrors that semantics so the `-m` / `--body` rewriters can scope
+ * their regex to the pre-comment part of a segment and avoid splicing
+ * the trailer into a comment-out flag like
+ * `git commit -m "real" # -m "fake"`, where the actual commit gets
+ * "real" but `lastMatchOf` would otherwise pick the comment's `-m
+ * "fake"` and put the trailer there.
+ */
+function findUnquotedCommentStart(s: string): number {
+  let inSingle = false;
+  let inDouble = false;
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i]!;
+    if (c === '\\' && !inSingle && i + 1 < s.length) {
+      i += 2;
+      continue;
+    }
+    if (c === "'" && !inDouble) {
+      inSingle = !inSingle;
+      i++;
+      continue;
+    }
+    if (c === '"' && !inSingle) {
+      inDouble = !inDouble;
+      i++;
+      continue;
+    }
+    if (c === '#' && !inSingle && !inDouble) {
+      const prev = i === 0 ? '' : s[i - 1]!;
+      if (prev === '' || /\s/.test(prev)) return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Helpers for the nested-match-rejection logic shared between
+ * addCoAuthorToGitCommit and addAttributionToPR. Both functions pick
+ * the LAST `-m` / `--body` occurrence across two quote styles, but
+ * have to reject a candidate that's nested INSIDE the other's range
+ * — e.g. `git commit -m "docs mention -m 'flag'"` where the inner
+ * `-m 'flag'` lives entirely inside the outer `-m "..."`. Without
+ * the nesting check the inner (later) match would win and the
+ * trailer would land in the body text.
+ *
+ * Extracted to module scope so future bug fixes can't apply to only
+ * one of the two call sites.
+ */
+function matchSpan(
+  m: RegExpMatchArray | null,
+): { start: number; end: number } | null {
+  return m ? { start: m.index ?? 0, end: (m.index ?? 0) + m[0].length } : null;
+}
+
+function isMatchInside(
+  inner: RegExpMatchArray | null,
+  outer: RegExpMatchArray | null,
+): boolean {
+  const i = matchSpan(inner);
+  const o = matchSpan(outer);
+  return !!(i && o && i.start >= o.start && i.end <= o.end);
+}
+
+/**
+ * Pick the LAST non-nested match across two quote styles. Mirrors the
+ * algorithm both rewriters use: prefer whichever appears later in the
+ * segment, but if either match lives inside the other's range, take
+ * the OUTER one. Returns the chosen match plus a marker telling the
+ * caller which style won (so they can pick the right escape function).
+ */
+function pickOuterLastMatch<T extends RegExpMatchArray | null>(
+  doubleMatch: T,
+  singleMatch: T,
+): { match: T; isDouble: boolean } {
+  if (doubleMatch && singleMatch) {
+    if (isMatchInside(singleMatch, doubleMatch)) {
+      return { match: doubleMatch, isDouble: true };
+    }
+    if (isMatchInside(doubleMatch, singleMatch)) {
+      return { match: singleMatch, isDouble: false };
+    }
+    return (doubleMatch.index ?? 0) > (singleMatch.index ?? 0)
+      ? { match: doubleMatch, isDouble: true }
+      : { match: singleMatch, isDouble: false };
+  }
+  if (doubleMatch) return { match: doubleMatch, isDouble: true };
+  return { match: singleMatch, isDouble: false };
+}
+
+/**
+ * Tokenise a single shell-command segment via `shell-quote`. Returns
+ * the parsed string tokens with leading env-var assignments and a
+ * small allowlist of safe wrappers (`sudo`, `command`, with their
+ * flag block consumed) stripped. Returns `null` if the segment
+ * doesn't parse — the caller should then skip the segment.
+ *
+ * Using `shell-quote.parse` (rather than a regex scan) is what makes
+ * quoted env values (`FOO="a b" cmd`) tokenise correctly and avoids
+ * the polynomial regex behaviour CodeQL flagged on the previous
+ * `\S*\s+`-based slicing loop.
+ */
+function tokeniseSegment(segment: string): string[] | null {
+  let tokens: string[];
+  try {
+    // Pass an env getter that preserves `$NAME` references in tokens
+    // rather than collapsing them to `''` (shell-quote's default).
+    // Without this, `cd $HOME` parses as `['cd', '']` and the downstream
+    // `target.includes('$')` repo-shift detection silently fails: an
+    // env-var that points to another repo would get treated as a
+    // same-repo no-op and our Co-authored-by trailer would land on a
+    // commit in whatever repo `$HOME`/`$REPO_ROOT` resolves to at
+    // runtime. Same problem in `parseGitInvocation` for `git -C $HOME`.
+    // Single-quoted forms (`cd '$HOME'`) end up looking like a variable
+    // reference too, but in practice nobody creates a directory named
+    // literally `$HOME`, so over-flagging is the conservative-correct
+    // choice.
+    tokens = parse(segment, (key) => '$' + key).filter(
+      (t): t is string => typeof t === 'string',
+    );
+  } catch (e) {
+    debugLogger.warn(
+      `tokeniseSegment: parse failed for "${segment.slice(0, 80)}": ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    return null;
+  }
+  let i = 0;
+  // Skip env-var assignments (KEY=value). If the key is one of the
+  // git-repo-redirecting variables, refuse to tokenise the segment at
+  // all: `GIT_DIR=elsewhere/.git git commit ...` runs against another
+  // repository, so treating it as an in-cwd commit and stamping our
+  // attribution onto it would be wrong (and a `Co-authored-by` trailer
+  // would land on a commit in a repo the user didn't expect us to touch).
+  while (i < tokens.length) {
+    const key = leadingEnvAssignmentKey(tokens[i]!);
+    if (key === null) break;
+    if (GIT_ENV_SHIFTS_REPO.has(key)) return null;
+    i++;
+  }
+  // Strip a single safe wrapper, then any leading flag tokens it
+  // took. Sudo's value-taking flags (`-u user`, `-g group`,
+  // `-h host`, `-D path`, `-r role`, `-t type`) consume the next
+  // argv slot, so without explicitly knowing which take values we'd
+  // leave e.g. `user` standing in for the program in
+  // `sudo -u user git commit ...`. `command` doesn't take any flag
+  // values. `env` accepts both flags (`-i`, `-S`, `-u name`) AND
+  // `KEY=VALUE` argv entries before the program — both need
+  // skipping so `env GIT_COMMITTER_DATE=now git commit ...` resolves
+  // to `git`.
+  if (tokens[i] === 'sudo' || tokens[i] === 'command' || tokens[i] === 'env') {
+    const wrapper = tokens[i];
+    i++;
+    while (i < tokens.length && tokens[i]!.startsWith('-')) {
+      const flag = tokens[i]!;
+      i++;
+      // `env -C DIR` / `env --chdir DIR` (GNU coreutils 8.30+) and
+      // `sudo -D DIR` / `sudo --chdir DIR` (Linux sudo with --chdir)
+      // both relocate the working directory before exec. Treat the
+      // segment as repo-shifting (same contract as a leading
+      // `GIT_DIR=...` assignment) so we don't stamp our trailer onto
+      // a commit that landed in a different repository.
+      //
+      // Also catch the attached-value forms `--chdir=DIR` and the
+      // short-form `-CDIR` / `-DDIR` that shell-quote tokenises as a
+      // single argv entry. Without this, `sudo --chdir=/tmp git
+      // commit` and `env -C/tmp git commit` would both pass through
+      // the bare-flag check (which is set-membership, not prefix-
+      // match) and silently land our trailer on a commit in the
+      // wrong repo.
+      const shiftSet =
+        wrapper === 'env'
+          ? ENV_FLAGS_SHIFT_CWD
+          : wrapper === 'sudo'
+            ? SUDO_FLAGS_SHIFT_CWD
+            : null;
+      if (shiftSet && isShiftCwdFlag(flag, shiftSet)) {
+        return null;
+      }
+      // Value-taking flag tables, per wrapper: `sudo -u user`,
+      // `env -u NAME` (unset), `env -S string` (split-string args).
+      // `command` has no value-taking options in this allowlist.
+      // Without skipping the value, `env -u FOO git commit ...`
+      // would leave `FOO` as `tokens[0]` and the parser would treat
+      // it as the program — masking the real `git commit`.
+      const takesValue =
+        (wrapper === 'sudo' && SUDO_FLAGS_WITH_VALUE.has(flag)) ||
+        (wrapper === 'env' && ENV_FLAGS_WITH_VALUE.has(flag));
+      if (takesValue && i < tokens.length) {
+        i++;
+      }
+    }
+    // `env` puts KEY=VALUE pairs between its flags and the real
+    // program, so skip those too. Same git-repo-redirect bail as
+    // above applies — a `env GIT_DIR=elsewhere git commit` segment
+    // is non-attributable.
+    if (wrapper === 'env') {
+      while (i < tokens.length) {
+        const key = leadingEnvAssignmentKey(tokens[i]!);
+        if (key === null) break;
+        if (GIT_ENV_SHIFTS_REPO.has(key)) return null;
+        i++;
+      }
+    }
+  }
+  return tokens.slice(i);
+}
+
+const EXIT_ONE_IS_NOT_ERROR_COMMANDS = new Set([
+  'grep',
+  'rg',
+  'diff',
+  'test',
+  '[',
+  '[[',
+]);
+
+const PIPELINE_ALLOWED_OPERATORS = new Set<ControlOperator['op']>([
+  '|',
+  '|&',
+  '<<<',
+  '>>',
+  '>&',
+  '<&',
+  '<',
+  '>',
+]);
+
+function getExitStatusSegment(command: string): string | null {
+  const segments = splitCommands(command);
+  if (segments.length === 1) return segments[0]!;
+
+  try {
+    const operators = parse(command, (key) => '$' + key).filter(
+      (token): token is ControlOperator =>
+        typeof token === 'object' && token !== null && 'op' in token,
+    );
+    if (
+      !operators.some(({ op }) => op === '|' || op === '|&') ||
+      operators.some(({ op }) => !PIPELINE_ALLOWED_OPERATORS.has(op))
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return segments.at(-1) ?? null;
+}
+
+function isShellExitError(command: string, exitCode: number | null) {
+  if (exitCode === null || exitCode === 0) return false;
+  if (exitCode >= 2) return true;
+
+  const exitStatusSegment = getExitStatusSegment(command);
+  if (!exitStatusSegment) return true;
+
+  const tokens = tokeniseSegment(exitStatusSegment);
+  const executable = tokens?.[0];
+  if (!executable) return true;
+
+  const commandName = path
+    .basename(path.win32.basename(executable))
+    .replace(/\.(?:exe|cmd|bat)$/i, '');
+  return !EXIT_ONE_IS_NOT_ERROR_COMMANDS.has(commandName);
+}
+
+const SUDO_FLAGS_WITH_VALUE = new Set([
+  '-u',
+  '-g',
+  '-h',
+  '-D',
+  '-r',
+  '-t',
+  '-C',
+  '--user',
+  '--group',
+  '--host',
+  '--chdir',
+  '--role',
+  '--type',
+]);
+
+// `env`'s value-taking flags. `-u NAME` unsets a variable;
+// `-S "string"` splits a single string into args. Without skipping
+// the value, `env -u FOO git commit ...` would leave `FOO` as the
+// next token and the parser would treat it as the program.
+const ENV_FLAGS_WITH_VALUE = new Set(['-u', '--unset', '-S', '--split-string']);
+
+// `env`'s flags that relocate the working directory (and therefore
+// the implicit repository) before exec — GNU coreutils 8.30+'s
+// `-C DIR` / `--chdir DIR`. A `git commit` inside such an env wrapper
+// runs against whatever repo lives at DIR, NOT our cwd, so we must
+// refuse the segment outright the same way `cd /elsewhere && git
+// commit` is refused. Returning null from tokeniseSegment makes the
+// segment non-attributable, which suppresses both trailer injection
+// and the per-file note.
+const ENV_FLAGS_SHIFT_CWD = new Set(['-C', '--chdir']);
+
+// `sudo`'s flags that relocate the working directory before exec.
+// Linux sudo's `-D DIR` / `--chdir DIR` (1.9.2+) makes the inner
+// command run in DIR, which means a `git commit` underneath it
+// targets DIR's repo, not ours. Refuse the segment.
+const SUDO_FLAGS_SHIFT_CWD = new Set(['-D', '--chdir']);
+
+/**
+ * Match a flag token against a SHIFT_CWD set, including attached-value
+ * forms. Bare `--chdir`/`-D`/`-C` are caught by direct set membership;
+ * the long attached form `--name=value` matches when `--name` is in the
+ * set, and the short attached form `-Xvalue` matches when `-X` is in
+ * the set AND the token is longer than the flag (so `-D` alone doesn't
+ * spuriously match `-D` against itself twice).
+ */
+function isShiftCwdFlag(flag: string, set: ReadonlySet<string>): boolean {
+  if (set.has(flag)) return true;
+  for (const f of set) {
+    if (f.startsWith('--') && flag.startsWith(f + '=')) return true;
+    if (
+      f.length === 2 &&
+      f.startsWith('-') &&
+      flag.startsWith(f) &&
+      flag.length > 2
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Environment variables that redirect git's repository selection. A
+ * leading `GIT_DIR=...`, `GIT_WORK_TREE=...`, etc. on a command makes
+ * the inner `git commit` operate on a different repo than our cwd
+ * suggests; treating it as an in-cwd commit would attach our
+ * `Co-authored-by` trailer (and per-file note) to the wrong
+ * repository. tokeniseSegment refuses to parse such segments so the
+ * caller skips them.
+ *
+ * Identity / date variables (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`) are
+ * deliberately NOT in this set — they tweak the commit's metadata
+ * but don't move it to another repo, so attribution is still
+ * meaningful.
+ */
+// `GIT_NAMESPACE` is intentionally NOT here: it prefixes ref names
+// within the same repository, but the working tree and object store
+// are unchanged, so a `git commit` under it still lands in our cwd's
+// repo. The set covers ONLY variables that change which on-disk
+// repository git acts on.
+const GIT_ENV_SHIFTS_REPO = new Set([
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_INDEX_FILE',
+]);
+
+/**
+ * Match the `KEY=` prefix of a `KEY=value` token and return KEY,
+ * or null if the token isn't a leading env-var assignment. Centralised
+ * so the leading-env-strip and the env-wrapper KEY=VALUE strip share
+ * the same parsing.
+ */
+function leadingEnvAssignmentKey(token: string): string | null {
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(token);
+  return m ? m[1]! : null;
+}
+
+/**
+ * Walk a `git ...` token sequence past git's global flags
+ * (`-c key=val`, `-C path`, `--no-pager`, `--git-dir`, `--work-tree`,
+ * `--namespace`, etc.) to find the actual subcommand. Without this,
+ * `git -c k=v commit -m x` and `git --no-pager commit -m x` would
+ * silently slip past a fixed-position check at index 1.
+ *
+ * `changesCwd` is true when any of the consumed flags would relocate
+ * the working directory (`-C`, `--git-dir`, `--work-tree`).
+ */
+// Two-token global flags whose second token is consumed as a value.
+const GIT_GLOBAL_FLAGS_TAKES_VALUE = new Set([
+  '-c',
+  '-C',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--exec-path',
+  '--config-env',
+  '--super-prefix',
+  '--list-cmds',
+]);
+// Flags whose presence shifts cwd interpretation.
+const GIT_GLOBAL_FLAGS_SHIFTS_CWD = new Set(['-C', '--git-dir', '--work-tree']);
+
+// `-C .` (and `./`, attached `-C.`) are no-op cwd shifts; treating
+// them as cwd-changing would suppress attribution for `git -C . commit`
+// (a common alias for "explicit current dir").
+//
+// Empty string is intentionally NOT treated as no-op even though
+// `-C "" commit` is technically a no-op — `shell-quote` returns ''
+// for any env-var or command-substitution that it cannot resolve at
+// parse time (e.g. `-C $HOME`, `-C $REPO_ROOT`, `-C $UNSET`), so
+// the literal-empty and the unknown-env-var cases are
+// indistinguishable from our static view. Treating them as no-op
+// would silently stamp our Co-authored-by trailer onto a commit
+// that lands in whatever repo `$HOME`/`$REPO_ROOT` resolves to at
+// runtime. Conservative skip is the safer call; the only missed
+// attribution is for `-C $PWD commit` (rare) and literal `-C ""
+// commit` (malformed and won't actually commit).
+//
+// Same conservatism applies to literal absolute paths that happen
+// to resolve to cwd at runtime — we only have the argv at parse
+// time, so the cheap textual comparison is what we can reasonably
+// check here.
+function isNoopCwdTarget(target: string): boolean {
+  const t = target.trim();
+  return t === '.' || t === './';
+}
+
+function parseGitInvocation(tokens: string[]): {
+  subcommand: string | undefined;
+  changesCwd: boolean;
+} {
+  let i = 1; // skip 'git'
+  let changesCwd = false;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (GIT_GLOBAL_FLAGS_TAKES_VALUE.has(t)) {
+      const value = tokens[i + 1] ?? '';
+      // For `-C` specifically, the value is the new cwd. `-C .` is
+      // a no-op so don't flip changesCwd. (`--git-dir`/`--work-tree`
+      // path arguments aren't cwd in the same sense — leave those
+      // unconditional.)
+      if (t === '-C') {
+        if (!isNoopCwdTarget(value)) changesCwd = true;
+      } else if (GIT_GLOBAL_FLAGS_SHIFTS_CWD.has(t)) {
+        changesCwd = true;
+      }
+      i += 2;
+      continue;
+    }
+    // Attached-value form: `--git-dir=path`, `--work-tree=path`, etc.
+    if (t.startsWith('--git-dir=') || t.startsWith('--work-tree=')) {
+      changesCwd = true;
+      i++;
+      continue;
+    }
+    // Attached-value form for `-C`: `git -C/path commit ...` and
+    // `git -C. commit ...`. Git accepts both `-C path` (handled
+    // above by TAKES_VALUE) and the concatenated form. shell-quote
+    // tokenises the latter as a single `-Cpath` token.
+    if (t.length > 2 && t.startsWith('-C')) {
+      const value = t.slice(2);
+      if (!isNoopCwdTarget(value)) changesCwd = true;
+      i++;
+      continue;
+    }
+    // Other long/short flag (no separate arg, e.g. --no-pager,
+    // --version, --bare, -p).
+    if (t.startsWith('-')) {
+      i++;
+      continue;
+    }
+    // First non-flag is the subcommand.
+    return { subcommand: t, changesCwd };
+  }
+  return { subcommand: undefined, changesCwd };
+}
+
+/**
+ * Leading tokens the loose commit recogniser skips over: shell
+ * control-flow keywords and noise words that `splitCommands` leaves at
+ * the front of a segment because it splits on operators only and has
+ * no shell-grammar notion — `if true; then git commit` yields the
+ * segment `then git commit`, `while …; do git commit; done` yields
+ * `do git commit`, and `time git commit` / `! git commit` never get
+ * split at all. The amend guard recognises every one of these
+ * spellings, so registration must recognise them too (#12514).
+ */
+const COMMIT_RECOGNITION_LEADING_NOISE: ReadonlySet<string> = new Set([
+  'if',
+  'then',
+  'else',
+  'elif',
+  'fi',
+  'while',
+  'until',
+  'for',
+  'do',
+  'done',
+  'time',
+  '!',
+  '{',
+  '}',
+]);
+
+/**
+ * The program recogniser shared by `gitCommitContext`,
+ * `findAttributableCommitSegment` and `isAmendCommit` (#12514): skip leading
+ * control-flow/noise keywords and match the program on its
+ * basename (see `programBasename`), so `then git commit`,
+ * `time git commit`, `! git commit` and `/usr/bin/git commit` all
+ * resolve to the `git` invocation a `tokens[0] === 'git'` check
+ * misses. Returns the token slice starting at the recognised program,
+ * or `null` when the segment is nothing but noise. The slice keeps the
+ * program token at index 0 so `parseGitInvocation` applies unchanged.
+ */
+function skipCommitRecognitionNoise(tokens: string[]): string[] | null {
+  let i = 0;
+  while (
+    i < tokens.length &&
+    COMMIT_RECOGNITION_LEADING_NOISE.has(tokens[i]!)
+  ) {
+    i++;
+  }
+  if (i >= tokens.length) return null;
+  return tokens.slice(i);
+}
+
+/**
+ * Basename a program token and drop a Windows `.exe` suffix.
+ *
+ * `getCommandRoot` stops at the basename and keeps the suffix (pinned
+ * as `bar.exe` by `utils/shell-utils.test.ts`), so this deliberately
+ * goes one step further: recognition here is purely textual —
+ * `shell.ts` has no `process.platform` branch — and
+ * `"C:\Program Files\Git\cmd\git.exe" commit` is the spelling a
+ * Windows session really produces. Without the strip neither `git`
+ * branch fires, the commit lands unregistered, and the follow-up bare
+ * `git commit --amend` is hard-blocked with the false reason #12514
+ * set out to remove. Same normalisation the guard side already
+ * applies (`dangerousRules.stripWindowsExecutableSuffix`).
+ */
+function programBasename(program: string): string {
+  const base = program.split(/[\\/]/).pop()!;
+  return base.endsWith('.exe') ? base.slice(0, -'.exe'.length) : base;
+}
+
+/**
+ * Classify whether a command chain (potentially compound) contains a
+ * `git commit` invocation, and whether that invocation lands in the
+ * tool's initial cwd.
+ *
+ * Two flags are returned because the answers feed different decisions:
+ * - `hasCommit` is the broader "did the user try to commit anywhere
+ *   in this chain?" — used to refuse background mode.
+ * - `attributableInCwd` is the stricter "is it safe to capture HEAD
+ *   in our cwd and write a note to that repo?" — used by the actual
+ *   trailer rewrite, the git-notes write, and session-commit
+ *   registration (`trackSessionCommit`).
+ *
+ * Program recognition is loose (#12514): leading control-flow/noise
+ * keywords are skipped and the program is matched on its basename (see
+ * `skipCommitRecognitionNoise`), so `if …; then git commit; fi`,
+ * `time git commit`, `! git commit` and `/usr/bin/git commit` all
+ * resolve to the `git` invocation they execute. The amend guard
+ * recognises those spellings, so every gate fed by this walk must too
+ * — a commit the guard would block must be a commit that can register.
+ *
+ * Walks segments in order so a `cd` AFTER an in-cwd commit doesn't
+ * invalidate that commit's attribution; only a `cd` (or `git -C` /
+ * `--git-dir` / `--work-tree`) BEFORE the commit shifts safety. The
+ * loose recognition also covers a `cd` hidden behind a noise keyword
+ * (`if …; then cd /elsewhere; fi; git commit`), which a
+ * `tokens[0]`-only walk would miss.
+ *
+ * `cwdShifted` is intentionally a one-way latch — it isn't reset on
+ * a subsequent `cd .` or `cd ..`, so harmless cd cycles like
+ * `cd src && cd .. && git commit -m x` will conservatively skip
+ * attribution. The trade-off matches the wrong-repo guard's intent
+ * (better miss than corrupt unrelated repos).
+ */
+function gitCommitContext(
+  command: string,
+  cwd: string,
+): {
+  hasCommit: boolean;
+  attributableInCwd: boolean;
+} {
+  let hasCommit = false;
+  let attributable = false;
+  let cwdShifted = false;
+
+  for (const sub of splitCommands(command)) {
+    const rawTokens = tokeniseSegment(sub);
+    if (!rawTokens || rawTokens.length === 0) continue;
+
+    const tokens = skipCommitRecognitionNoise(rawTokens);
+    if (!tokens) continue;
+    const program = programBasename(tokens[0]!);
+
+    if (program === 'cd' || program === 'pushd') {
+      // A cd / pushd before any commit might redirect a later
+      // `git commit` into a different repo. A cd AFTER the commit
+      // doesn't matter for the commit we already saw.
+      //
+      // A heuristic relaxation: cd targets that keep us inside this
+      // repository — a relative path without upward escape, or an
+      // absolute path under the shell's cwd — almost always stay in the
+      // same repo. The very common `cd subdir && git commit -m "..."`
+      // and `cd /abs/repo && git commit -m "..."` flows are the
+      // motivating cases — same repo, same toplevel, attribution is
+      // still safe. Only
+      // mark as shifted when the target *could* land us in a different
+      // repo. We can't be 100% certain without running `git rev-parse
+      // --show-toplevel` after the cd, which would require a synchronous
+      // fs/exec call that the rest of this walk avoids — the heuristic
+      // covers the common case and stays conservative on the rest.
+      if (!hasCommit && cdTargetMayChangeRepo(tokens, cwd)) cwdShifted = true;
+      continue;
+    }
+    if (program === 'popd') {
+      // `popd` returns to a previous directory in the bash dir-stack.
+      // Without tracking the stack we can't know whether the resulting
+      // cwd is the same repo or a different one — treat conservatively
+      // as a shift before any commit.
+      if (!hasCommit) cwdShifted = true;
+      continue;
+    }
+
+    if (program === 'git') {
+      const { subcommand, changesCwd } = parseGitInvocation(tokens);
+      if (subcommand === 'commit') {
+        hasCommit = true;
+        // The commit lands in our cwd only if no preceding cd shifted
+        // us and this very invocation didn't redirect via -C/--git-dir.
+        if (!cwdShifted && !changesCwd) attributable = true;
+      } else if (changesCwd && !hasCommit) {
+        // `git -C /path status` and friends signal cwd-elsewhere
+        // intent; subsequent in-cwd commits in this chain are unusual
+        // enough to be conservative about.
+        cwdShifted = true;
+      }
+    }
+  }
+
+  return { hasCommit, attributableInCwd: attributable };
+}
+
+/**
+ * Walk a `gh ...` token sequence past gh's global flags
+ * (`--repo owner/repo`, `--hostname host`, `--help`, `--version`) and
+ * return the resulting subcommand chain. Same purpose as
+ * `parseGitInvocation`: a fixed-position check at index 1 misses
+ * `gh --repo owner/repo pr create ...`, which is a common form.
+ */
+const GH_GLOBAL_FLAGS_TAKES_VALUE = new Set(['--repo', '-R', '--hostname']);
+
+function parseGhInvocation(tokens: string[]): string[] {
+  let i = 1; // skip 'gh'
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (GH_GLOBAL_FLAGS_TAKES_VALUE.has(t)) {
+      i += 2;
+      continue;
+    }
+    if (
+      t.startsWith('--repo=') ||
+      t.startsWith('--hostname=') ||
+      t.startsWith('-R=')
+    ) {
+      i++;
+      continue;
+    }
+    if (t.startsWith('-')) {
+      i++;
+      continue;
+    }
+    return tokens.slice(i);
+  }
+  return [];
+}
+
+/**
+ * Heuristic: does this `cd` invocation potentially redirect us into
+ * a different repository? Used by `gitCommitContext` to decide
+ * whether a subsequent `git commit` in the same chain is still
+ * attributable in our cwd.
+ *
+ * Returns true (conservative — assume shift) when the target escapes
+ * upward (`..`), goes to `$HOME` / `~`, contains an env-var (we can't
+ * resolve it statically), or is missing entirely (`cd` alone goes to
+ * `$HOME`). Plain relative paths like `cd src`, `cd ./packages/foo`,
+ * or `cd subdir/nested` are treated as in-repo.
+ *
+ * An absolute target is resolved against `cwd` (the directory the shell
+ * command runs in, #12514-A): landing on that directory or in a
+ * subdirectory of it cannot change the repository, so the very common
+ * `cd /abs/path/to/this/repo && git commit -m "..."` spelling keeps
+ * attribution. Anything else absolute — a sibling, an unrelated tree —
+ * still shifts. Resolution is static (`path.resolve`) on purpose: the
+ * walk must not spawn `git rev-parse` (see `gitCommitContext`). Because
+ * it never touches the filesystem, a symlink or a nested repo inside
+ * `cwd` is a known residue of this heuristic, and containment is
+ * measured against `cwd`, not the repository root.
+ */
+function cdTargetMayChangeRepo(tokens: string[], cwd: string): boolean {
+  // tokens[0] is 'cd'. The next non-flag token is the target.
+  let i = 1;
+  while (i < tokens.length && tokens[i]!.startsWith('-')) i++;
+  const target = tokens[i];
+  // `cd` with no argument goes to $HOME.
+  if (target === undefined) return true;
+  // An env-var (`$PKG`, `${PKG}`) or a backtick substitution expands at
+  // runtime, so the literal text looking contained proves nothing: with
+  // `PKG=../other-repo`, `cd /repo/$PKG` resolves lexically to a path
+  // under `cwd` while bash lands elsewhere. Checked before the absolute
+  // branch so `/repo/$PKG` cannot be certified.
+  if (target.includes('$') || target.includes('`')) return true;
+  if (target.startsWith('/')) {
+    // Same directory, or a subdirectory of it: still this repo. The
+    // `path.sep` in the prefix test is load-bearing — `<repo>-sibling`
+    // shares the string prefix but is a different repository.
+    const root = path.resolve(cwd);
+    const resolved = path.resolve(cwd, target);
+    return !(resolved === root || resolved.startsWith(root + path.sep));
+  }
+  if (target.startsWith('~')) return true;
+  // `..`, `../..`, `..\\foo` etc. could escape the repo root.
+  if (target === '..') return true;
+  if (target.startsWith('../') || target.startsWith('..\\')) return true;
+  // Embedded parent-dir traversal can also escape: `foo/../../escape`,
+  // `./..`, `nested/..`, etc. Catching `/..` and `\..` anywhere in
+  // the path covers both POSIX and Windows separators without
+  // false-positiving on legitimate names that happen to contain `..`
+  // (which only escape when followed by a separator).
+  if (target.includes('/..') || target.includes('\\..')) return true;
+  // `-` is bash's "previous directory" — could be anywhere.
+  if (target === '-') return true;
+  return false;
+}
+
+type ShellSyntaxNode = Parser.SyntaxNode;
+
+/**
+ * The directory `gh pr create` attribution runs in. `launch` keeps the
+ * tool's launch directory (the `directory` param, else the target dir);
+ * `resolved` is a directory the command's own `cd` chain proved statically;
+ * `opaque` means the command changes directory in a way that cannot be
+ * proven without running it, so attribution falls back to `launch` and the
+ * tool result says so instead of missing silently.
+ */
+type GhPrCreateDirectory =
+  | { kind: 'launch' }
+  | { kind: 'resolved'; directory: string; repository?: string }
+  | { kind: 'opaque' };
+
+/**
+ * Programs that move the shell's directory. `cd`/`pushd` name a target the
+ * walk can try to prove; `popd` rotates a stack it does not model; and
+ * `eval`/`source`/`.` run arbitrary code in the CURRENT shell, so they can
+ * move it without naming a target anywhere in the command text. Executing a
+ * script (`./move.sh`) is deliberately absent — that runs in a child and
+ * cannot move us.
+ */
+const DIRECTORY_CHANGING_COMMANDS = new Set([
+  'cd',
+  'pushd',
+  'popd',
+  'eval',
+  'source',
+  '.',
+]);
+
+/**
+ * The literal program a command node invokes, or undefined when the name cannot
+ * be statically decoded. Every word encoding Bash accepts for the same builtin
+ * (`"cd"`, `'cd'`, `$'cd'`, `c"d"`) must decode to the literal; an undecodable
+ * name (an expansion or an escape we cannot evaluate) is unprovable, and the
+ * caller fails closed instead of silently dropping the move.
+ */
+function commandNodeProgramName(node: ShellSyntaxNode): string | undefined {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return undefined;
+  // The `name` field is a command_name wrapper around the value node
+  // (word / string / raw_string / ansi_c_string / concatenation).
+  const valueNode = nameNode.namedChildren[0] ?? nameNode;
+  return literalShellValue(valueNode);
+}
+
+/** The program a command node invokes, basename'd like the textual walks. */
+function commandNodeProgram(node: ShellSyntaxNode): string | undefined {
+  const name = commandNodeProgramName(node);
+  return name === undefined ? undefined : programBasename(name);
+}
+
+/**
+ * Whether a command invokes a directory-changing BUILTIN. A path-qualified
+ * program named `cd`/`pushd`/… (e.g. `/usr/bin/cd`, `./cd`) is an external
+ * executable that runs in a child process and cannot move this shell, so it
+ * must not be granted builtin cwd-changing semantics.
+ */
+function commandIsBuiltinDirectoryChanger(node: ShellSyntaxNode): boolean {
+  if (node.type !== 'command') return false;
+  const name = commandNodeProgramName(node);
+  return (
+    name !== undefined &&
+    !/[/\\]/.test(name) &&
+    DIRECTORY_CHANGING_COMMANDS.has(programBasename(name))
+  );
+}
+
+/**
+ * Whether a command creates a git worktree (`git worktree add …`). The
+ * snapshot precedes spawn, so a worktree created by this very command does not
+ * exist yet and a later `cd` into it would snapshot the wrong branch. Decodes
+ * quoted subcommands so `git "worktree" add` / `git worktree 'add'` match too.
+ */
+function commandCreatesWorktree(node: ShellSyntaxNode): boolean {
+  if (node.type !== 'command' || commandNodeProgram(node) !== 'git') {
+    return false;
+  }
+  const words = node.namedChildren
+    .filter(
+      (c) => c.type !== 'command_name' && c.type !== 'variable_assignment',
+    )
+    .map((c) => literalShellValue(c) ?? c.text);
+  return words.some((word, i) => word === 'worktree' && words[i + 1] === 'add');
+}
+
+/**
+ * Whether a subtree creates a git worktree anywhere, including inside command
+ * substitutions. A worktree's filesystem effect survives the child shell, so it
+ * matters even when the surrounding cd does not. A child-only cd (no worktree)
+ * is deliberately NOT flagged here.
+ */
+function subtreeCreatesWorktree(node: ShellSyntaxNode): boolean {
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (commandCreatesWorktree(current)) return true;
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * The names transitively invoked from EXECUTABLE call sites in a subtree. A
+ * call inside a function body is an executable call site only when that
+ * function is itself invoked, so uncalled functions cannot activate each
+ * other's effects: a call recorded inside a dormant body does not count. Calls
+ * outside any function body seed the closure, which then expands through the
+ * bodies of the functions it reaches.
+ */
+function invokedFunctionNames(node: ShellSyntaxNode): Set<string> {
+  // enclosing '' is the subtree's top level; a function name otherwise.
+  const callsBy = new Map<string, Set<string>>();
+  const stack: Array<{ n: ShellSyntaxNode; enclosing: string }> = [
+    { n: node, enclosing: '' },
+  ];
+  while (stack.length > 0) {
+    const { n, enclosing } = stack.pop()!;
+    if (n.type === 'function_definition') {
+      const name = n.childForFieldName('name')?.text ?? '';
+      for (const c of n.namedChildren) stack.push({ n: c, enclosing: name });
+      continue;
+    }
+    if (n.type === 'command') {
+      const program = commandNodeProgram(n);
+      if (program !== undefined) {
+        let calls = callsBy.get(enclosing);
+        if (!calls) {
+          calls = new Set();
+          callsBy.set(enclosing, calls);
+        }
+        calls.add(program);
+      }
+    }
+    for (const c of n.namedChildren) stack.push({ n: c, enclosing });
+  }
+  const invoked = new Set<string>();
+  const queue: string[] = [...(callsBy.get('') ?? [])];
+  while (queue.length > 0) {
+    const name = queue.pop()!;
+    if (invoked.has(name)) continue;
+    invoked.add(name);
+    for (const called of callsBy.get(name) ?? []) queue.push(called);
+  }
+  return invoked;
+}
+
+/**
+ * Whether a subtree contains a `gh pr create` invocation that actually
+ * executes. A function definition does not run its body, so a create inside a
+ * function counts only when that function is transitively invoked from an
+ * executable call site; a bare definition is dormant and must not cost an
+ * outer create its binding.
+ */
+function subtreeRunsGhPrCreate(node: ShellSyntaxNode): boolean {
+  const invoked = invokedFunctionNames(node);
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.type === 'function_definition') {
+      const name = current.childForFieldName('name')?.text;
+      if (name && !invoked.has(name)) continue;
+    }
+    if (
+      current.type === 'command' &&
+      commandRunsGhPrCreate(createCandidateText(current))
+    ) {
+      return true;
+    }
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * If a declaration marks a function readonly (`readonly -f`, `declare -r -f`,
+ * clustered options), return its literal function-name targets. Returns
+ * undefined when the declaration does not mark a function readonly, and
+ * `{ targets: undefined }` when it does but a target cannot be decoded (the
+ * readonly state is then unestablished and removal must stay conservative).
+ */
+function readonlyFunctionDeclaration(
+  node: ShellSyntaxNode,
+): { targets: string[] | undefined } | undefined {
+  if (node.type !== 'declaration_command') return undefined;
+  const keyword = node.firstChild?.text;
+  const optionChars = new Set<string>();
+  for (const c of node.namedChildren) {
+    if (c.type === 'word' && c.text.startsWith('-')) {
+      for (const ch of c.text.slice(1)) optionChars.add(ch);
+    }
+  }
+  const marksReadonly =
+    (keyword === 'readonly' && optionChars.has('f')) ||
+    ((keyword === 'declare' || keyword === 'typeset') &&
+      optionChars.has('r') &&
+      optionChars.has('f'));
+  if (!marksReadonly) return undefined;
+  const targets: string[] = [];
+  for (const c of node.namedChildren) {
+    if (c.type === 'word' && c.text.startsWith('-')) continue;
+    const value = c.type === 'variable_name' ? c.text : literalShellValue(c);
+    if (value === undefined) return { targets: undefined };
+    targets.push(value);
+  }
+  return { targets };
+}
+
+/**
+ * Decode a literal shell value (a `--repo` argument) to the string Bash would
+ * pass, or undefined when it carries an expansion we cannot evaluate. Handles
+ * the quoted equals form `--repo='o/r'`, which tree-sitter spells as a
+ * `concatenation` of the `--repo=` word and a quoted value node.
+ */
+function literalShellValue(
+  node: ShellSyntaxNode | undefined,
+): string | undefined {
+  if (!node) return undefined;
+  if (node.type === 'word') {
+    const text = node.text;
+    if (!text.includes('\\')) return text;
+    // An unquoted backslash escapes the next character (`c\d` is the cd
+    // builtin). Normalize `\X` to literal X; a trailing backslash with no
+    // following character is not a decodable escape, so leave it unprovable
+    // rather than letting the raw word fall through as a proven non-mover.
+    let decoded = '';
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '\\') {
+        i++;
+        if (i >= text.length) return undefined;
+        decoded += text[i];
+      } else {
+        decoded += text[i];
+      }
+    }
+    return decoded;
+  }
+  if (node.type === 'raw_string') return node.text.slice(1, -1);
+  if (node.type === 'ansi_c_string') {
+    // `$'…'` ANSI-C quoting: without a backslash escape the content is literal;
+    // with escapes it cannot be statically decoded, so leave it unprovable.
+    const inner = node.text.slice(2, -1);
+    return inner.includes('\\') ? undefined : inner;
+  }
+  if (node.type === 'string') {
+    if (node.namedChildren.some((c) => c.type !== 'string_content')) {
+      return undefined;
+    }
+    return node.namedChildren.map((c) => c.text).join('');
+  }
+  if (node.type === 'concatenation') {
+    const parts = node.namedChildren.map(literalShellValue);
+    if (parts.some((p) => p === undefined)) return undefined;
+    return parts.join('');
+  }
+  return undefined;
+}
+
+/**
+ * The text to run the execution gate over for one AST command node.
+ *
+ * The gate splits on shell separators without tracking quotes, so feeding it
+ * a node's raw text lets a quoted argument forge a create:
+ * `printf 'example; gh pr create'` splits into a segment that starts with
+ * `gh pr create`, and the walk would stop on the printf at the launch
+ * directory while the real create runs elsewhere. Rebuilding the segment
+ * from the AST's own tokens and replacing any argument that carries a
+ * separator or expansion with a placeholder keeps the gate's grammar
+ * authoritative while making that forgery impossible: the executable still
+ * has to be gh (or a recognised wrapper) in argument position.
+ */
+function createCandidateText(node: ShellSyntaxNode): string {
+  const parts: string[] = [];
+  for (const child of node.namedChildren) {
+    if (child.type === 'command_name') {
+      // A quoted executable such as `'gh; gh pr create'` is NOT gh; copying its
+      // text verbatim lets the quote-blind gate find a create inside the name
+      // and stop the walk early. Sanitise it like an argument. Backslash and
+      // slash stay legal so path-qualified gh (incl. Windows) still matches.
+      parts.push(/[;&|`$\n'"]|\s/.test(child.text) ? 'X' : child.text);
+      continue;
+    }
+    if (child.type === 'variable_assignment') {
+      // Sanitise the VALUE but keep the assignment shape. Replacing the whole
+      // node with a bare token turns `GH_TOKEN=$TOK gh pr create` into
+      // `X gh pr create`, which the gate no longer recognises — losing a
+      // binding the unsanitised text used to make. Only the value can carry
+      // a forged separator, so only the value is replaced.
+      const name = child.namedChildren.find((c) => c.type === 'variable_name');
+      parts.push(name ? `${name.text}=X` : 'X');
+      continue;
+    }
+    parts.push(/[;&|`$\n]/.test(child.text) ? 'X' : child.text);
+  }
+  return parts.join(' ');
+}
+
+/** Whether a subtree the walk does not model may move the directory. */
+function subtreeMayChangeDirectory(node: ShellSyntaxNode): boolean {
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (
+      commandIsBuiltinDirectoryChanger(current) ||
+      commandCreatesWorktree(current)
+    ) {
+      return true;
+    }
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * Whether a subtree may move THIS shell's directory. A `cd` inside a subshell /
+ * command substitution / process substitution runs in a child and cannot move
+ * this shell, so it is not counted; a worktree created even in a child still
+ * lands on disk before spawn and is counted. Used where counting a child-only
+ * cd would raise a spurious fallback on a run that provably did not move.
+ */
+function subtreeMayChangeDirectoryInThisShell(node: ShellSyntaxNode): boolean {
+  if (subtreeCreatesWorktree(node)) return true;
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (commandIsBuiltinDirectoryChanger(current)) return true;
+    if (
+      current.type === 'subshell' ||
+      current.type === 'command_substitution' ||
+      current.type === 'process_substitution'
+    ) {
+      continue;
+    }
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * Whether a subtree contains a child context (subshell / command substitution /
+ * process substitution) that both may change directory AND contains the actual
+ * create. Such a create runs in the child's changed directory, which this walk
+ * does not attribute, so it must keep the visible fallback signal. A child-only
+ * cd with the create OUTSIDE it is exempt (it provably did not move this shell).
+ * A child context inside a dormant (uncalled) function body does not execute, so
+ * it is skipped just like the other scans skip dormant bodies.
+ */
+function subtreeHasCreateInMovingChild(node: ShellSyntaxNode): boolean {
+  const invoked = invokedFunctionNames(node);
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.type === 'function_definition') {
+      const name = current.childForFieldName('name')?.text;
+      if (name && !invoked.has(name)) continue;
+    }
+    if (
+      (current.type === 'subshell' ||
+        current.type === 'command_substitution' ||
+        current.type === 'process_substitution') &&
+      subtreeRunsGhPrCreate(current) &&
+      subtreeMayChangeDirectory(current)
+    ) {
+      return true;
+    }
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * Whether the command assigns `CDPATH` anywhere, as a leading assignment
+ * (`CDPATH=/x cd sub`) or a declaration (`export CDPATH=/x`). CDPATH makes
+ * the shell search its entries before the working directory, so a RELATIVE
+ * `cd sub` can land outside the repo while looking provable; an absolute
+ * target is unaffected. Ambient CDPATH from the inherited environment is
+ * out of scope — the walk models the command, not the environment.
+ */
+function assignsCdpath(node: ShellSyntaxNode): boolean {
+  const stack: ShellSyntaxNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (
+      current.type === 'variable_assignment' &&
+      current.namedChildren.some(
+        (c) => c.type === 'variable_name' && c.text === 'CDPATH',
+      )
+    ) {
+      return true;
+    }
+    stack.push(...current.namedChildren);
+  }
+  return false;
+}
+
+/**
+ * A `cd`/`pushd` target provable without running the command: a plain word
+ * or string carrying no expansion, substitution, tilde, glob, brace or
+ * escape. Returns undefined for everything else — including bare `cd`
+ * (goes to `$HOME`), `cd -` (previous directory), and any quoted form whose
+ * content tree-sitter had to split into expansion nodes.
+ */
+function literalCdTarget(node: ShellSyntaxNode): string | undefined {
+  let target: ShellSyntaxNode | undefined;
+  for (const arg of node.namedChildren) {
+    if (arg.type === 'command_name' || arg.type === 'variable_assignment') {
+      continue;
+    }
+    // `cd -L dir` / `cd -- dir`: skip option words, but `cd -` on its own
+    // is the previous-directory form and must reach the checks below.
+    if (arg.type === 'word' && arg.text.startsWith('-') && arg.text !== '-') {
+      continue;
+    }
+    target = arg;
+    break;
+  }
+  if (target === undefined) return undefined;
+  let text: string;
+  if (target.type === 'word') {
+    text = target.text;
+  } else if (target.type === 'raw_string') {
+    // Single quotes are wholly literal in bash — no expansion is possible
+    // inside them — so the body is the path with the quotes removed.
+    text = target.text.slice(1, -1);
+  } else if (target.type === 'string') {
+    // A double-quoted path is literal only when its body is plain content;
+    // `"$HOME/x"` and `"$(pwd)/x"` carry expansion children instead.
+    if (target.namedChildren.some((c) => c.type !== 'string_content')) {
+      return undefined;
+    }
+    text = target.namedChildren.map((c) => c.text).join('');
+  } else {
+    return undefined;
+  }
+  // `-` is bash's previous-directory form, not a path named "-".
+  if (text.length === 0 || text === '-' || text.startsWith('~'))
+    return undefined;
+  if (/[$`\\*?[\]{}]/.test(text)) return undefined;
+  return text;
+}
+
+/**
+ * Resolve the directory the first `gh pr create` in `command` runs in, so
+ * both attribution legs ask gh about the repo the create actually targeted.
+ * A model-authored `cd <worktree> && gh pr create` without the `directory`
+ * param otherwise resolves the launch directory's branch — which has no PR
+ * — and the binding declines silently.
+ *
+ * A directory is carried forward only across `&&`, the one separator that
+ * proves the preceding `cd` succeeded. Across `;`, a newline, `&` or `||`
+ * the next statement runs regardless of (or only on failure of) the previous
+ * one, so a skipped, failed or backgrounded `cd` never moved us; carrying it
+ * would query a directory the create never ran in and lose a binding the
+ * launch directory would have made.
+ *
+ * The walk is otherwise static and fails closed: it never runs the command,
+ * never guesses an expansion, and returns `opaque` for every directory
+ * change it cannot prove (`cd $VAR`, `cd ~`, `cd -`, `popd`, a `pushd +N`
+ * stack rotation, a subshell or control-flow body that moves the directory,
+ * an `env -C`/`sudo -D` wrapper, `eval`/`source`/`.`, a `CDPATH` that
+ * reroutes a relative target). `opaque` keeps the launch directory, so this
+ * can only add bindings, never remove one. A parse failure or an error node
+ * returns `launch`: the parser proved nothing, so behaviour is unchanged.
+ *
+ * Create recognition reuses `commandRunsGhPrCreate` rather than restating
+ * its closed grammar, but over text rebuilt from the AST's own tokens (see
+ * `createCandidateText`) so a quoted argument cannot forge a create. The
+ * walk stops at the first create — the gate binds one PR, so a later `cd`
+ * or a `|| gh pr view` retry tail cannot change the answer.
+ */
+async function resolveGhPrCreateDirectory(
+  command: string,
+  launchDir: string,
+): Promise<GhPrCreateDirectory> {
+  let tree: Parser.Tree;
+  try {
+    tree = await parseShellCommand(command);
+  } catch {
+    return { kind: 'launch' };
+  }
+  try {
+    const root = tree.rootNode;
+    if (root.hasError) return { kind: 'launch' };
+
+    let found: string | undefined;
+    let createRepo: string | undefined;
+    let opaque = false;
+    let lastpipeEnabled = false;
+    // Set when a `shopt -s lastpipe` may run but is not guaranteed (behind
+    // `&&` / `||` / `&`). Lastpipe is then neither proven on nor proven off, so
+    // a pipeline's final element may still run in this shell: its possible
+    // parent effects must be preserved, not discarded as child-only.
+    let lastpipeUncertain = false;
+    const cdpathSet = assignsCdpath(root);
+    // Function definitions take effect only when the walk reaches them in the
+    // current shell. Pre-scanning the whole tree would let a definition AFTER
+    // the create (or inside a subshell) wrongly shadow an earlier cd.
+    const shadowed = new Set<string>();
+    // Functions marked readonly (`readonly -f`, `declare -r -f`) cannot be
+    // removed by `unset -f`, so their shadow must survive an unset attempt.
+    const readonlyFunctions = new Set<string>();
+    // Set when a readonly declaration's target cannot be decoded: the readonly
+    // state is then unestablished, so no shadow may be lifted.
+    let readonlyUncertain = false;
+
+    const visit = (
+      node: ShellSyntaxNode,
+      dir: string,
+      guaranteed = true,
+    ): string => {
+      if (found !== undefined || opaque) return dir;
+      switch (node.type) {
+        case 'program':
+        case 'list': {
+          // A directory may only be carried into a statement whose execution
+          // is gated on the previous one SUCCEEDING. `&&` is the only
+          // separator that proves it: with `;`, a newline, or `&` the next
+          // statement runs regardless, so a `cd` that failed (missing
+          // target), was skipped (`false && cd w`), or ran in a background
+          // subshell (`cd w &`) never moved us — and carrying it anyway
+          // would query a directory the create never ran in.
+          //
+          // `||` is ambiguous in BOTH directions: the right branch runs only
+          // when the left failed, so a cd on the right may never execute
+          // (`true || cd w` skips it), and a cd on the left may have failed.
+          // Either side being able to move the directory makes the outcome
+          // unprovable. A create already found is unaffected, so
+          // `cd w && gh pr create || gh pr view` still attributes in `w`.
+          let current = dir;
+          let separator: string | undefined;
+          const children = node.children;
+          for (let i = 0; i < children.length; i++) {
+            const child = children[i]!;
+            if (!child.isNamed) {
+              separator = child.text;
+              continue;
+            }
+            // A comment is not a statement. Skipping it must not consume the
+            // pending operator, or `cd w && # note` + newline + `gh pr
+            // create` loses the `&&` that proves the cd succeeded.
+            if (child.type === 'comment') continue;
+            if (found !== undefined || opaque) return current;
+            if (separator === '||') {
+              if (
+                path.resolve(current) !== path.resolve(dir) ||
+                subtreeMayChangeDirectoryInThisShell(child)
+              ) {
+                opaque = true;
+                return current;
+              }
+            } else if (
+              separator !== '&&' &&
+              path.resolve(current) !== path.resolve(dir)
+            ) {
+              opaque = true;
+              return current;
+            }
+            // A statement behind `&&` / `||` may be skipped (its execution
+            // depends on the previous result, which we do not evaluate), and a
+            // statement terminated by `&` runs in a background subshell. None
+            // is guaranteed to run in THIS shell, so side-effects that REMOVE a
+            // conservative protection (lifting a function shadow via
+            // `unset -f`) must not apply to them.
+            let backgrounded = false;
+            for (let j = i + 1; j < children.length; j++) {
+              const next = children[j]!;
+              if (next.isNamed) break;
+              if (next.text === '&') {
+                backgrounded = true;
+                break;
+              }
+            }
+            const conditional =
+              separator === '&&' || separator === '||' || backgrounded;
+            current = visit(child, current, guaranteed && !conditional);
+            separator = undefined;
+          }
+          return current;
+        }
+        case 'pipeline': {
+          // Bash runs pipeline elements in subshells, so a `cd` inside one
+          // does not leak. With `shopt -s lastpipe` ONLY the final element runs
+          // in THIS shell; every preceding element is still a subshell, so its
+          // function/readonly/shopt state must be isolated, not leaked.
+          const elements = node.namedChildren;
+          for (let i = 0; i < elements.length; i++) {
+            const isLast = i === elements.length - 1;
+            if (isLast && lastpipeEnabled) {
+              visit(elements[i]!, dir, guaranteed);
+              continue;
+            }
+            if (isLast && lastpipeUncertain) {
+              // Enablement is unproven, so the final element MAY run in this
+              // shell. Keep its possible parent effects (readonly / shadow)
+              // by not isolating it, but do not grant it guaranteed
+              // shadow-removing execution.
+              visit(elements[i]!, dir, false);
+              continue;
+            }
+            const savedShadowed = new Set(shadowed);
+            const savedReadonly = new Set(readonlyFunctions);
+            const savedUncertain = readonlyUncertain;
+            const savedLastpipe = lastpipeEnabled;
+            const savedLastpipeUncertain = lastpipeUncertain;
+            visit(elements[i]!, dir, false);
+            shadowed.clear();
+            for (const name of savedShadowed) shadowed.add(name);
+            readonlyFunctions.clear();
+            for (const name of savedReadonly) readonlyFunctions.add(name);
+            readonlyUncertain = savedUncertain;
+            lastpipeEnabled = savedLastpipe;
+            lastpipeUncertain = savedLastpipeUncertain;
+          }
+          // Only the FINAL element may run in this shell under lastpipe; a cd
+          // in a preceding element is a child and cannot move us.
+          const lastElement = elements[elements.length - 1];
+          if (
+            (lastpipeEnabled || lastpipeUncertain) &&
+            lastElement &&
+            subtreeMayChangeDirectoryInThisShell(lastElement)
+          ) {
+            opaque = true;
+          }
+          return dir;
+        }
+        case 'redirected_statement': {
+          let current = dir;
+          for (const child of node.namedChildren) {
+            if (child.type.endsWith('_redirect')) continue;
+            // The redirection is set up before the command runs and can fail
+            // (e.g. a missing parent directory), so the command — and any
+            // `unset -f` it contains — is not guaranteed to execute.
+            current = visit(child, current, false);
+          }
+          return current;
+        }
+        case 'function_definition': {
+          const name = node.childForFieldName('name')?.text;
+          if (name) shadowed.add(name);
+          // The body executes only if the function is called. If it can move
+          // the directory itself, no later invoke can be attributed safely.
+          if (subtreeMayChangeDirectory(node)) opaque = true;
+          return dir;
+        }
+        case 'declaration_command': {
+          // `readonly -f cd` / `declare -r -f cd` (including clustered options
+          // and quoted targets) mark a function readonly; a later `unset -f`
+          // cannot remove it, so its shadow must survive. Marking conservatively
+          // (even if the declaration is skipped) only ever keeps a shadow.
+          const readonlyDecl = readonlyFunctionDeclaration(node);
+          if (readonlyDecl) {
+            if (readonlyDecl.targets === undefined) {
+              readonlyUncertain = true;
+            } else {
+              for (const t of readonlyDecl.targets) readonlyFunctions.add(t);
+            }
+          }
+          // A declaration can create a worktree inside a command substitution
+          // (`export WT="$(git worktree add …)"`); that filesystem effect
+          // survives the child and must fail closed. A child-only cd (no
+          // worktree) cannot move this shell and must NOT force a fallback.
+          if (subtreeCreatesWorktree(node)) opaque = true;
+          return dir;
+        }
+        case 'unset_command': {
+          // `unset -f cd` restores the builtin, lifting the shadow — but only
+          // when the unset is GUARANTEED to execute AND provably succeeds.
+          // Behind `&&` / `||` / `&` (e.g. `false && unset -f cd`) it may be
+          // skipped; under a failed redirection it never runs; and a readonly
+          // function cannot be removed. In all of those the shadow must be
+          // kept; lifting it would treat a later no-op function call as the
+          // real builtin and query a directory the create never ran in. Only
+          // literal function names can be removed; an expanded name stays
+          // conservative.
+          if (!guaranteed) return dir;
+          const hasFunctionFlag = node.namedChildren.some(
+            (c) => c.type === 'word' && c.text === '-f',
+          );
+          if (hasFunctionFlag) {
+            const targets = node.namedChildren.filter((c) => c.type !== 'word');
+            if (targets.every((c) => c.type === 'variable_name')) {
+              // If the readonly state is unestablished, or any target is
+              // readonly, the removal is not provably successful, so keep the
+              // shadows rather than clearing them.
+              if (
+                !readonlyUncertain &&
+                !targets.some((t) => readonlyFunctions.has(t.text))
+              ) {
+                for (const t of targets) shadowed.delete(t.text);
+              }
+            } else {
+              opaque = true;
+            }
+          }
+          return dir;
+        }
+        case 'command': {
+          const programName = commandNodeProgramName(node);
+          // An undecodable program name (an expansion or an escape we cannot
+          // evaluate) could be any builtin, including a directory changer.
+          // Falling through would silently attribute the create to the current
+          // directory; fail closed instead.
+          if (programName === undefined) {
+            opaque = true;
+            return dir;
+          }
+          const program = programBasename(programName);
+          // A same-named function shadows the builtin, so `cd()` / `pushd()` /
+          // `gh()` moving or creating nothing here is mis-attributed if we
+          // trust the name alone. No later command of that name is provable.
+          if (shadowed.has(program)) {
+            opaque = true;
+            return dir;
+          }
+          const candidateText = createCandidateText(node);
+          const candidateRunsCreate = commandRunsGhPrCreate(candidateText);
+          // These prefixes hide the command whose cwd semantics matter:
+          // `command cd`, `builtin cd`, `time cd`, or `command env -C … gh`.
+          // An unrelated `command printf` must not block a later provable cd.
+          if (
+            ['command', 'builtin', 'time'].includes(program) &&
+            (candidateRunsCreate ||
+              node.namedChildren.some((c) =>
+                DIRECTORY_CHANGING_COMMANDS.has(programBasename(c.text)),
+              ))
+          ) {
+            opaque = true;
+            return dir;
+          }
+          // A trap can run an arbitrary cd between any later two commands.
+          if (program === 'trap') {
+            opaque = true;
+            return dir;
+          }
+          // A quoted `bash -c`/`sh -c` body is a separate shell program. Only
+          // a body that the execution gate recognises as a create is opaque;
+          // `sh -c 'echo ok' && cd w && gh pr create` remains resolvable.
+          if (
+            ['bash', 'sh', 'zsh', 'dash', 'ksh'].includes(program) &&
+            node.namedChildren.some(
+              (c) => c.type === 'word' && c.text === '-c',
+            ) &&
+            commandRunsGhPrCreate(node.text)
+          ) {
+            opaque = true;
+            return dir;
+          }
+          if (commandCreatesWorktree(node)) {
+            // The snapshot precedes spawn, so a worktree created by this very
+            // command does not exist yet. findGitRoot on its future path would
+            // find the launch repo and snapshot the wrong branch. Fail closed
+            // for any worktree creation before the create.
+            opaque = true;
+            return dir;
+          }
+          // A GUARANTEED `shopt -s lastpipe` proves lastpipe on. Behind `&&` /
+          // `||` / `&` it may or may not run (`true && …` enables it, `false &&
+          // …` does not), so the state is UNCERTAIN — not proven off. Modeling
+          // it as off would discard the final element's possible parent effects
+          // and silently query a directory the create never ran in. A `shopt -u
+          // lastpipe` invalidates any proven-on state: guaranteed it proves
+          // lastpipe off; conditional it may disable, so the state becomes
+          // uncertain ONLY if it could have been on — a possible disable cannot
+          // enable an option already proven off. Leaving a proven-on flag set
+          // would grant a later final element current-shell semantics it no
+          // longer has.
+          if (
+            program === 'shopt' &&
+            node.namedChildren.some(
+              (c) => c.type === 'word' && c.text === 'lastpipe',
+            )
+          ) {
+            const enables = node.namedChildren.some(
+              (c) => c.type === 'word' && c.text === '-s',
+            );
+            const disables = node.namedChildren.some(
+              (c) => c.type === 'word' && c.text === '-u',
+            );
+            if (enables) {
+              if (guaranteed) {
+                lastpipeEnabled = true;
+              } else {
+                lastpipeUncertain = true;
+              }
+            } else if (disables) {
+              if (guaranteed) {
+                lastpipeEnabled = false;
+                lastpipeUncertain = false;
+              } else {
+                lastpipeUncertain = lastpipeEnabled || lastpipeUncertain;
+                lastpipeEnabled = false;
+              }
+            }
+          }
+          if (candidateRunsCreate) {
+            const shiftSet =
+              program === 'env'
+                ? ENV_FLAGS_SHIFT_CWD
+                : program === 'sudo'
+                  ? SUDO_FLAGS_SHIFT_CWD
+                  : undefined;
+            if (
+              shiftSet &&
+              node.namedChildren.some((c) => isShiftCwdFlag(c.text, shiftSet))
+            ) {
+              opaque = true;
+            } else {
+              const args = node.namedChildren;
+              let repoFlagSeen = false;
+              for (let i = 0; i < args.length; i++) {
+                const arg = args[i]!;
+                const text = arg.text;
+                if (
+                  arg.type === 'word' &&
+                  (text === '--repo' || text === '-R')
+                ) {
+                  repoFlagSeen = true;
+                  createRepo = literalShellValue(args[i + 1]);
+                } else if (
+                  text.startsWith('--repo=') ||
+                  text.startsWith('-R=')
+                ) {
+                  // `--repo=o/r` is one word; `--repo='o/r'` is a concatenation
+                  // of the `--repo=` word and a quoted value. Decode the whole
+                  // node, then drop the prefix, so quotes are not kept.
+                  repoFlagSeen = true;
+                  const prefix = text.startsWith('--repo=') ? '--repo=' : '-R=';
+                  const decoded = literalShellValue(arg);
+                  createRepo =
+                    decoded === undefined
+                      ? undefined
+                      : decoded.slice(prefix.length);
+                } else if (
+                  arg.type === 'word' &&
+                  text.startsWith('-R') &&
+                  text.length > 2
+                ) {
+                  // Attached short form `-Ro/r`.
+                  repoFlagSeen = true;
+                  createRepo = text.slice(2);
+                } else {
+                  continue;
+                }
+                break;
+              }
+              found = dir;
+              // An explicit repo flag whose value cannot be decoded is
+              // unprovable, not absent: fail closed instead of silently
+              // attributing to the derived directory.
+              if (repoFlagSeen && createRepo === undefined) opaque = true;
+            }
+            return dir;
+          }
+          // A path-qualified program named cd/pushd/popd/eval/source/. is an
+          // external executable running in a child; it cannot move this shell,
+          // so the directory is unprovable rather than the builtin's target.
+          if (
+            DIRECTORY_CHANGING_COMMANDS.has(program) &&
+            /[/\\]/.test(programName)
+          ) {
+            opaque = true;
+            return dir;
+          }
+          // `eval`/`source`/`.` run code in this shell that can move it
+          // without naming a target here, and `popd` rotates a stack we do
+          // not model. None of them is attributable from the command text.
+          if (
+            program === 'popd' ||
+            program === 'eval' ||
+            program === 'source' ||
+            program === '.'
+          ) {
+            opaque = true;
+            return dir;
+          }
+          if (program === 'cd' || program === 'pushd') {
+            // `pushd -n DIR` pushes DIR without entering it, and `pushd -N` /
+            // `+N` rotate the stack. Any option therefore means this is not a
+            // plain directory change, however literal the target looks.
+            if (
+              program === 'pushd' &&
+              node.namedChildren.some(
+                (c) =>
+                  c.type === 'word' && c.text.startsWith('-') && c.text !== '-',
+              )
+            ) {
+              opaque = true;
+              return dir;
+            }
+            const target = literalCdTarget(node);
+            // `pushd +N` / `pushd -N` rotate the directory stack instead of
+            // naming a path; only `cd` may treat `+1` as a directory name.
+            // A command that sets CDPATH reroutes relative targets through
+            // its entries, so only an absolute target stays provable.
+            if (
+              target === undefined ||
+              (program === 'pushd' && /^[+-]\d+$/.test(target)) ||
+              (cdpathSet && !path.isAbsolute(target))
+            ) {
+              opaque = true;
+              return dir;
+            }
+            return path.resolve(dir, target);
+          }
+          return dir;
+        }
+        default: {
+          // A subshell / command substitution / process substitution runs in a
+          // child: its cd cannot leak to this shell, so a create OUTSIDE it is
+          // provably at the incoming directory and needs no notice. A worktree
+          // created inside it still lands on disk before spawn, though, so a
+          // later cd into it would snapshot the wrong branch — stay fail-closed.
+          // A create INSIDE a moving subshell runs in a directory this walk does
+          // not attribute; like the brace/if body siblings, surface that as a
+          // visible fallback rather than a silent miss. Scope it to a create
+          // inside so `(cd WT); gh pr create` (create outside) is not flagged.
+          if (
+            node.type === 'subshell' ||
+            node.type === 'command_substitution' ||
+            node.type === 'process_substitution'
+          ) {
+            if (subtreeCreatesWorktree(node)) opaque = true;
+            else if (
+              subtreeRunsGhPrCreate(node) &&
+              subtreeMayChangeDirectory(node)
+            ) {
+              opaque = true;
+            }
+            return dir;
+          }
+          // Compound statements and control flow run in THIS shell: a directory
+          // change inside them is not attributable from here, but a subtree
+          // that never moves the directory cannot cost us a binding either.
+          // A function definition inside can still shadow a later builtin even
+          // when its body contains no cd; register it conservatively. A readonly
+          // declaration in current-shell control flow (`if true; then readonly
+          // -f cd; fi`) also blocks a later unset, so record it — but not when it
+          // sits inside a nested child context, whose effects die with it.
+          // A function body executes only when the function is transitively
+          // invoked from an executable call site, so its readonly marks count
+          // only for such functions; a call inside a dormant body does not
+          // activate another function's effects.
+          const invoked = invokedFunctionNames(node);
+          const stack: Array<{ n: ShellSyntaxNode; child: boolean }> = [
+            { n: node, child: false },
+          ];
+          while (stack.length > 0) {
+            const { n: current, child } = stack.pop()!;
+            if (current.type === 'function_definition') {
+              const name = current.childForFieldName('name')?.text;
+              if (name) shadowed.add(name);
+              // An uncalled body is dormant: its readonly declarations have not
+              // executed and must not block a later unset. A called body runs in
+              // this shell, so descend to record its readonly marks.
+              if (name && !invoked.has(name)) continue;
+            }
+            const nowChild =
+              child ||
+              current.type === 'subshell' ||
+              current.type === 'command_substitution' ||
+              current.type === 'process_substitution';
+            if (!nowChild) {
+              const readonlyDecl = readonlyFunctionDeclaration(current);
+              if (readonlyDecl) {
+                if (readonlyDecl.targets === undefined) {
+                  readonlyUncertain = true;
+                } else {
+                  for (const t of readonlyDecl.targets)
+                    readonlyFunctions.add(t);
+                }
+              }
+            }
+            if (current.type === 'pipeline') {
+              // With lastpipe proven on OR uncertain in current-shell context
+              // the FINAL element may run in THIS shell, so its readonly mark
+              // survives; every preceding element is still a child. Mirror the
+              // top-level pipeline arm.
+              const elements = current.namedChildren;
+              for (let i = 0; i < elements.length; i++) {
+                const isLast = i === elements.length - 1;
+                stack.push({
+                  n: elements[i]!,
+                  child:
+                    nowChild ||
+                    !(isLast && (lastpipeEnabled || lastpipeUncertain)),
+                });
+              }
+              continue;
+            }
+            for (const c of current.namedChildren) {
+              stack.push({ n: c, child: nowChild });
+            }
+          }
+          if (subtreeMayChangeDirectoryInThisShell(node)) opaque = true;
+          // A create inside a moving child nested in this body still runs in a
+          // directory the walk does not attribute; keep the fallback signal the
+          // child-only-cd exemption above must not remove.
+          if (subtreeHasCreateInMovingChild(node)) opaque = true;
+          return dir;
+        }
+      }
+    };
+
+    visit(root, launchDir);
+
+    if (opaque) return { kind: 'opaque' };
+    // Compare resolved forms: `cd /test/dir` from a launch dir of `/test/dir`
+    // is a no-op, but path.resolve spells it with the platform's separators
+    // (and a drive on Windows), so a raw string comparison would report a
+    // resolved directory that is really the launch one.
+    if (
+      found === undefined ||
+      path.resolve(found) === path.resolve(launchDir)
+    ) {
+      return { kind: 'launch' };
+    }
+    return { kind: 'resolved', directory: found, repository: createRepo };
+  } finally {
+    // The tree lives in WASM memory; every other parseShellCommand consumer
+    // releases it, and a daemon session outlives many creates.
+    tree.delete();
+  }
+}
+
+/**
+ * Detect whether the attributable `git commit` invocation in
+ * `command` carries the `--amend` flag. Used so attachCommitAttribution
+ * can switch the diff range from `${postHead}~1..${postHead}` (the
+ * amended commit vs its parent — too broad for amend, since the
+ * amended commit's parent is the original commit's parent, so this
+ * diff lumps both commits' worth of changes) to
+ * `${preHead}..${postHead}` (the actual amend delta — `preHead` was
+ * captured synchronously before spawn and is the pre-amend SHA).
+ *
+ * Only the *first* commit segment that runs in the same cwd as the
+ * shell tool counts. `git -C ../other commit --amend && git commit -m x`
+ * must not flip the diff range for the second (fresh) commit, since
+ * `preHead` would be the inner repo's SHA there, not ours.
+ *
+ * Recognition matches the other commit walks: leading shell
+ * control-flow/noise keywords are skipped and the program is matched on
+ * its basename, so a loose spelling still gets the amend-range diff.
+ */
+function isAmendCommit(command: string, cwd: string): boolean {
+  let cwdShifted = false;
+  for (const sub of splitCommands(command)) {
+    const rawTokens = tokeniseSegment(sub);
+    if (!rawTokens || rawTokens.length === 0) continue;
+    const tokens = skipCommitRecognitionNoise(rawTokens);
+    if (!tokens) continue;
+    const program = programBasename(tokens[0]!);
+    if (program === 'cd' || program === 'pushd') {
+      if (!cwdShifted && cdTargetMayChangeRepo(tokens, cwd)) cwdShifted = true;
+      continue;
+    }
+    if (program === 'popd') {
+      cwdShifted = true;
+      continue;
+    }
+    if (program !== 'git') continue;
+    const { subcommand, changesCwd } = parseGitInvocation(tokens);
+    if (subcommand === 'commit' && !cwdShifted && !changesCwd) {
+      return (
+        tokens.includes('--amend') ||
+        tokens.some((t) => t.startsWith('--amend='))
+      );
+    }
+    if (changesCwd && !cwdShifted) cwdShifted = true;
+  }
+  return false;
+}
+
+/**
+ * Locate the character range of the *first* attributable
+ * `git commit` invocation in the (potentially compound) command, or
+ * `null` if none is attributable in the current cwd. The range
+ * covers the segment as `splitCommands` tokenised it — i.e. just
+ * the `git commit ...` part, NOT later `&& git tag -m ...` or
+ * earlier `git status &&` segments.
+ *
+ * Recognition is the loose one shared with `gitCommitContext`
+ * (`skipCommitRecognitionNoise`, #12514): leading
+ * control-flow/noise keywords are skipped and the program is matched
+ * on its basename, so the spellings that walk accepts (`then git
+ * commit`, `time git commit`, `! git commit`, `/usr/bin/git commit`)
+ * earn their `Co-authored-by` trailer here too. The returned range
+ * covers the whole segment including any skipped keyword; the caller's
+ * `-m` rewrite is scoped by regex and unaffected by the prefix.
+ *
+ * That is recognition alignment, NOT a universal "amend-exempt implies
+ * trailer" invariant, and no edit to this function can make it one:
+ * this walk reads the RAW command while registration reads
+ * `stripShellWrapper(this.params.command)`, so a commit hidden inside a
+ * `bash -c '…'` wrapper registers (and earns the exemption) while the
+ * rewriter is deliberately a no-op — see the wrapper note in
+ * `addCoAuthorToGitCommit`.
+ *
+ * Skipping the noise keywords also NARROWS one case, deliberately: a
+ * `cd` spelled behind a keyword (`if …; then cd "$CI_DIR"; fi && git
+ * commit`) now reaches the `cdTargetMayChangeRepo` latch and suppresses
+ * recognition — the trailer here and, through the same shared helper,
+ * `gitCommitContext`'s `attributableInCwd` (registration + git-notes) —
+ * where the pre-#12514 `tokens[0]`-only walk saw `then` and ignored the
+ * `cd` entirely. That includes a branch that never executes.
+ * `splitCommands` evaluates nothing, so a false
+ * branch and a true branch produce identical segment sequences: any
+ * loosening that recovers the never-executed `cd` also recovers
+ * stamping our trailer onto a commit in a DIFFERENT repository
+ * (`if true; then cd <other>; fi && git commit`). Missing a trailer is
+ * the conservative half of that trade-off, matching `cwdShifted`'s
+ * stated intent ("better miss than corrupt unrelated repos"). Pinned by
+ * the `if false; then cd …` row in
+ * `shell.session-commit-tracking.test.ts`.
+ *
+ * Used by `addCoAuthorToGitCommit` to scope the `-m` regex rewrite
+ * so a later `git tag -m "..."` (different sub-command in the same
+ * compound) can't be mistaken for the commit message.
+ */
+function findAttributableCommitSegment(
+  command: string,
+  cwd: string,
+): { start: number; end: number } | null {
+  let cursor = 0;
+  let cwdShifted = false;
+  for (const sub of splitCommands(command)) {
+    const start = command.indexOf(sub, cursor);
+    if (start < 0) {
+      // splitCommands strips line continuations (`\<newline>`) and
+      // some whitespace, so the trimmed segment text may not appear
+      // verbatim in the original command. Log so a multi-line
+      // command silently dropping its trailer is at least visible
+      // when QWEN_DEBUG_LOG_FILE is set.
+      debugLogger.warn(
+        `findAttributableCommitSegment: cannot map segment "${sub.slice(0, 60)}" ` +
+          `back to the original command (likely line-continuation / whitespace mismatch).`,
+      );
+      continue;
+    }
+    const end = start + sub.length;
+    cursor = end;
+    const tokens = tokeniseSegment(sub);
+    if (!tokens || tokens.length === 0) continue;
+    const looseTokens = skipCommitRecognitionNoise(tokens);
+    if (!looseTokens) continue;
+    const program = programBasename(looseTokens[0]!);
+    if (program === 'cd' || program === 'pushd') {
+      // Mirror gitCommitContext's cd/pushd heuristic: targets that keep
+      // us inside this repository are treated as in-repo, so
+      // `cd subdir && git commit ...` and `cd /abs/repo && git commit ...`
+      // still find the segment.
+      if (!cwdShifted && cdTargetMayChangeRepo(looseTokens, cwd)) {
+        cwdShifted = true;
+      }
+      continue;
+    }
+    if (program === 'popd') {
+      cwdShifted = true;
+      continue;
+    }
+    if (program === 'git') {
+      const { subcommand, changesCwd } = parseGitInvocation(looseTokens);
+      if (subcommand === 'commit' && !cwdShifted && !changesCwd) {
+        return { start, end };
+      }
+      // Mirror `gitCommitContext`'s latch, which only trips on a
+      // NON-commit `git -C …`: a redirected `git -C ../other commit` is
+      // a commit this walk has already decided about (not attributable
+      // in our cwd, so not returned above), and latching on it would
+      // cost a *later* in-cwd commit its trailer — the exact chain
+      // `gitCommitContext` still calls attributable, so the two sides
+      // would disagree. `git -C ../other status` keeps latching: that
+      // is the cwd-elsewhere intent signal the latch exists for.
+      if (subcommand !== 'commit' && changesCwd && !cwdShifted) {
+        cwdShifted = true;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Locate the character range of the `gh pr create` (or alias
+ * `gh pr new`) segment in a potentially compound command. Used by
+ * `addAttributionToPR` so the `--body`/`-b` rewrite is scoped to
+ * just that segment — without scoping, a command like
+ * `curl -b "session=abc" && gh pr create --body "summary"` would
+ * have the regex match `curl`'s `-b` cookie flag and inject
+ * attribution there.
+ */
+function findGhPrCreateSegment(
+  command: string,
+): { start: number; end: number } | null {
+  let cursor = 0;
+  for (const sub of splitCommands(command)) {
+    const start = command.indexOf(sub, cursor);
+    if (start < 0) {
+      debugLogger.warn(
+        `findGhPrCreateSegment: cannot map segment "${sub.slice(0, 60)}" ` +
+          `back to the original command (likely line-continuation / whitespace mismatch).`,
+      );
+      continue;
+    }
+    const end = start + sub.length;
+    cursor = end;
+    const tokens = tokeniseSegment(sub);
+    if (!tokens || tokens[0] !== 'gh') continue;
+    const rest = parseGhInvocation(tokens);
+    if (rest[0] === 'pr' && (rest[1] === 'create' || rest[1] === 'new')) {
+      return { start, end };
+    }
+  }
+  return null;
+}
+
+/**
+ * Approximate characters per text line for the diff-size proxy.
+ * `numstat` reports added+deleted line counts; we multiply by this
+ * constant to get a coarse "change magnitude" the per-file AI
+ * accumulator can be clamped against. The downstream `aiChars` /
+ * `humanChars` fields in the git-notes payload are literally
+ * (lines × this constant) — they are NOT real character counts.
+ * See the `FileAttributionDetail` interface doc for the consequences
+ * for consumers that aggregate the raw values.
+ */
+const APPROX_CHARS_PER_LINE = 40;
+/**
+ * Fallback diff-size proxy for binary files. `numstat` reports `-`
+ * (instead of integer counts) for any non-text blob, so we can't
+ * compute a per-line estimate; this flat value lets the entry
+ * survive into the payload at a consistent (if coarse) size.
+ * Same heuristic-not-literal caveat as `APPROX_CHARS_PER_LINE` —
+ * a 5 MB image change and a 1-byte binary tweak both report this
+ * value.
+ */
+const BINARY_DIFF_SIZE_FALLBACK = 1024;
+
+/**
+ * Parse `git diff --numstat` output into a `path → approximate change
+ * size` map for attribution accounting. The result feeds in as the
+ * denominator clamp for `aiChars`, so missing entries would silently
+ * drop a file from attribution — every changed file must land in the
+ * map.
+ *
+ * `--numstat` is preferred over `--stat` because the columns are exact
+ * integers (no graphical bars to parse). Each line is:
+ *   `<additions>\t<deletions>\t<path>`
+ * For binary files, both counts are `-`; we fall back to a fixed
+ * estimate so binary-only changes still get a non-zero entry.
+ *
+ * The `(adds + dels) * 40` figure remains a heuristic — git diff has no
+ * cheap way to surface exact character counts. The clamp in
+ * `generateNotePayload` keeps the math consistent (aiChars never
+ * exceeds diffSize), so the heuristic drives the precision of the
+ * percentage but cannot make `aiChars + humanChars` diverge from
+ * `diffSize`.
+ *
+ * Rename notations (`{old => new}` and bare `old => new`) are
+ * normalized to the new path so lookups match `--name-only` output.
+ *
+ * Exported for unit testing — the function is otherwise an
+ * implementation detail of `attachCommitAttribution`.
+ */
+export function parseNumstat(numstatOutput: string): Map<string, number> {
+  const sizes = new Map<string, number>();
+  const lines = numstatOutput.split('\n').filter(Boolean);
+
+  const normalizeFilePath = (filePath: string): string => {
+    let p = filePath.trim();
+    // Brace rename: `{old => new}` or `dir/{old => new}/file`
+    p = p.replace(/\{[^}]*?=>\s*([^}]*)\}/g, '$1');
+    // Bare rename across directories: `old/path/file => new/path/file`
+    if (p.includes('=>')) {
+      const m = p.match(/^(.*?)\s=>\s(.*)$/);
+      if (m) p = m[2]!.trim();
+    }
+    return p;
+  };
+
+  for (const line of lines) {
+    // Format: "<additions>\t<deletions>\t<path>" — a literal "-" stands
+    // in for both counts on binary entries.
+    const m = line.match(/^([\d-]+)\t([\d-]+)\t(.+)$/);
+    if (!m) continue;
+    const filePath = normalizeFilePath(m[3]!);
+    if (m[1] === '-' && m[2] === '-') {
+      // Binary file: numstat omits exact counts. Fall back to a fixed
+      // estimate so the entry isn't missing entirely (which would zero
+      // out attribution for the file).
+      sizes.set(filePath, BINARY_DIFF_SIZE_FALLBACK);
+      continue;
+    }
+    const adds = parseInt(m[1]!, 10);
+    const dels = parseInt(m[2]!, 10);
+    if (Number.isNaN(adds) || Number.isNaN(dels)) continue;
+    sizes.set(filePath, (adds + dels) * APPROX_CHARS_PER_LINE);
+  }
+
+  return sizes;
+}
+
+export const OUTPUT_UPDATE_INTERVAL_MS = 1000;
+export const DEFAULT_SHELL_HEARTBEAT_INTERVAL_MS = 10_000;
+const DEFAULT_FOREGROUND_TIMEOUT_MS = 120000;
+
+/**
+ * Time we give SIGTERM to settle a promoted-then-cancelled child
+ * before escalating to SIGKILL. Mirrors `SIGKILL_TIMEOUT_MS` inside
+ * `ShellExecutionService` (which runs the same SIGTERM-then-SIGKILL
+ * pattern on the non-promote cancel path) but kept as a separate
+ * constant here so tuning one doesn't silently change the other.
+ */
+const PROMOTE_CANCEL_SIGKILL_TIMEOUT_MS = 200;
+
+/**
+ * Maximum wait for the output stream flush before transitioning the
+ * registry. Shared by the promote settle path and `executeBackground`'s
+ * settle path — see `endStreamThenSettle`.
+ */
+const OUTPUT_FLUSH_TIMEOUT_MS = 10_000;
+
+/**
+ * End `stream` and run `settle` exactly once after its queued writes
+ * have been flushed to the underlying fd (`'finish'`). `stream.end()`
+ * is asynchronous — pending writes can still be in the libuv queue
+ * when it returns, so transitioning the registry before the flush
+ * lets `/tasks` consumers (and the status sidecar) observe a terminal
+ * status and read the output file BEFORE the trailing bytes are on
+ * disk, producing truncated logs. `'error'` covers a late EIO /
+ * ENOSPC racing `.end()` itself, an already-destroyed or
+ * already-finished stream short-circuits (neither event would ever
+ * fire on it), and the timer backstops a stream wedged mid-flush —
+ * whichever lands first, `settle` runs exactly once.
+ */
+function endStreamThenSettle(
+  stream: fs.WriteStream,
+  origin: 'promote' | 'background',
+  shellId: string,
+  settle: () => void,
+): void {
+  let settled = false;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  const runOnce = () => {
+    if (settled) return;
+    settled = true;
+    if (flushTimer !== null) clearTimeout(flushTimer);
+    settle();
+  };
+  // A destroyed or already-finished stream emits neither 'finish' nor
+  // 'error' — `.end()` on it is a silent no-op (Node only delivers
+  // ERR_STREAM_DESTROYED to an `end()` callback), so waiting would
+  // always burn the full timeout with nothing left to flush.
+  // `writableFinished`, not `writableEnded`: the latter is already
+  // true mid-flush, which is exactly the window this helper waits for.
+  if (stream.destroyed || stream.writableFinished) {
+    runOnce();
+    return;
+  }
+  try {
+    flushTimer = setTimeout(() => {
+      debugLogger.warn(
+        `${origin}: output stream flush timed out for ${shellId} after ${OUTPUT_FLUSH_TIMEOUT_MS}ms — transitioning registry without flush confirmation`,
+      );
+      runOnce();
+    }, OUTPUT_FLUSH_TIMEOUT_MS);
+    flushTimer.unref();
+    stream.once('finish', runOnce);
+    stream.once('error', runOnce);
+    stream.end();
+  } catch (closeErr) {
+    debugLogger.warn(
+      `${origin}: closing output stream on settle threw: ${getErrorMessage(closeErr)}`,
+    );
+    runOnce();
+  }
+}
+
+/**
+ * PR-2.5 slots shared between the foreground `execute()` postPromote
+ * handlers and the post-resolve `handlePromotedForeground` finalizer.
+ * The handlers fire on the service side as soon as promote happens;
+ * the finalizer runs after `await resultPromise` returns. They race —
+ * the buffer + settle-queue absorb the race so neither chunks nor the
+ * eventual exit info are lost. See `executeForeground` for the wiring
+ * and `handlePromotedForeground` for the drain logic.
+ */
+interface PromoteArtifacts {
+  /**
+   * Chunks observed by `postPromote.onData` BEFORE the stream is
+   * open. Drained into the stream once `handlePromotedForeground`
+   * opens it. After drain this stays empty for the rest of the run.
+   */
+  buffer: string[];
+  /**
+   * Append-mode write stream to `bg_xxx.output`. Null until
+   * `handlePromotedForeground` opens it. Closed by `onSettleWired`.
+   */
+  stream: fs.WriteStream | null;
+  /**
+   * Latched true when the output stream is no longer accepting writes.
+   * Two paths set it:
+   *
+   * 1. Stream open failed (`fs.createWriteStream` threw OR fired an
+   *    async `'error'` event before bytes could land). The stream
+   *    will never reopen; future `onData` chunks must drop.
+   * 2. Settle has fired and `onSettleWired` has drained the buffer
+   *    and called `stream.end()`. The stream is closing; any chunk
+   *    that arrives during the `.end()` flush window (rare but
+   *    possible on PTY when kernel buffers deliver late) MUST drop
+   *    rather than be pushed into the buffer — at this point the
+   *    buffer has no remaining drain path (the foreground finalizer
+   *    has returned).
+   *
+   * Without this flag the buffer would grow without bound under a
+   * sustained child whose output file we can't open, OR strand
+   * late-arriving post-settle bytes in an undrainable buffer.
+   */
+  streamClosed: boolean;
+  /**
+   * Settle handler installed by `handlePromotedForeground` once the
+   * registry entry exists. Null until then; `onSettle` calls below
+   * queue into `settleQueued` if this isn't yet set.
+   */
+  onSettleWired: ((info: ShellPostPromoteSettleInfo) => void) | null;
+  /**
+   * Settle info captured by `postPromote.onSettle` before the wired
+   * handler was installed. `handlePromotedForeground` checks this and
+   * fires the wired handler synchronously after registering.
+   */
+  settleQueued: ShellPostPromoteSettleInfo | null;
+}
+
+// Long-run advisory threshold: half the EFFECTIVE foreground timeout
+// (not the default), computed per-invocation by `longRunThresholdFor`.
+// Couples to whichever timeout actually governs THIS command — so a
+// user who sets `timeout: 600_000` (10 min) gets the advisory at 5 min,
+// not at 60s. The 1/2 ratio is chosen so the hint surfaces well before
+// the timeout would hard-kill, but late enough that normal foreground
+// commands (under the 120s default) don't trigger it before ~60s.
+//
+// Floor of 1000ms guards the pathological tiny-positive-timeout edge.
+// `timeout <= 0` is already rejected by `validateToolParamValues` so
+// only positive values reach here, but `timeout: 1` (or any value < 2)
+// would otherwise produce `Math.floor(timeout / 2) = 0` and make
+// `elapsedMs >= 0` fire on every invocation showing "ran for 0s",
+// surfacing the hint before the command had a chance to fail by
+// timing out.
+const MIN_LONG_RUN_THRESHOLD_MS = 1000;
+function longRunThresholdFor(effectiveTimeoutMs: number): number {
+  return Math.max(
+    MIN_LONG_RUN_THRESHOLD_MS,
+    Math.floor(effectiveTimeoutMs / 2),
+  );
+}
+
+const FOREGROUND_TIMEOUT_WARNING_LEAD_MS = 15_000;
+const FOREGROUND_TIMEOUT_WARNING =
+  'Warning: this command is about to time out. In the interactive TUI, press Ctrl+B to keep it running in the background.';
+
+function foregroundTimeoutWarningDelayFor(
+  effectiveTimeoutMs: number,
+  elapsedMs: number,
+): number | null {
+  if (effectiveTimeoutMs <= FOREGROUND_TIMEOUT_WARNING_LEAD_MS) {
+    return null;
+  }
+  const remainingMs = effectiveTimeoutMs - elapsedMs;
+  if (remainingMs <= 0) {
+    return null;
+  }
+  return Math.max(0, remainingMs - FOREGROUND_TIMEOUT_WARNING_LEAD_MS);
+}
+
+function appendForegroundTimeoutWarning(
+  output: string | AnsiOutput,
+): string | AnsiOutput {
+  if (typeof output === 'string') {
+    return output
+      ? `${output}\n\n${FOREGROUND_TIMEOUT_WARNING}`
+      : FOREGROUND_TIMEOUT_WARNING;
+  }
+
+  return [
+    ...output,
+    [
+      {
+        text: FOREGROUND_TIMEOUT_WARNING,
+        bold: true,
+        italic: false,
+        underline: false,
+        dim: false,
+        inverse: false,
+        fg: '#ff5555',
+        bg: '',
+      },
+    ],
+  ];
+}
+
+/**
+ * Format the long-run advisory appended to long foreground commands.
+ * Exported so tests and any future consumer (e.g. an alternative
+ * renderer) can render the same text without duplicating the threshold
+ * logic.
+ *
+ * Wording deliberately keeps the dialog mention conditional ("when
+ * running interactively") so the LLM doesn't relay misleading guidance
+ * to non-TTY users (`-p` headless / ACP / SDK consumers, where no
+ * dialog or footer pill exists). `/tasks` and the on-disk output file
+ * work in every mode.
+ */
+export function buildLongRunningForegroundHint(elapsedMs: number): string {
+  const seconds = Math.round(elapsedMs / 1000);
+  return (
+    `Note: this foreground command ran for ${seconds}s. ` +
+    `Next time you run a similar long-running process (build watchers, ` +
+    `dev servers, soak tests, polling loops), pass \`is_background: true\` ` +
+    `so the agent isn't blocked while the command runs. ` +
+    `(This is forward-looking guidance for FUTURE invocations — do NOT ` +
+    `re-run the command that just completed; for stateful operations ` +
+    `like deploys, migrations, or git push, that would cause double ` +
+    `side effects.) The output of background runs stays inspectable ` +
+    `via /tasks (text, any mode) or the on-disk output file; in ` +
+    `interactive mode the Background tasks dialog also has a per-entry ` +
+    `detail view + live updates.`
+  );
+}
+
+/**
+ * Detect standalone or leading `sleep N` patterns that should use Monitor
+ * instead. Catches `sleep 5`, `sleep 2.5`, `sleep 2s`,
+ * `sleep 5 && check`, `sleep 5; check`, `sleep 5 # wait` -- but not sleep
+ * inside pipelines, subshells, backgrounded commands, or scripts (those are
+ * fine).
+ */
+export function detectBlockedSleepPattern(command: string): string | null {
+  return detectBlockedSleepPatternDetails(command)?.description ?? null;
+}
+
+type BlockedSleepPatternDetails = {
+  description: string;
+  isStandalone: boolean;
+  intentionalSleepRejection?: string;
+};
+
+function detectBlockedSleepPatternDetails(
+  command: string,
+): BlockedSleepPatternDetails | null {
+  // Strip trailing shell comments first; otherwise `sleep 5 # wait` would
+  // present `# wait` as the suffix, which `getSleepSequentialSeparator`
+  // rejects (only &&/||/;/\n are recognized), letting the foreground sleep
+  // bypass the guard. Shell ignores top-level trailing comments, so for the
+  // purposes of detection they are equivalent to end-of-command.
+  const { command: uncommentedCommand, comment } =
+    splitTrailingShellComment(command);
+  const trimmed = uncommentedCommand.trim();
+  if (!trimmed.startsWith('sleep')) return null;
+  const afterSleep = trimmed.slice('sleep'.length);
+  if (!afterSleep || !/\s/.test(afterSleep[0]!)) return null;
+
+  let index = 0;
+  while (index < afterSleep.length && /\s/.test(afterSleep[index]!)) {
+    index++;
+  }
+  const durationStart = index;
+  while (
+    index < afterSleep.length &&
+    !/\s/.test(afterSleep[index]!) &&
+    ![';', '&', '|', '\n'].includes(afterSleep[index]!)
+  ) {
+    index++;
+  }
+
+  const durationToken = afterSleep.slice(durationStart, index);
+  const secs = parseSleepDurationToSeconds(durationToken);
+  if (secs === null || secs < 2) return null;
+
+  const suffix = afterSleep.slice(index);
+  const separator = getSleepSequentialSeparator(suffix);
+  if (separator === null) return null;
+
+  const rest = separator.rest.trim();
+  const isStandalone = !rest;
+  const description = rest
+    ? `sleep ${durationToken} followed by: ${rest}`
+    : `standalone sleep ${durationToken}`;
+  const trimmedComment = comment?.trim();
+  if (
+    isStandalone &&
+    trimmedComment?.startsWith(INTENTIONAL_SLEEP_COMMENT_PREFIX)
+  ) {
+    const reason = getIntentionalSleepReason(trimmedComment);
+    if (reason === null) {
+      return {
+        description,
+        isStandalone,
+        intentionalSleepRejection:
+          'The intentional-sleep comment was recognized, but the reason is too short; explain why the delay is needed after `intentional-sleep:`.',
+      };
+    }
+    if (secs > MAX_INTENTIONAL_SLEEP_SECONDS) {
+      return {
+        description,
+        isStandalone,
+        intentionalSleepRejection:
+          'The intentional-sleep comment was recognized, but foreground sleeps over 10 minutes are not allowed; use is_background: true or Monitor for longer waits.',
+      };
+    }
+    debugLogger.debug('intentional sleep allowed', {
+      durationSeconds: secs,
+      reason,
+    });
+    return null;
+  }
+  return { description, isStandalone };
+}
+
+const INTENTIONAL_SLEEP_COMMENT_PREFIX = 'intentional-sleep:';
+const MAX_INTENTIONAL_SLEEP_SECONDS = 10 * 60;
+// Require a real reason, not a trivial opt-out like "wait".
+const MIN_INTENTIONAL_SLEEP_REASON_LENGTH = 8;
+
+function getIntentionalSleepReason(trimmedComment: string): string | null {
+  const reason = trimmedComment
+    .slice(INTENTIONAL_SLEEP_COMMENT_PREFIX.length)
+    .trim();
+  return reason.length >= MIN_INTENTIONAL_SLEEP_REASON_LENGTH ? reason : null;
+}
+
+function parseSleepDurationToSeconds(token: string): number | null {
+  if (!token) return null;
+
+  let index = 0;
+  let seenDigit = false;
+  let seenDot = false;
+  while (index < token.length) {
+    const char = token[index]!;
+    if (char >= '0' && char <= '9') {
+      seenDigit = true;
+      index++;
+      continue;
+    }
+    if (char === '.' && !seenDot) {
+      seenDot = true;
+      index++;
+      continue;
+    }
+    break;
+  }
+
+  if (!seenDigit) return null;
+  const value = Number.parseFloat(token.slice(0, index));
+  if (!Number.isFinite(value)) return null;
+
+  const unit = token.slice(index).toLowerCase();
+  switch (unit || 's') {
+    case 'ms':
+      return value / 1000;
+    case 's':
+      return value;
+    case 'm':
+      return value * 60;
+    case 'h':
+      return value * 60 * 60;
+    case 'd':
+      return value * 60 * 60 * 24;
+    default:
+      return null;
+  }
+}
+
+function getSleepSequentialSeparator(suffix: string): { rest: string } | null {
+  let index = 0;
+  while (
+    index < suffix.length &&
+    suffix[index] !== '\n' &&
+    /\s/.test(suffix[index]!)
+  ) {
+    index++;
+  }
+
+  const restWithSeparator = suffix.slice(index);
+  if (!restWithSeparator) return { rest: '' };
+  if (
+    restWithSeparator.startsWith('&&') ||
+    restWithSeparator.startsWith('||')
+  ) {
+    return { rest: restWithSeparator.slice(2) };
+  }
+  if (restWithSeparator[0] === ';' || restWithSeparator[0] === '\n') {
+    return { rest: restWithSeparator.slice(1) };
+  }
+  return null;
+}
+
+function splitTrailingShellComment(
+  command: string,
+  keepCommandsAfterCommentNewline = true,
+): {
+  command: string;
+  comment: string | null;
+} {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let escapeNext = false;
+  let commandSubstitutionDepth = 0;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+
+    if (inSingleQuote) {
+      if (ch === "'") inSingleQuote = false;
+      continue;
+    }
+
+    if (inBacktick) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === '`') inBacktick = false;
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === '"') {
+        inDoubleQuote = false;
+        continue;
+      }
+      if (ch === '$' && command[i + 1] === '(') {
+        commandSubstitutionDepth++;
+        i++;
+        continue;
+      }
+      if (ch === ')' && commandSubstitutionDepth > 0) {
+        commandSubstitutionDepth--;
+      }
+      continue;
+    }
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (ch === '`') {
+      inBacktick = true;
+      continue;
+    }
+    if (ch === '$' && command[i + 1] === '(') {
+      commandSubstitutionDepth++;
+      i++;
+      continue;
+    }
+    if (ch === ')' && commandSubstitutionDepth > 0) {
+      commandSubstitutionDepth--;
+      continue;
+    }
+    if (
+      ch === '#' &&
+      commandSubstitutionDepth === 0 &&
+      (i === 0 || /\s/.test(command[i - 1]!))
+    ) {
+      const newlineIndex = command.indexOf('\n', i + 1);
+      return {
+        command:
+          newlineIndex === -1 || !keepCommandsAfterCommentNewline
+            ? command.slice(0, i)
+            : command.slice(0, i) + command.slice(newlineIndex),
+        comment:
+          newlineIndex === -1
+            ? command.slice(i + 1)
+            : command.slice(i + 1, newlineIndex),
+      };
+    }
+  }
+
+  return { command, comment: null };
+}
+
+function trimTrailingShellComment(command: string): string {
+  return splitTrailingShellComment(command, false).command;
+}
+
+function hasTopLevelTrailingBackgroundOperator(command: string): boolean {
+  const commentTrimmed = trimTrailingShellComment(command);
+  const trimmed = commentTrimmed.trimEnd();
+  if (!trimmed.endsWith('&')) return false;
+
+  const trailingAmpIndex = trimmed.length - 1;
+  const previousNonWhitespaceIndex = (() => {
+    for (let i = trailingAmpIndex - 1; i >= 0; i--) {
+      if (!/\s/.test(trimmed[i]!)) return i;
+    }
+    return -1;
+  })();
+
+  if (previousNonWhitespaceIndex >= 0) {
+    const previous = trimmed[previousNonWhitespaceIndex]!;
+    if (previous === '&' || previous === '|' || previous === '\\') {
+      return false;
+    }
+  }
+
+  let backslashCount = 0;
+  for (let i = trailingAmpIndex - 1; i >= 0 && trimmed[i] === '\\'; i--) {
+    backslashCount++;
+  }
+  if (backslashCount % 2 === 1) return false;
+
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let escapeNext = false;
+  let commandSubstitutionDepth = 0;
+
+  for (let i = 0; i <= trailingAmpIndex; i++) {
+    const ch = trimmed[i]!;
+
+    if (inSingleQuote) {
+      if (ch === "'") inSingleQuote = false;
+      continue;
+    }
+
+    if (inBacktick) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === '`') inBacktick = false;
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === '"') {
+        inDoubleQuote = false;
+        continue;
+      }
+      if (ch === '$' && trimmed[i + 1] === '(') {
+        commandSubstitutionDepth++;
+        i++;
+        continue;
+      }
+      if (ch === ')' && commandSubstitutionDepth > 0) {
+        commandSubstitutionDepth--;
+      }
+      continue;
+    }
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (ch === '`') {
+      inBacktick = true;
+      continue;
+    }
+    if (ch === '$' && trimmed[i + 1] === '(') {
+      commandSubstitutionDepth++;
+      i++;
+      continue;
+    }
+    if (ch === ')' && commandSubstitutionDepth > 0) {
+      commandSubstitutionDepth--;
+      continue;
+    }
+    if (i === trailingAmpIndex) {
+      return commandSubstitutionDepth === 0;
+    }
+  }
+
+  return false;
+}
+
+export interface ShellToolParams {
+  command: string;
+  is_background: boolean;
+  timeout?: number;
+  description?: string;
+  directory?: string;
+}
+
+interface PreparedSedEdit {
+  filePath: string;
+  fileName: string;
+  originalContent: string;
+  newContent: string;
+  meta: ReadTextFileResponse['_meta'];
+}
+
+class SedEditSimulationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SedEditSimulationError';
+  }
+}
+
+class SedEditCancelledError extends Error {
+  constructor() {
+    super('Command was cancelled by user before it could complete.');
+    this.name = 'SedEditCancelledError';
+  }
+}
+
+function getAbortReasonName(signal: AbortSignal): string | undefined {
+  const reason = signal.reason as unknown;
+  if (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'name' in reason &&
+    typeof reason.name === 'string'
+  ) {
+    return reason.name;
+  }
+  return undefined;
+}
+
+const LEADING_ENV_ASSIGNMENT_RE = /^\s*[A-Za-z_][A-Za-z0-9_]*=/;
+
+export class ShellToolInvocation extends BaseToolInvocation<
+  ShellToolParams,
+  ToolResult
+> {
+  private preparedSedEdit: PreparedSedEdit | undefined;
+  private confirmedSedNewContent: string | undefined;
+  private sedEditPreviewFailed = false;
+  private callId?: string;
+
+  constructor(
+    private readonly config: Config,
+    params: ShellToolParams,
+  ) {
+    super(params);
+  }
+
+  setCallId(callId: string): void {
+    this.callId = callId;
+  }
+
+  private getSedEditInfo(): SedEditInfo | null {
+    if (
+      this.config.getShellExecutionSandbox?.() ||
+      this.params.is_background ||
+      LEADING_ENV_ASSIGNMENT_RE.test(this.params.command)
+    ) {
+      return null;
+    }
+    const strippedCommand = stripShellWrapper(this.params.command);
+    if (LEADING_ENV_ASSIGNMENT_RE.test(strippedCommand)) {
+      return null;
+    }
+    return parseSedEditCommand(strippedCommand);
+  }
+
+  private resolveSedFilePath(filePath: string): string {
+    if (path.isAbsolute(filePath)) {
+      return filePath;
+    }
+    const cwd = this.params.directory || this.config.getTargetDir();
+    return path.resolve(cwd, filePath);
+  }
+
+  private async checkSedPriorRead(filePath: string): Promise<void> {
+    if (this.config.getFileReadCacheDisabled()) {
+      return;
+    }
+    const priorReadResult = await checkPriorRead(
+      this.config.getFileReadCache(),
+      filePath,
+      'editing',
+    );
+    if (!priorReadResult.ok) {
+      throw new StructuredToolError(
+        priorReadResult.rawMessage,
+        priorReadResult.type,
+      );
+    }
+  }
+
+  private async prepareSedEdit(sedInfo: SedEditInfo): Promise<PreparedSedEdit> {
+    const filePath = this.resolveSedFilePath(sedInfo.filePath);
+    if (fs.lstatSync(filePath).isSymbolicLink()) {
+      throw new Error(
+        `sed edit target '${filePath}' is a symlink; falling back to shell execution`,
+      );
+    }
+    await this.checkSedPriorRead(filePath);
+    const fileSystemService = this.config.getFileSystemService();
+    const { content, _meta } = await fileSystemService.readTextFile({
+      path: filePath,
+    });
+    let newContent: string;
+    try {
+      newContent = applySedSubstitution(content, sedInfo);
+    } catch (err) {
+      throw new SedEditSimulationError(getErrorMessage(err));
+    }
+
+    const meta = {
+      ..._meta,
+      lineEnding: _meta?.lineEnding ?? detectLineEnding(content),
+    };
+    // Judge the edit by the content a read-back would return, not by the
+    // substitution string: the local writer re-applies CRLF for
+    // `lineEnding: 'crlf'` (and for Windows command scripts), so a substitution
+    // whose only effect is consuming the trailing `\r` (e.g. `s/.$//` on a CRLF
+    // file) would otherwise report an applied edit whose bytes never change.
+    // Comparing strings also keeps a BOM or a non-UTF-8 encoding from making
+    // the comparison false on a file that did not change. The prediction
+    // always assumes the normalization: a write capability says a client *can*
+    // write, not how it stores the content, and the in-repo `qwen serve` writer
+    // re-applies CRLF, so assuming verbatim would report a false success there.
+    const restored =
+      meta.lineEnding === 'crlf' || needsCrlfLineEndings(filePath);
+    if (
+      (restored ? ensureCrlfLineEndings(newContent) : newContent) === content
+    ) {
+      newContent = content;
+    }
+
+    return {
+      filePath,
+      fileName: path.basename(filePath),
+      originalContent: content,
+      newContent,
+      meta,
+    };
+  }
+
+  private makeSedEditDisplay(edit: PreparedSedEdit): FileDiff {
+    const diffStat = getDiffStat(
+      edit.fileName,
+      edit.originalContent,
+      edit.newContent,
+      edit.newContent,
+    );
+    return {
+      fileDiff: createPatchSmart(
+        edit.fileName,
+        edit.originalContent,
+        edit.newContent,
+        'Current',
+        'Proposed',
+      ),
+      fileName: edit.fileName,
+      filePath: edit.filePath,
+      originalContent: edit.originalContent,
+      newContent: edit.newContent,
+      diffStat,
+    };
+  }
+
+  private sedEditError(
+    message: string,
+    type = ToolErrorType.FILE_WRITE_FAILURE,
+  ): ToolResult {
+    return {
+      llmContent: message,
+      returnDisplay: message,
+      error: {
+        message,
+        type,
+      },
+    };
+  }
+
+  private sedEditCancelledResult(
+    signal: AbortSignal,
+    effectiveTimeout: number,
+  ): ToolResult {
+    if (getAbortReasonName(signal) === 'TimeoutError') {
+      const message = `Command timed out after ${effectiveTimeout}ms before it could complete.`;
+      const detail = `${message} There was no output before it timed out.`;
+      return {
+        llmContent: detail,
+        returnDisplay: detail,
+        error: {
+          message,
+          type: ToolErrorType.EXECUTION_TIMEOUT,
+        },
+      };
+    }
+    return {
+      llmContent: 'Command was cancelled by user before it could complete.',
+      returnDisplay: 'Command cancelled by user.',
+    };
+  }
+
+  private waitForSedOperation<T>(
+    operation: () => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (signal.aborted) {
+      return Promise.reject(new SedEditCancelledError());
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => {
+        reject(new SedEditCancelledError());
+      };
+      const removeAbortListener = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      let operationPromise: Promise<T>;
+      try {
+        operationPromise = operation();
+      } catch (err) {
+        removeAbortListener();
+        reject(err);
+        return;
+      }
+      operationPromise.then(
+        (value) => {
+          removeAbortListener();
+          resolve(value);
+        },
+        (err: unknown) => {
+          removeAbortListener();
+          reject(err);
+        },
+      );
+    });
+  }
+
+  private async executeSedEdit(
+    sedInfo: SedEditInfo,
+    signal: AbortSignal,
+    effectiveTimeout: number,
+  ): Promise<ToolResult> {
+    let edit: PreparedSedEdit;
+    try {
+      edit = await this.waitForSedOperation(
+        () => this.prepareSedEdit(sedInfo),
+        signal,
+      );
+    } catch (err) {
+      const filePath = this.resolveSedFilePath(sedInfo.filePath);
+      if (err instanceof SedEditCancelledError) {
+        return this.sedEditCancelledResult(signal, effectiveTimeout);
+      }
+      if (err instanceof SedEditSimulationError) {
+        const message = `Error simulating sed edit for file '${filePath}': ${err.message}`;
+        return this.sedEditError(
+          message,
+          ToolErrorType.EDIT_PREPARATION_FAILURE,
+        );
+      }
+      if (err instanceof StructuredToolError) {
+        return this.sedEditError(err.message, err.errorType);
+      }
+      const message = `Error reading file for sed edit '${filePath}': ${getErrorMessage(err)}`;
+      return this.sedEditError(
+        message,
+        isNodeError(err) && err.code === 'ENOENT'
+          ? ToolErrorType.FILE_NOT_FOUND
+          : ToolErrorType.READ_CONTENT_FAILURE,
+      );
+    }
+
+    if (
+      this.preparedSedEdit?.filePath === edit.filePath &&
+      this.preparedSedEdit.originalContent !== edit.originalContent
+    ) {
+      return this.sedEditError(
+        `File changed since sed edit confirmation: ${edit.filePath}. Please re-read the file and retry.`,
+        ToolErrorType.FILE_CHANGED_SINCE_READ,
+      );
+    }
+
+    if (
+      this.preparedSedEdit?.filePath === edit.filePath &&
+      this.confirmedSedNewContent !== undefined
+    ) {
+      edit = {
+        ...edit,
+        newContent: this.confirmedSedNewContent,
+      };
+    }
+
+    if (edit.originalContent === edit.newContent) {
+      const message = `sed edit made no changes to ${edit.filePath}.`;
+      return {
+        llmContent: message,
+        returnDisplay: message,
+      };
+    }
+
+    const display = this.makeSedEditDisplay(edit);
+    let fileHistoryBackupRecorded = false;
+    const userModifiedSedContent = this.confirmedSedNewContent !== undefined;
+
+    try {
+      if (signal.aborted) {
+        return this.sedEditCancelledResult(signal, effectiveTimeout);
+      }
+      try {
+        await this.waitForSedOperation(
+          () => this.config.getFileHistoryService().trackEdit(edit.filePath),
+          signal,
+        );
+        fileHistoryBackupRecorded = true;
+      } catch (err) {
+        if (err instanceof SedEditCancelledError) {
+          return this.sedEditCancelledResult(signal, effectiveTimeout);
+        }
+        debugLogger.warn(
+          `file history trackEdit failed for sed edit ${edit.filePath}: ${getErrorMessage(err)}`,
+        );
+        // File history is best-effort; never block shell-compatible edits.
+      }
+
+      if (signal.aborted) {
+        return this.sedEditCancelledResult(signal, effectiveTimeout);
+      }
+      // writeTextFile is not cancellation-aware; once the write starts, await
+      // it so the result reflects the on-disk state instead of a stale cancel.
+      await this.config.getFileSystemService().writeTextFile({
+        path: edit.filePath,
+        content: edit.newContent,
+        toolWriteOrigin: 'shell_sed_edit',
+        _meta: edit.meta,
+      });
+
+      if (!userModifiedSedContent) {
+        try {
+          CommitAttributionService.getInstance().recordEdit(
+            edit.filePath,
+            edit.originalContent,
+            edit.newContent,
+          );
+        } catch (err) {
+          debugLogger.warn(
+            `commit attribution recordEdit failed for sed edit ${edit.filePath}: ${getErrorMessage(err)}`,
+          );
+          // Attribution is diagnostic metadata; the sed edit already succeeded.
+        }
+      }
+
+      try {
+        const postWriteStats = fs.statSync(edit.filePath);
+        this.config
+          .getFileReadCache()
+          .recordWrite(edit.filePath, postWriteStats);
+      } catch (err) {
+        debugLogger.warn(
+          `file read cache recordWrite failed for sed edit ${edit.filePath}: ${getErrorMessage(err)}`,
+        );
+        // Non-fatal: a future read can refresh the cache from disk.
+      }
+
+      return {
+        llmContent: `sed edit applied to ${edit.filePath}.`,
+        returnDisplay: display,
+      };
+    } catch (err) {
+      if (err instanceof SedEditCancelledError) {
+        return this.sedEditCancelledResult(signal, effectiveTimeout);
+      }
+      if (fileHistoryBackupRecorded) {
+        debugLogger.warn(
+          `sed edit write failed after file history backup was recorded for ${edit.filePath}: ${getErrorMessage(err)}`,
+        );
+      }
+      let type = ToolErrorType.FILE_WRITE_FAILURE;
+      let message = `Error writing sed edit to file '${edit.filePath}': ${getErrorMessage(err)}`;
+      if (isNodeError(err)) {
+        if (err.code === 'EACCES') {
+          type = ToolErrorType.PERMISSION_DENIED;
+          message = `Permission denied writing sed edit to file: ${edit.filePath} (${err.code})`;
+        } else if (err.code === 'ENOSPC') {
+          type = ToolErrorType.NO_SPACE_LEFT;
+          message = `No space left on device while writing sed edit to file: ${edit.filePath} (${err.code})`;
+        } else if (err.code === 'EISDIR') {
+          type = ToolErrorType.TARGET_IS_DIRECTORY;
+          message = `Sed edit target is a directory, not a file: ${edit.filePath} (${err.code})`;
+        }
+      }
+      return this.sedEditError(message, type);
+    }
+  }
+
+  getDescription(): string {
+    let description = `${this.params.command}`;
+    // append optional [in directory]
+    // note description is needed even if validation fails due to absolute path
+    if (this.params.directory) {
+      description += ` [in ${this.params.directory}]`;
+    }
+    // append background indicator
+    if (this.params.is_background) {
+      description += ` [background]`;
+    } else if (this.params.timeout) {
+      // append timeout for foreground commands
+      description += ` [timeout: ${this.params.timeout}ms]`;
+    }
+    // append optional (description), replacing any line breaks with spaces
+    if (this.params.description) {
+      description += ` (${this.params.description.replace(/\n/g, ' ')})`;
+    }
+    return description;
+  }
+
+  private isDirectoryOutsideWorkspace(): boolean {
+    return (
+      !!this.params.directory &&
+      !this.config
+        .getWorkspaceContext()
+        .isPathWithinWorkspace(this.params.directory)
+    );
+  }
+
+  /**
+   * AST-based permission check for the shell command.
+   * - An explicit `directory` outside the workspace → 'ask'
+   * - Substitution-bearing commands (any form, including inside an
+   *   env-prefix wrapper that `stripShellWrapper` would discard) → 'ask'
+   * - Read-only commands (via AST analysis) → 'allow'
+   * - All other commands → 'ask'
+   */
+  override async getDefaultPermission(): Promise<PermissionDecision> {
+    if (this.config.getShellExecutionSandbox?.()) return 'ask';
+    // Like read_file outside the workspace: ask rather than reject at build
+    // time, so an approval (or YOLO) can let it run.
+    if (this.isDirectoryOutsideWorkspace()) return 'ask';
+    // Gate on the RAW command before `stripShellWrapper` runs.
+    // `stripShellWrapper` drops leading env-assignment tokens AND
+    // unwraps `bash -c '...'` to its inner script — so for
+    // `FOO=$(curl evil) bash -c 'echo ok'` the stripped form is just
+    // `echo ok`, which the AST classifies as read-only. Without this
+    // gate the command auto-executes silently with no confirmation
+    // dialog and no warning. See PR #4386 R6 (cid 3298521039).
+    if (hasShellSubstitution(this.params.command)) {
+      return 'ask';
+    }
+
+    const command = stripShellWrapper(this.params.command);
+
+    // AST-based read-only detection
+    try {
+      const isReadOnly = await isShellCommandReadOnlyASTInDirectory(
+        command,
+        this.params.directory || this.config.getTargetDir(),
+      );
+      if (isReadOnly) {
+        return 'allow';
+      }
+    } catch (e) {
+      debugLogger.warn('AST read-only check failed, falling back to ask:', e);
+    }
+
+    return 'ask';
+  }
+
+  /**
+   * Constructs confirmation dialog details for a shell command that needs
+   * user approval.  For compound commands (e.g. `cd foo && npm run build`),
+   * sub-commands that are already allowed (read-only) are excluded from both
+   * the displayed root-command list and the suggested permission rules.
+   */
+  override async getConfirmationDetails(
+    _abortSignal: AbortSignal,
+  ): Promise<ToolCallConfirmationDetails> {
+    const command = stripShellWrapper(this.params.command);
+    const pm = this.config.getPermissionManager?.();
+    const cwd = this.params.directory || this.config.getTargetDir();
+    const sedInfo = this.getSedEditInfo();
+    let sedEditPreviewWarning: string | undefined;
+
+    if (sedInfo) {
+      try {
+        const edit = await this.prepareSedEdit(sedInfo);
+        this.preparedSedEdit = edit;
+        this.confirmedSedNewContent = undefined;
+        this.sedEditPreviewFailed = false;
+        const display = this.makeSedEditDisplay(edit);
+        const confirmationDetails: ToolEditConfirmationDetails = {
+          type: 'edit',
+          title: `Confirm Sed Edit: ${shortenPath(makeRelative(edit.filePath, this.config.getTargetDir()))}`,
+          fileName: edit.fileName,
+          filePath: edit.filePath,
+          fileDiff: display.fileDiff,
+          originalContent: edit.originalContent,
+          newContent: edit.newContent,
+          hideModify: true,
+          onConfirm: async (
+            outcome: ToolConfirmationOutcome,
+            payload?: ToolConfirmationPayload,
+          ) => {
+            if (payload?.newContent !== undefined) {
+              this.confirmedSedNewContent = payload.newContent;
+            }
+            if (outcome === ToolConfirmationOutcome.ProceedAlways) {
+              this.config.setApprovalMode(ApprovalMode.AUTO_EDIT);
+            }
+          },
+        };
+        return confirmationDetails;
+      } catch (err) {
+        if (err instanceof StructuredToolError) {
+          throw err;
+        }
+        this.sedEditPreviewFailed = true;
+        sedEditPreviewWarning =
+          'Sed edit preview unavailable; showing raw shell command confirmation.';
+        debugLogger.warn(
+          `sed edit preview failed, falling back to exec confirmation: ${getErrorMessage(err)}`,
+        );
+      }
+    }
+
+    // Split compound command and filter out already-allowed (read-only) sub-commands
+    const subCommands = splitCommands(command);
+    const confirmableSubCommands: string[] = [];
+    for (const sub of subCommands) {
+      if (this.config.getShellExecutionSandbox?.()) {
+        confirmableSubCommands.push(sub);
+        continue;
+      }
+      let isReadOnly = false;
+      try {
+        isReadOnly = await isShellCommandReadOnlyASTInDirectory(sub, cwd);
+      } catch {
+        // conservative: treat unknown commands as requiring confirmation
+      }
+
+      if (isReadOnly) {
+        continue;
+      }
+
+      if (pm) {
+        try {
+          if ((await pm.isCommandAllowed(sub, cwd)) === 'allow') {
+            continue;
+          }
+        } catch (e) {
+          debugLogger.warn('PermissionManager command check failed:', e);
+        }
+      }
+
+      confirmableSubCommands.push(sub);
+    }
+
+    // Fallback to all sub-commands if everything was filtered out (shouldn't
+    // normally happen since getDefaultPermission already returned 'ask').
+    const effectiveSubCommands =
+      confirmableSubCommands.length > 0 ? confirmableSubCommands : subCommands;
+
+    const rootCommands = [
+      ...new Set(
+        effectiveSubCommands
+          .map((c) => getCommandRoot(c))
+          .filter((c): c is string => !!c),
+      ),
+    ];
+
+    // Extract minimum-scope permission rules only for sub-commands that
+    // actually need confirmation.
+    let permissionRules: string[] = [];
+    try {
+      const allRules: string[] = [];
+      for (const sub of effectiveSubCommands) {
+        const rules = await extractCommandRules(sub);
+        allRules.push(...rules);
+      }
+      permissionRules = [...new Set(allRules)].map((rule) => `Bash(${rule})`);
+    } catch (e) {
+      debugLogger.warn('Failed to extract command rules:', e);
+    }
+
+    // Flag command substitution ($(), backticks, <(), >()) so the user
+    // sees a visible warning in the confirmation dialog. We surface this
+    // as an informational warning rather than denying outright; the deny
+    // path was inconsistent and could not be overridden by YOLO mode
+    // (see issue #4093). Substitution is detected on both the stripped
+    // and original command so wrappers like `bash -c "..."` are checked
+    // along with their inner contents.
+    const warnings = [
+      ...(buildShellExecWarnings(command, this.params.command) ?? []),
+      ...(sedEditPreviewWarning ? [sedEditPreviewWarning] : []),
+      ...(this.params.directory && this.isDirectoryOutsideWorkspace()
+        ? [buildOutsideWorkspaceWarning(this.params.directory)]
+        : []),
+    ];
+
+    const confirmationDetails: ToolExecuteConfirmationDetails = {
+      type: 'exec',
+      title: 'Confirm Shell Command',
+      command: this.params.command,
+      rootCommand: rootCommands.join(', '),
+      permissionRules,
+      onConfirm: async (
+        _outcome: ToolConfirmationOutcome,
+        _payload?: ToolConfirmationPayload,
+      ) => {
+        // No-op: persistence is handled by coreToolScheduler via PM rules
+      },
+    };
+    if (warnings.length > 0) {
+      confirmationDetails.warnings = warnings;
+    }
+    return confirmationDetails;
+  }
+
+  async execute(
+    signal: AbortSignal,
+    updateOutput?: (output: ToolResultDisplay) => void,
+    shellExecutionConfig?: ShellExecutionConfig,
+    setPidCallback?: (pid: number) => void,
+    setPromoteAbortControllerCallback?: (ac: AbortController) => void,
+    canPromoteForegroundShell?: () => boolean,
+    rawCapture?: ShellRawCaptureSink,
+  ): Promise<ToolResult> {
+    const strippedCommand = stripShellWrapper(this.params.command);
+
+    if (signal.aborted) {
+      return {
+        llmContent: 'Command was cancelled by user before it could start.',
+        returnDisplay: 'Command cancelled by user.',
+      };
+    }
+
+    if (this.params.is_background) {
+      return this.executeBackground(signal, shellExecutionConfig);
+    }
+
+    // Precedence: an explicit per-call `timeout` wins; otherwise fall back
+    // to the configured `tools.shell.defaultTimeoutMs` setting; otherwise
+    // the built-in default. A value of 0 disables the timeout, but only at
+    // the settings/default level — the per-call `timeout` param is validated
+    // to be > 0 by `validateToolParamValues`, so 0 never arrives that way.
+    const effectiveTimeout =
+      this.params.timeout ??
+      this.config.getShellDefaultTimeoutMs() ??
+      DEFAULT_FOREGROUND_TIMEOUT_MS;
+    debugLogger.debug('resolved foreground shell timeout', {
+      perCallTimeout: this.params.timeout ?? null,
+      configuredDefault: this.config.getShellDefaultTimeoutMs() ?? null,
+      effectiveTimeout,
+    });
+
+    // Create combined signal with timeout AND promote-trigger for
+    // foreground execution. The promoteAbortController is exposed to
+    // the caller (the future Ctrl+B keybind handler in PR-3) via
+    // `setPromoteAbortControllerCallback`. When the keybind fires
+    // `promoteAbortController.abort({ kind: 'background', shellId })`,
+    // ShellExecutionService detects the discriminated reason and
+    // returns `result.promoted: true` instead of killing the child —
+    // see #3842 / #3886 for the foundation.
+    const promoteAbortController = new AbortController();
+    let combinedSignal = AbortSignal.any([
+      signal,
+      promoteAbortController.signal,
+    ]);
+    let timeoutSignalStartedAt: number | null = null;
+    if (effectiveTimeout) {
+      timeoutSignalStartedAt = Date.now();
+      const timeoutSignal = AbortSignal.timeout(effectiveTimeout);
+      combinedSignal = AbortSignal.any([
+        signal,
+        timeoutSignal,
+        promoteAbortController.signal,
+      ]);
+    }
+
+    const sedInfo = this.getSedEditInfo();
+    if (sedInfo && !this.sedEditPreviewFailed) {
+      if (this.preparedSedEdit) {
+        debugLogger.debug('executing simulated sed edit', {
+          command: this.params.command,
+        });
+        return this.executeSedEdit(sedInfo, combinedSignal, effectiveTimeout);
+      }
+      try {
+        await this.checkSedPriorRead(this.resolveSedFilePath(sedInfo.filePath));
+      } catch (err) {
+        if (err instanceof StructuredToolError) {
+          return this.sedEditError(err.message, err.errorType);
+        }
+        throw err;
+      }
+      debugLogger.debug(
+        'falling back to shell execution for sed edit without prepared preview',
+        { command: this.params.command },
+      );
+    }
+
+    // Add co-author to git commit commands and Qwen Code attribution to
+    // `gh pr create` bodies. Both wrappers are no-ops on commands they
+    // don't recognise. Apply to the *trimmed original* (not strippedCommand)
+    // so leading env assignments and shell wrappers (`FOO=bar bash -c '...'`)
+    // are preserved through to execution; the rewriters operate at the
+    // top-level shell layer and become no-ops when the commit hides
+    // inside a wrapper.
+    const processedCommand = this.config.getShellExecutionSandbox?.()
+      ? this.params.command.trim()
+      : this.addAttributionToPR(
+          this.addCoAuthorToGitCommit(this.params.command.trim()),
+        );
+    const commandToExecute = processedCommand;
+    const cwd = this.params.directory || this.config.getTargetDir();
+
+    // Snapshot HEAD before running so attachCommitAttribution can detect
+    // commit creation by HEAD movement instead of trusting the shell
+    // exit code (which is unreliable for compound commands).
+    //
+    // Synchronous capture via `execFileSync`: a fire-and-forget async
+    // rev-parse can resolve AFTER a fast-cached `git commit` moves
+    // HEAD (real race seen on slow filesystems / heavy contention),
+    // leaving preHead === postHead and silently skipping the
+    // attribution note. ~10–50ms event-loop block per commit-shaped
+    // command, only when `commitCtx.hasCommit` is true.
+    //
+    // We act on `gitCommitContext` rather than a raw regex so quoted
+    // text like `echo "git commit"` doesn't trigger snapshot/notes,
+    // and so attribution still runs after a `git commit && cd ..`
+    // chain (which would have failed an "any cd anywhere" gate).
+    const commitCtx = gitCommitContext(strippedCommand, cwd);
+    // Capture HEAD only when the commit will actually be attributed in our
+    // cwd: that's the only consumer (the `attributableInCwd` branch below
+    // feeds `preHead` into `attachCommitAttribution` and passes the full
+    // state to promoted-path registration). For non-attributable hasCommit
+    // cases (`cd /elsewhere && git commit`, `git -C /other commit`), no
+    // consumer reads HEAD and the ~10–50 ms execFileSync is dead work that
+    // just blocks the event loop before the user's real command spawns.
+    // Registration must never run against a failed probe —
+    // `head.sha !== preHead` would be trivially true and exempt whatever
+    // HEAD happens to be there (the fail-open #12463's regression row ②
+    // pins). An unborn HEAD is represented separately from that failure.
+    const headBeforeCommand: GitHeadBeforeCommand | null =
+      !this.config.getShellExecutionSandbox?.() && commitCtx.attributableInCwd
+        ? this.getGitHeadBeforeCommand(cwd)
+        : null;
+    const preHead = headBeforeCommand?.sha ?? null;
+
+    // Snapshot the attribution inputs BEFORE spawn so bindGhPrCreate can
+    // tell a run that CREATED a PR from one that merely RESOLVED the
+    // branch's existing PR: the retry shape `gh pr create --fill || gh pr
+    // view` exits 0 through the view segment and prints the existing URL,
+    // and post-run gh resolution alone cannot distinguish the two. The
+    // branch name and repo identity pin what may legitimately differ
+    // post-run — a mid-command branch switch or origin retarget resolves a
+    // PR this run did not create. Awaited before spawn so every snapshot
+    // strictly precedes the command.
+    let preRunPrSnapshot: BranchPullRequestSnapshot | undefined;
+    let preRunBranch: string | undefined;
+    let preRunRepoKeys: AttributionRepoKeys | undefined;
+    let preRunGhEnv: Readonly<Record<string, string | undefined>> | undefined;
+    // Both attribution legs must ask gh about the SAME directory, and that
+    // directory is where the create runs — not necessarily where the shell
+    // started. `cd <worktree> && gh pr create` without the `directory` param
+    // otherwise snapshots the launch branch (no PR) and declines silently.
+    let attributionDir = cwd;
+    let ghPrCreateDirectory: GhPrCreateDirectory = { kind: 'launch' };
+    if (
+      !this.config.getShellExecutionSandbox?.() &&
+      commandRunsGhPrCreate(commandToExecute)
+    ) {
+      ghPrCreateDirectory = await resolveGhPrCreateDirectory(
+        commandToExecute,
+        cwd,
+      );
+      if (ghPrCreateDirectory.kind === 'resolved') {
+        attributionDir = ghPrCreateDirectory.directory;
+      }
+      // The verification legs must authenticate the way the create itself
+      // does (inline GH_TOKEN with no ambient gh auth), or the gate's
+      // advertised token shape binds nothing. The inline record is an
+      // OVERLAY onto the full process env — the gh legs receive it as the
+      // child's ENTIRE environment, so passed alone it would drop PATH and
+      // HOME and fail every leg — and EVERY leg needs it, not just the
+      // snapshot fetch.
+      const inlineEnv = ghPrCreateInlineEnv(commandToExecute);
+      preRunGhEnv = inlineEnv ? { ...process.env, ...inlineEnv } : undefined;
+      [preRunPrSnapshot, preRunBranch, preRunRepoKeys] = await Promise.all([
+        fetchCurrentBranchPullRequest(attributionDir, preRunGhEnv),
+        fetchCurrentBranchName(attributionDir),
+        fetchAttributionRepoKeys(attributionDir, preRunGhEnv),
+      ]);
+      // The derived directory returns `error` (no git repo there), or the
+      // command names a DIFFERENT repository than the derived one's own
+      // (`--repo` / `GH_REPO`). In both, snapshotting it hides a binding the
+      // launch directory would have made, so re-point both legs at the launch
+      // directory and re-snapshot there — what the parent commit always did.
+      // An explicit repo naming the SAME key as the derived one (e.g.
+      // `--repo o/r` in a worktree of o/r) is NOT a trigger: that is an
+      // ordinary create and must keep attributing to the worktree.
+      // `gh --repo` accepts `[HOST/]OWNER/REPO`, so the explicit value may or
+      // may not carry a host while the derived keys always do. Canonicalise
+      // BOTH sides to `host/owner/repo` (defaulting a host-less explicit value
+      // to the derived host) before deciding they differ — comparing a bare
+      // `o/r` against `github.com/o/r` would wrongly re-point a same-repo
+      // create to the launch directory.
+      const derivedHost =
+        preRunRepoKeys?.resolved?.split('/')[0] || 'github.com';
+      const canonicalRepo = (spec: string): string => {
+        const parts = spec.split('/').filter(Boolean);
+        let key: string;
+        if (parts.length >= 3) key = parts.slice(-3).join('/');
+        else if (parts.length === 2)
+          key = `${derivedHost}/${parts[0]}/${parts[1]}`;
+        else key = spec;
+        // GitHub repository identity is case-insensitive (gh compares owner and
+        // repo lowercased, and repoKeyFromWebUrl lowercases the derived keys),
+        // so `--repo O/R` must match a worktree of `o/r`.
+        return key.toLowerCase();
+      };
+      const repoKeys = [
+        preRunRepoKeys?.resolved,
+        preRunRepoKeys?.parent,
+      ].flatMap((key) => (key ? [canonicalRepo(key)] : []));
+      const explicitRepo =
+        (ghPrCreateDirectory.kind === 'resolved'
+          ? ghPrCreateDirectory.repository
+          : undefined) ??
+        // A real --repo flag overrides env for gh, so it must win here too.
+        // GITHUB_REPOSITORY is an Actions context variable, not gh's repo
+        // override; treating it as one would strand a local-repo create.
+        inlineEnv?.['GH_REPO'];
+      // An errored gh answer inside a REAL repo still fails closed. Re-point
+      // on error only when findGitRoot independently proves there is no repo;
+      // otherwise a transient gh flake could bind an existing launch PR.
+      const targetsOtherRepo =
+        (preRunPrSnapshot?.status === 'error' &&
+          findGitRoot(attributionDir) === null) ||
+        (explicitRepo !== undefined &&
+          repoKeys.length > 0 &&
+          !repoKeys.includes(canonicalRepo(explicitRepo)));
+      if (attributionDir !== cwd && targetsOtherRepo) {
+        attributionDir = cwd;
+        [preRunPrSnapshot, preRunBranch, preRunRepoKeys] = await Promise.all([
+          fetchCurrentBranchPullRequest(cwd, preRunGhEnv),
+          fetchCurrentBranchName(cwd),
+          fetchAttributionRepoKeys(cwd, preRunGhEnv),
+        ]);
+      }
+    }
+
+    let cumulativeOutput: string | AnsiOutput = '';
+    let lastUpdateTime = Number.NEGATIVE_INFINITY;
+    let isBinaryStream = false;
+    let totalLines = 0;
+    let totalBytes = 0;
+    let trailingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let timeoutWarningTimer: ReturnType<typeof setTimeout> | null = null;
+    let showTimeoutWarning = false;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let lastOutputPerfTime: number | null = null;
+
+    const cancelTrailingFlush = () => {
+      if (trailingFlushTimer !== null) {
+        clearTimeout(trailingFlushTimer);
+        trailingFlushTimer = null;
+      }
+    };
+
+    const cancelTimeoutWarning = () => {
+      if (timeoutWarningTimer !== null) {
+        clearTimeout(timeoutWarningTimer);
+        timeoutWarningTimer = null;
+      }
+    };
+
+    const cancelHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    const doUpdate = () => {
+      // Any path that emits an update supersedes a pending trailing flush —
+      // cancel centrally so leading-edge text, ANSI, binary_detected, and
+      // binary_progress branches all stay consistent without each having to
+      // remember to clear the timer themselves.
+      cancelTrailingFlush();
+      lastUpdateTime = Date.now();
+      if (!updateOutput) return;
+      const displayOutput = showTimeoutWarning
+        ? appendForegroundTimeoutWarning(cumulativeOutput)
+        : cumulativeOutput;
+      if (typeof displayOutput === 'string') {
+        updateOutput(displayOutput);
+      } else {
+        updateOutput({
+          ansiOutput: displayOutput,
+          totalLines,
+          totalBytes,
+          ...(this.params.timeout != null && {
+            timeoutMs: this.params.timeout,
+          }),
+        });
+      }
+    };
+
+    // If the command is aborted (user cancel or timeout) while a trailing
+    // flush is pending, cancel the timer so we don't emit a stale frame
+    // between the abort signal firing and the result promise settling.
+    // The heartbeat stops here too: after abort, a "still running" signal
+    // during the kill-to-settle window would be a lie.
+    const onAbort = () => {
+      cancelTrailingFlush();
+      cancelTimeoutWarning();
+      cancelHeartbeat();
+    };
+    combinedSignal.addEventListener('abort', onAbort, { once: true });
+
+    const armTimeoutWarning = () => {
+      if (
+        !updateOutput ||
+        combinedSignal.aborted ||
+        !this.config.isInteractive() ||
+        setPromoteAbortControllerCallback === undefined ||
+        canPromoteForegroundShell?.() !== true ||
+        timeoutSignalStartedAt === null
+      ) {
+        return;
+      }
+      const warningDelay = foregroundTimeoutWarningDelayFor(
+        effectiveTimeout,
+        Date.now() - timeoutSignalStartedAt,
+      );
+      if (warningDelay === null) {
+        return;
+      }
+      timeoutWarningTimer = setTimeout(() => {
+        timeoutWarningTimer = null;
+        if (combinedSignal.aborted || canPromoteForegroundShell?.() !== true) {
+          return;
+        }
+        showTimeoutWarning = true;
+        doUpdate();
+      }, warningDelay);
+    };
+
+    const onShellOutputEvent = (event: ShellOutputEvent) => {
+      let shouldUpdate = false;
+
+      switch (event.type) {
+        case 'data':
+          lastOutputPerfTime = performance.now();
+          if (isBinaryStream) break;
+          cumulativeOutput = event.chunk;
+          // Stats are only consumed by the ANSI-output branch below,
+          // so skip the per-chunk accounting for plain string chunks.
+          if (Array.isArray(event.chunk)) {
+            totalLines = event.chunk.length;
+            totalBytes = event.chunk.reduce(
+              (sum, line) =>
+                sum +
+                line.reduce(
+                  (ls, token) => ls + Buffer.byteLength(token.text, 'utf-8'),
+                  0,
+                ),
+              0,
+            );
+          }
+          // ANSI output is already throttled and semantically deduped by
+          // ShellExecutionService, so preserve its live responsiveness.
+          // Plain text data can arrive in bursts and does not need every
+          // chunk to force a React render; the final ToolResult still
+          // carries the complete output after command completion.
+          if (Array.isArray(event.chunk)) {
+            shouldUpdate = true;
+          } else if (Date.now() - lastUpdateTime > OUTPUT_UPDATE_INTERVAL_MS) {
+            shouldUpdate = true;
+          } else if (trailingFlushTimer === null) {
+            // Throttled: schedule a trailing flush so the last suppressed
+            // chunk is still shown if the command goes quiet within the
+            // window. The timer's callback reads `cumulativeOutput` by
+            // closure, so subsequent suppressed chunks within the same
+            // window don't need to reschedule — the latest value will be
+            // emitted when the timer fires.
+            const remaining =
+              OUTPUT_UPDATE_INTERVAL_MS - (Date.now() - lastUpdateTime);
+            trailingFlushTimer = setTimeout(() => {
+              trailingFlushTimer = null;
+              doUpdate();
+            }, remaining);
+          }
+          break;
+        case 'binary_detected':
+          isBinaryStream = true;
+          cumulativeOutput = '[Binary output detected. Halting stream...]';
+          shouldUpdate = true;
+          break;
+        case 'binary_progress':
+          lastOutputPerfTime = performance.now();
+          isBinaryStream = true;
+          cumulativeOutput = `[Receiving binary output... ${formatMemoryUsage(
+            event.bytesReceived,
+          )} received]`;
+          if (Date.now() - lastUpdateTime > OUTPUT_UPDATE_INTERVAL_MS) {
+            shouldUpdate = true;
+          }
+          break;
+        default: {
+          throw new Error('An unhandled ShellOutputEvent was found.');
+        }
+      }
+
+      if (shouldUpdate) {
+        doUpdate();
+      }
+    };
+
+    // Pre-allocate the promote artifacts (PR-2.5). Lazily created — no
+    // disk I/O unless the user actually fires Ctrl+B / promote signal.
+    // The handlers below close over these slots; once promote happens,
+    // `handlePromotedForeground` populates them (opens the stream, sets
+    // the shellId / onSettle wiring), and any onData chunks that the
+    // service forwarded BEFORE handlePromotedForeground caught up land
+    // in `postPromoteBuffer` and drain to the stream once it opens.
+    const promoteArtifacts: PromoteArtifacts = {
+      buffer: [],
+      stream: null,
+      streamClosed: false,
+      onSettleWired: null,
+      settleQueued: null,
+    };
+    const postPromote: ShellPostPromoteHandlers = {
+      onData: (event) => {
+        if (event.type !== 'data') return;
+        // ANSI structured chunks have no append semantics — coerce to
+        // string. The output file is plain text; live ANSI updates are
+        // owned by the foreground stream, which by promote-time has
+        // already terminated.
+        //
+        // PR-2.5 wave-4: strip ANSI before writing so
+        // the post-promote tail of `bg_xxx.output` matches the format
+        // of the snapshot above (which is rendered terminal text, not
+        // raw escape sequences) AND matches the regular
+        // `executeBackground` path's `outputStream.write(stripAnsi(chunk))`
+        // contract. Without this, an agent reading the file after a
+        // promote would see plain text up to the promote moment, then
+        // raw `\x1b[...m` color codes / cursor moves / clear-screen
+        // sequences for any post-promote output — which is unreadable
+        // and inconsistent.
+        const rawChunk =
+          typeof event.chunk === 'string'
+            ? event.chunk
+            : event.chunk
+                .map((line) => line.map((tok) => tok.text).join(''))
+                .join('\n');
+        const chunk = stripAnsi(rawChunk);
+        if (promoteArtifacts.stream) {
+          try {
+            promoteArtifacts.stream.write(chunk);
+          } catch (err) {
+            debugLogger.warn(
+              `promote: postPromote stream.write failed: ${getErrorMessage(err)}`,
+            );
+          }
+        } else if (promoteArtifacts.streamClosed) {
+          // Stream-open already failed permanently — drop chunks
+          // rather than buffer them. Without this guard the buffer
+          // would grow without bound under a sustained child whose
+          // output file we couldn't open.
+          debugLogger.debug(
+            'promote: dropping post-promote chunk because output stream open failed',
+          );
+        } else {
+          promoteArtifacts.buffer.push(chunk);
+        }
+      },
+      onSettle: (info) => {
+        if (promoteArtifacts.onSettleWired) {
+          promoteArtifacts.onSettleWired(info);
+        } else {
+          // Service observed the child exit before handlePromotedForeground
+          // finished registering. Queue the settle info — handlePromotedForeground
+          // applies it as soon as the registry entry exists.
+          promoteArtifacts.settleQueued = info;
+        }
+      },
+    };
+
+    let executionHandle;
+    try {
+      executionHandle = await executeRuntimeShell(
+        this.config,
+        commandToExecute,
+        cwd,
+        onShellOutputEvent,
+        combinedSignal,
+        rawCapture ? false : this.config.getShouldUseNodePtyShell(),
+        {
+          ...shellExecutionConfig,
+          ...(rawCapture ? { maxBufferedOutputBytes: 64 * 1024 } : {}),
+        },
+        { postPromote, ...(rawCapture ? { rawCapture } : {}) },
+      );
+    } catch (err) {
+      // ShellExecutionService.execute() can throw before resolving (e.g.
+      // PTY dynamic import failure). Tear down the abort listener and any
+      // (theoretically) scheduled trailing flush so nothing fires after we
+      // re-throw to the caller.
+      cancelTrailingFlush();
+      cancelTimeoutWarning();
+      cancelHeartbeat();
+      combinedSignal.removeEventListener('abort', onAbort);
+      throw err;
+    }
+    const { result: resultPromise, pid } = executionHandle;
+
+    if (pid) rawCapture?.setStarted(pid);
+
+    if (pid && setPidCallback) {
+      setPidCallback(pid);
+    }
+    // Hand the promote controller up to the scheduler so a future UI
+    // surface (PR-3 Ctrl+B keybind) can find it and trigger promote.
+    // Done unconditionally — the caller can ignore it if they don't
+    // implement promote yet, but exposing it now means PR-3 doesn't
+    // need to revisit shell.ts.
+    setPromoteAbortControllerCallback?.(promoteAbortController);
+    armTimeoutWarning();
+
+    // Bracket the execution-handle → settle wall-clock so the result builder below
+    // can decide whether to append the long-run advisory. Captured AFTER
+    // `await ShellExecutionService.execute(...)` returns its handle so
+    // pre-spawn setup (PTY dynamic import via `getPty()`, ~50–200ms on
+    // first call) is excluded — the elapsed should reflect the
+    // command's actual runtime, not the tool call's total wall time. A
+    // startup-stage abort can now return a handle with no process, in which
+    // case this measures only the immediate aborted-result handoff.
+    //
+    // `performance.now()` (monotonic high-res, ms-precision) instead of
+    // `Date.now()` so NTP corrections / VM clock drift between capture
+    // and read can't make `elapsedMs` go negative (which would silently
+    // skip the hint with no observable failure). Returned origin is
+    // arbitrary but consistent across the two reads — only the
+    // difference matters here.
+    const executionStartTime = performance.now();
+
+    // Liveness heartbeat for silent commands: while no output has arrived
+    // for a full interval, emit a small structured ShellProgressData through
+    // the same updateOutput channel so headless consumers (ACP, stream-json)
+    // can distinguish "still running" from a dead execution chain. Display
+    // consumers ignore it. Both the idle gate and the reported durations use
+    // the monotonic `performance.now()` clock (via `lastOutputPerfTime`,
+    // falling back to spawn time before any output), so an NTP step can
+    // neither skew the payload nor misfire the heartbeat. Started only
+    // post-spawn so PTY init can't produce a heartbeat for a process that
+    // doesn't exist yet.
+    const heartbeatIntervalMs =
+      this.config.getShellHeartbeatIntervalMs() ??
+      DEFAULT_SHELL_HEARTBEAT_INTERVAL_MS;
+    if (updateOutput && heartbeatIntervalMs > 0 && !combinedSignal.aborted) {
+      heartbeatTimer = setInterval(() => {
+        const now = performance.now();
+        const idleSince = lastOutputPerfTime ?? executionStartTime;
+        if (now - idleSince < heartbeatIntervalMs) return;
+        updateOutput({
+          type: 'shell_progress',
+          elapsedMs: Math.round(now - executionStartTime),
+          ...(lastOutputPerfTime !== null && {
+            lastOutputAgeMs: Math.round(now - lastOutputPerfTime),
+          }),
+          // Stats are only maintained on the PTY/AnsiOutput path; omit
+          // rather than report a misleading 0 on the plain-string path.
+          ...(totalLines > 0 && { totalLines }),
+          ...(totalBytes > 0 && { totalBytes }),
+          ...(effectiveTimeout > 0 && { timeoutMs: effectiveTimeout }),
+        });
+      }, heartbeatIntervalMs);
+    }
+
+    let result;
+    try {
+      result = await resultPromise;
+      rawCapture?.setProcessResult(result);
+    } finally {
+      // Cancel any pending trailing flush — the command has settled (or
+      // threw) and either the final ToolResult carries the complete output
+      // or the caller will surface an error. Either way the timer must not
+      // fire a stale frame after we've returned. `finally` covers both the
+      // happy path and the (theoretical) reject path so no timer leaks.
+      cancelTrailingFlush();
+      cancelTimeoutWarning();
+      cancelHeartbeat();
+      combinedSignal.removeEventListener('abort', onAbort);
+    }
+
+    // Background-promote path: the user pressed Ctrl+B (PR-3 wires the
+    // keybind to `promoteAbortController.abort({ kind: 'background' })`),
+    // ShellExecutionService skipped the kill, snapshotted the output up
+    // to that moment, and resolved with `promoted: true`. Per #3831
+    // design question 7, `result.aborted` is `false` for promoted
+    // results, so this branch is checked BEFORE the `if (result.aborted)`
+    // arm and falls through naturally to the success-shape arm if
+    // promote didn't fire.
+    //
+    // What we do here:
+    //   1. Generate a `bg_xxx` shell id + on-disk output path under the
+    //      same project temp dir `executeBackground` uses.
+    //   2. Write `result.output` (the snapshot ShellExecutionService
+    //      built right before promote) to the file as the initial
+    //      content. The agent / `/tasks` / dialog can `Read` this file.
+    //   3. Register a `BackgroundShellEntry` with the existing pid +
+    //      a FRESH `AbortController` whose abort listener kills the
+    //      still-running child (mirroring `ShellExecutionService`'s
+    //      SIGTERM → 200ms → SIGKILL cascade) and sync-marks the
+    //      entry `cancelled`. `task_stop bg_xxx` and the dialog's
+    //      `x` key route through `entry.abortController.abort()` →
+    //      kill listener → child gets SIGTERM/SIGKILL. Reusing the
+    //      already-aborted `promoteAbortController` would have made
+    //      `task_stop` a no-op (Web `AbortController.abort()` is
+    //      idempotent on already-aborted controllers per spec) — see
+    //      `handlePromotedForeground` for the full rationale.
+    //   4. Return a model-facing `ToolResult` with promote-flavored copy
+    //      pointing the agent at `/tasks` / the Background tasks dialog
+    //      / `task_stop` for follow-up.
+    //
+    // KNOWN LIMITATION (deferred to PR-2.5): post-promote, the
+    // ShellExecutionService no longer streams output to the file (PR-1
+    // detached its data listener as part of the ownership-transfer
+    // contract), and there's no path for the registry entry to settle
+    // when the underlying child exits naturally. The entry stays
+    // `'running'` until `task_stop bg_xxx` or session shutdown
+    // (`abortAll`) clears it. PR-2.5 will add post-promote stream
+    // redirect (so /tasks shows live output) and a settle hook (so
+    // natural exit transitions the entry to `completed`/`failed`).
+    if (result.promoted) {
+      // `handlePromotedForeground` takes over the still-running child
+      // and this method returns before the registration block below —
+      // hand the pre-spawn preHead over so a commit landed by the
+      // promoted command can still register when the child settles
+      // (#12514).
+      const promotedToolResult = await this.handlePromotedForeground(
+        result,
+        cwd,
+        commandToExecute,
+        promoteAbortController,
+        promoteArtifacts,
+        headBeforeCommand,
+      );
+      return promotedToolResult;
+    }
+
+    // A promote refused because the command already settled still carries
+    // its full output and exit code — it runs the same binding gate as an
+    // uninterrupted foreground run.
+    const wasPromoteRefused =
+      result.aborted &&
+      getShellAbortReasonKind(combinedSignal.reason) === 'background';
+    if ((!result.aborted || wasPromoteRefused) && result.exitCode === 0) {
+      this.bindGhPrCreate(
+        commandToExecute,
+        result.output,
+        attributionDir,
+        preRunPrSnapshot,
+        preRunBranch,
+        preRunRepoKeys,
+        preRunGhEnv,
+      );
+    }
+
+    const abortReasonName = getAbortReasonName(combinedSignal);
+    const wasTimeout =
+      result.aborted &&
+      effectiveTimeout > 0 &&
+      abortReasonName === 'TimeoutError';
+    const timeoutSummary = wasTimeout
+      ? `Command timed out after ${effectiveTimeout}ms before it could complete.`
+      : undefined;
+
+    let llmContent = '';
+    if (result.aborted) {
+      if (wasTimeout) {
+        llmContent = timeoutSummary!;
+        if (result.output.trim()) {
+          llmContent += ` Below is the output before it timed out:\n${result.output}`;
+        } else {
+          llmContent += ' There was no output before it timed out.';
+        }
+      } else if (wasPromoteRefused) {
+        // The user pressed Ctrl+B (promote) but the service refused —
+        // typically the child had already terminated by the time the
+        // signal was checked. Treat as a benign race: report what
+        // actually happened (the run completed, just without the
+        // promote handoff) rather than as a cancellation or timeout.
+        llmContent =
+          'Command finished before the background-promote request could be honoured (the child had already exited).';
+        if (result.output.trim()) {
+          llmContent += ` Output:\n${result.output}`;
+        }
+      } else {
+        llmContent = 'Command was cancelled by user before it could complete.';
+        if (result.output.trim()) {
+          llmContent += ` Below is the output before it was cancelled:\n${result.output}`;
+        } else {
+          llmContent += ' There was no output before it was cancelled.';
+        }
+      }
+    } else {
+      // Create a formatted error string for display, replacing the wrapper command
+      // with the user-facing command.
+      const finalError = result.error
+        ? result.error.message.replace(commandToExecute, this.params.command)
+        : '(none)';
+
+      llmContent = [
+        ...(getCurrentToolCallSource()?.kind === 'code_mode'
+          ? []
+          : [`Command: ${this.params.command}`]),
+        `Directory: ${this.params.directory || '(root)'}`,
+        `Output: ${result.output || '(empty)'}`,
+        `Error: ${finalError}`, // Use the cleaned error string.
+        `Exit Code: ${result.exitCode ?? '(none)'}`,
+        `Signal: ${result.signal ?? '(none)'}`,
+        `Process Group PGID: ${result.pid ?? '(none)'}`,
+      ].join('\n');
+
+      // (Long-run advisory append happens AFTER `truncateToolOutput`
+      // below — see the explanation there for why post-truncation.)
+    }
+
+    // Run attribution outside the aborted/non-aborted branch: a
+    // `git commit -m "x" && sleep 999` chain can move HEAD and then
+    // time out, leaving the new commit without its attribution note
+    // while the stale per-file attribution stays around for a later
+    // unrelated commit. attachCommitAttribution already gates on HEAD
+    // movement, so it's a no-op when no commit was actually created.
+    // A non-null attributionWarning is surfaced on the tool result below
+    // (both llmContent and the TUI display) so the user knows their commit
+    // succeeded but the per-file git note didn't land — without it, the only
+    // signal is a QWEN_DEBUG_LOG_FILE entry the user has likely never set up.
+    let attributionWarning: string | null = null;
+    if (
+      !this.config.getShellExecutionSandbox?.() &&
+      commitCtx.attributableInCwd
+    ) {
+      // Registration runs ahead of attribution:
+      // `attachCommitAttribution` returns early on the
+      // `gitCoAuthor.commit` toggle, but the registry must not depend on
+      // it, and an attribution failure must not cost the registration.
+      // Registration stays fail-closed: it still
+      // requires a `commit:` reflog verb plus HEAD movement against
+      // the captured preHead.
+      await this.trackSessionCommit(cwd, preHead);
+      // `git commit --amend` rewrites HEAD in place, so the standard
+      // parent-vs-postHead diff (`${postHead}~1..${postHead}`) would
+      // span the entire amended commit (the amended commit's parent
+      // is the original's parent, so diffing against it lumps both
+      // commits' worth of changes). Detect the flag so
+      // `getCommittedFileInfo` can switch to `${preHead}..${postHead}`
+      // — `preHead` was captured synchronously before spawn and is
+      // the pre-amend SHA, so this range captures only the amend
+      // delta.
+      const isAmend = isAmendCommit(strippedCommand, cwd);
+      attributionWarning = await this.attachCommitAttribution(
+        cwd,
+        preHead,
+        isAmend,
+      );
+    }
+    // Intentionally NO `else if (commitCtx.hasCommit)` cleanup branch:
+    // commands that match `hasCommit` but not `attributableInCwd`
+    // (e.g. `cd /abs/path/to/this/repo && git commit`, `git -C . commit`)
+    // can land a commit in our cwd, but we don't know which files were
+    // staged — the user may have done a partial `git add A` and left
+    // unstaged AI edits to B and C pending. A wholesale
+    // `clearAttributions(true)` here would silently lose B and C even
+    // though they weren't committed. Leave the singleton alone; the
+    // next attributable commit's `attachCommitAttribution` will do a
+    // proper partial clear via `clearAttributedFiles`.
+
+    // Decide whether to emit the long-run advisory. Conditions:
+    //   - Process completed under its own steam (no AbortSignal
+    //     trigger, no external signal). Specifically:
+    //       * Suppressed on aborted (`result.aborted: true`) — covers
+    //         the `if (result.aborted)` arm above (timeout / user-
+    //         cancel). Their own messaging is enough; a "should have
+    //         been background" reminder when the agent already knows
+    //         the command didn't complete is noise.
+    //       * Suppressed on external signal kills
+    //         (`isSignalTermination(result.signal)` with `aborted: false`,
+    //         e.g. SIGTERM from container shutdown, k8s eviction, OOM
+    //         killer, or sibling reaping the process group). node-pty's
+    //         clean-exit signal 0 is normalized to null and does not
+    //         suppress this hint. The service only sets
+    //         `aborted` when the AbortSignal we passed was triggered,
+    //         so external signals fall through to the non-aborted
+    //         branch — same rationale as timeout.
+    //   - Wall-clock duration ≥ threshold. Measured spawn → resultPromise
+    //     settle, intentionally BEFORE the post-processing block below
+    //     (truncation I/O, output-file write). The hint reports how long
+    //     the COMMAND blocked the agent, not how long the tool call
+    //     spent including post-processing — that's the number the agent
+    //     should be reasoning about when deciding whether to background
+    //     next time. Truncation time is bounded by the temp-dir backend
+    //     and isn't representative of the command's actual wait.
+    // Fires on both successful and naturally-failed completions since
+    // the advice ("next time, background it") is the same in both.
+    const elapsedMs = performance.now() - executionStartTime;
+    // When the timeout is disabled (effectiveTimeout === 0) there is no
+    // meaningful "half the timeout" threshold: `longRunThresholdFor(0)` would
+    // return its 1000ms floor and fire the hint on every foreground command
+    // over ~1s. Suppress the long-run hint entirely in that case.
+    const longRunThreshold =
+      effectiveTimeout === 0 ? null : longRunThresholdFor(effectiveTimeout);
+    const shouldAppendLongRunHint =
+      longRunThreshold !== null &&
+      !result.aborted &&
+      !isSignalTermination(result.signal) &&
+      elapsedMs >= longRunThreshold;
+    // Observability: the hint decision is otherwise invisible. If a
+    // user reports "my 65s command didn't get the hint" or "5s command
+    // got the hint", the debug log shows which suppression branch fired
+    // (aborted / signal / under-threshold) plus the actual elapsed and
+    // computed threshold. No PII — just timing + result flags.
+    debugLogger.debug(
+      `long-run hint: elapsed=${Math.round(elapsedMs)}ms threshold=${longRunThreshold === null ? 'disabled' : `${longRunThreshold}ms`} ` +
+        `aborted=${result.aborted} signal=${result.signal} → ${shouldAppendLongRunHint ? 'fire' : 'suppress'}`,
+    );
+
+    // returnDisplayMessage build order — chronologically:
+    //   1. Initial value: in debug mode, snapshot of pre-truncation
+    //      `llmContent`; in non-debug mode, terse output-or-status.
+    //   2. Truncation block (below) appends `Output too long and was
+    //      saved to: <path>` if truncation fired (BOTH modes).
+    //   3. Long-run hint append (further below) appends the hint
+    //      itself with append-style re-sync (BOTH modes), so the user
+    //      sees the same advisory the agent does — otherwise the
+    //      agent would suddenly suggest `is_background: true` with no
+    //      visible trigger in the TUI.
+    // The pre-existing debug snapshot is captured here (pre-truncation,
+    // pre-hint); both subsequent steps APPEND to it rather than
+    // replacing, so all information accumulates rather than being lost
+    // when later steps fire.
+    let returnDisplayMessage = '';
+    if (this.config.getDebugMode()) {
+      returnDisplayMessage = llmContent;
+    } else {
+      if (result.output.trim()) {
+        returnDisplayMessage = wasTimeout
+          ? `${timeoutSummary}\n${result.output}`
+          : result.output;
+      } else {
+        if (result.aborted) {
+          returnDisplayMessage = wasTimeout
+            ? `${timeoutSummary} There was no output before it timed out.`
+            : wasPromoteRefused
+              ? 'Command finished before background-promote could be honoured.'
+              : 'Command cancelled by user.';
+        } else if (isSignalTermination(result.signal)) {
+          returnDisplayMessage = `Command terminated by signal: ${result.signal}`;
+        } else if (result.error) {
+          returnDisplayMessage = `Command failed: ${getErrorMessage(
+            result.error,
+          )}`;
+        } else if (result.exitCode !== null && result.exitCode !== 0) {
+          returnDisplayMessage = `Command exited with code: ${result.exitCode}`;
+        }
+        // If output is empty and command succeeded (code 0, no error/signal/abort),
+        // returnDisplayMessage will remain empty, which is fine.
+      }
+    }
+
+    let persistedOutputFiles: string[] | undefined;
+    let outputBudgetApplied = false;
+
+    // The advisory and attribution warning are appended after the truncation
+    // below (deliberately outside the truncation envelope — see the append
+    // loop), so their size comes out of the body budget here: the marker
+    // asserts the ASSEMBLED string fits the declared budget, and a body that
+    // fits whole must still fit once they land. The reservation counts every
+    // model-facing notice; the record-artifact reminder is not shown in the TUI.
+    const longRunHint = shouldAppendLongRunHint
+      ? buildLongRunningForegroundHint(elapsedMs)
+      : null;
+    const recordArtifactReminder = (await this.shouldRemindToRecordArtifact(
+      result,
+    ))
+      ? SHELL_RECORD_ARTIFACT_REMINDER
+      : null;
+    // Only a run that reached the binding gate can miss a binding; a failed
+    // or cancelled create produced no PR to register.
+    const prBindingDirectoryNotice =
+      ghPrCreateDirectory.kind === 'opaque' &&
+      (!result.aborted || wasPromoteRefused) &&
+      result.exitCode === 0
+        ? SHELL_PR_BINDING_DIRECTORY_NOTICE
+        : null;
+    const appendedMetadata = [
+      longRunHint,
+      attributionWarning,
+      prBindingDirectoryNotice,
+    ].filter((s): s is string => s !== null);
+    const modelNotices = [...appendedMetadata, recordArtifactReminder].filter(
+      (s): s is string => s !== null,
+    );
+    const appendedMetadataChars = modelNotices.reduce(
+      (total, s) => total + APPENDED_METADATA_SEPARATOR.length + s.length,
+      0,
+    );
+
+    // A capture-bound discard leaves llmContent a retained prefix, so the
+    // pre-reduction size is unrecoverable: declare it unknown, not the bound.
+    const rawOutputSize =
+      rawCapture || result.outputCaptureLimitExceeded
+        ? null
+        : measureToolOutput(llmContent);
+
+    // Raw capture owns full output; result.output is only a bounded preview.
+    // Otherwise truncate large output and save full content to a temp file.
+    if (!rawCapture && typeof llmContent === 'string') {
+      const originalLlmContent = llmContent;
+      const outputThreshold = getShellOutputThreshold(this.config);
+      // Clamp at 1: truncateToolOutput returns the body untouched on
+      // threshold <= 0, so an explicit threshold smaller than the reserved
+      // metadata (the setting has no schema minimum) would stand the pass
+      // down while outputBudgetApplied below still vouches for the body —
+      // leaving the failure path, whose only bound is that marker, unbounded.
+      // Cap the reservation at half the threshold: a sub-advisory explicit
+      // threshold would otherwise spend the whole budget on the reservation
+      // and leave a 1-char preview, dropping the trailing exit-code line
+      // the head-and-tail preview exists to keep. The assembled string can
+      // exceed the declared budget in that corner — a ~510-char truncation
+      // header already does on its own — but it stays bounded.
+      const bodyBudgetChars = Math.max(
+        1,
+        outputThreshold -
+          Math.min(appendedMetadataChars, Math.floor(outputThreshold / 2)),
+      );
+      const truncatedResult = await truncateToolOutput(
+        this.config,
+        ShellTool.Name,
+        llmContent,
+        // Per-tool char budget: ShellTool.maxOutputChars minus the metadata
+        // reserved above. keep='both' preserves the command's start AND its
+        // trailing exit/error summary
+        // (where shell failures report). Kept in-tool (not deferred to the
+        // scheduler) so the long-run hint below is appended OUTSIDE the
+        // truncation envelope; the scheduler's sentinel makes its later pass a
+        // no-op here. lines: Infinity keeps this char-only so the global line
+        // cap can't undercut the effective Shell char budget — many short lines
+        // (e.g. `find /`, `ls -R`) would otherwise truncate while chars remain.
+        {
+          layer: 'producer',
+          source: this.config.isTruncateToolOutputThresholdExplicit?.()
+            ? 'explicit'
+            : 'per_tool',
+          threshold: bodyBudgetChars,
+          previewChars: Math.min(4000, bodyBudgetChars),
+          keep: 'both',
+          lines: Number.POSITIVE_INFINITY,
+        },
+      );
+
+      if (truncatedResult.outputFile) {
+        persistedOutputFiles = [truncatedResult.outputFile];
+        llmContent = truncatedResult.content;
+        returnDisplayMessage +=
+          (returnDisplayMessage ? '\n' : '') +
+          `Output too long and was saved to: ${truncatedResult.outputFile}`;
+      } else if (truncatedResult.content !== originalLlmContent) {
+        persistedOutputFiles = [];
+        llmContent = truncatedResult.content;
+      }
+
+      // Set even when nothing was cut: the scheduler's generic gate sits BELOW
+      // this budget by default, so an unmarked body inside it gets re-bounded
+      // there under a stricter head-only policy.
+      outputBudgetApplied = true;
+    }
+
+    // Append the metadata AFTER truncation so it isn't wrapped in
+    // `truncateToolOutput`'s "Truncated part of the output" header (which the
+    // LLM might misread as part of the command's own output). These are
+    // process metadata about the command — how long it blocked the agent, or
+    // that its commit landed but the per-file attribution note didn't — not
+    // command output, so they belong outside the truncation envelope. Both
+    // llmContent (so the agent can react) and returnDisplayMessage (so the
+    // human waiting in the TUI sees the same cue) get them, append-style,
+    // preserving any pre-existing display content (debug snapshot, truncation
+    // marker line, status line).
+    //
+    // Today shell.ts only emits string llmContent; the type union also allows
+    // structured `Part[]` content, in which case the metadata silently
+    // disappears here. Encoding it as a Part would require deciding on a
+    // rendering convention, and structured llmContent isn't on the roadmap.
+    // Revisit if someone adds a non-string return path.
+    for (const metadata of appendedMetadata) {
+      if (typeof llmContent === 'string') {
+        llmContent += `${APPENDED_METADATA_SEPARATOR}${metadata}`;
+        returnDisplayMessage +=
+          (returnDisplayMessage ? APPENDED_METADATA_SEPARATOR : '') + metadata;
+      }
+    }
+
+    // When `result.error` is set, `coreToolScheduler` builds the
+    // model-facing functionResponse from `error.message`, NOT from
+    // `llmContent` (see `convertToFunctionResponse` and the error
+    // branch in scheduler's success/error split). So if a long
+    // command hits this path the hint we appended to llmContent above
+    // would be silently dropped before reaching the agent. Append the
+    // hint to error.message too so the advisory survives whichever
+    // branch the scheduler takes.
+    //
+    // Note on reach: `ShellExecutionResult.error` includes PTY resource
+    // failures as well as SPAWN / setup failures; non-zero exits leave it
+    // null. Resource failures retain the bounded output body below. Real
+    // spawn failures (ENOENT, permission denied) typically resolve in
+    // <1s, so the elapsed >= threshold + spawn-error combination is
+    // rare. The preservation is here for the slow-spawn edge cases
+    // (PTY init dragging, remote-fs exec syscalls, security scanners
+    // interposing) where the rare path could still trigger and the
+    // hint would otherwise vanish.
+    //
+    // Use a `---` divider line so downstream consumers of
+    // `error.message` (firePostToolUseFailureHook, telemetry grouping,
+    // SIEM alerting, hook-side error parsers) have an unambiguous
+    // boundary they can split on rather than getting ~400 chars of
+    // advisory text mixed inline with the original error body.
+    const isPtyResourceFailure =
+      isNodeError(result.error) && result.error.code === 'QWEN_PTY_WRITE_LIMIT';
+    const executionError = timeoutSummary
+      ? {
+          error: {
+            message: timeoutSummary,
+            type: ToolErrorType.EXECUTION_TIMEOUT,
+          },
+        }
+      : result.error
+        ? {
+            error: {
+              message: isPtyResourceFailure
+                ? typeof llmContent === 'string'
+                  ? llmContent
+                  : returnDisplayMessage
+                : result.error.message +
+                  (longRunHint ? `\n\n---\n${longRunHint}` : ''),
+              type: ToolErrorType.SHELL_EXECUTE_ERROR,
+            },
+          }
+        : (!result.aborted && isSignalTermination(result.signal)) ||
+            isShellExitError(this.params.command, result.exitCode)
+          ? {
+              error: {
+                // Schedulers use error.message as the model-facing response.
+                message:
+                  typeof llmContent === 'string'
+                    ? llmContent
+                    : returnDisplayMessage,
+                type: ToolErrorType.SHELL_EXECUTE_ERROR,
+              },
+            }
+          : {};
+
+    // Shell cannot see which files the command wrote. Ask only the model,
+    // after truncation, and not on a failure the scheduler reports via error.message.
+    if (recordArtifactReminder && typeof llmContent === 'string') {
+      llmContent += `${APPENDED_METADATA_SEPARATOR}${recordArtifactReminder}`;
+    }
+
+    return {
+      llmContent,
+      rawOutputSize,
+      // `rawCapture` alone may still carry the complete output in its bounded
+      // preview; only a capture-bound discard means the body was cut.
+      ...(result.outputCaptureLimitExceeded
+        ? { truncatedByProducer: true }
+        : {}),
+      returnDisplay: {
+        type: 'shell_result',
+        version: 1,
+        text: returnDisplayMessage,
+        output: result.output,
+        directory: cwd,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        pid: result.pid ?? null,
+        error:
+          timeoutSummary ??
+          (result.error
+            ? result.error.message.replace(
+                commandToExecute,
+                this.params.command,
+              )
+            : null),
+        outcome: wasTimeout
+          ? 'timed_out'
+          : result.aborted && !wasPromoteRefused
+            ? 'cancelled'
+            : result.error ||
+                isSignalTermination(result.signal) ||
+                isShellExitError(this.params.command, result.exitCode)
+              ? 'failed'
+              : 'completed',
+        notices: appendedMetadata,
+        truncated: false,
+        outputFiles: persistedOutputFiles ?? [],
+      },
+      ...(persistedOutputFiles !== undefined ? { persistedOutputFiles } : {}),
+      ...(outputBudgetApplied ? { outputBudgetApplied } : {}),
+      // A user cancel kills the process group but returns a normal result, so
+      // tell the scheduler its work did not finish.
+      ...(result.aborted && !wasTimeout && !wasPromoteRefused
+        ? { interruptedBeforeCompletion: true }
+        : {}),
+      ...executionError,
+    };
+  }
+
+  /**
+   * The model only sees this after a command that may have written a file.
+   * Disabled sessions have no record_artifact tool. Commands the AST proves
+   * read-only did not create one.
+   */
+  private async shouldRemindToRecordArtifact(
+    result: ShellExecutionResult,
+  ): Promise<boolean> {
+    if (this.config.isRecordArtifactEnabled?.() !== true) return false;
+    if (
+      result.aborted ||
+      result.error ||
+      isSignalTermination(result.signal) ||
+      isShellExitError(this.params.command, result.exitCode)
+    ) {
+      return false;
+    }
+    try {
+      const readOnly = await isShellCommandReadOnlyASTInDirectory(
+        stripShellWrapper(this.params.command),
+        this.params.directory || this.config.getTargetDir(),
+      );
+      return !readOnly;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Best-effort PR binding for agents that create PRs via `gh pr create` in
+   * the shell (the GitDialog binds at creation; this covers the shell path).
+   * Writes the session's PR sidecar directly, mirroring the worktree sidecar
+   * pattern; a failure must never shadow the tool result. gh itself is the
+   * attribution authority: the binding is the PR gh resolves for the working
+   * branch, accepted only when it is OPEN, this command's output carries
+   * gh's URL, the pre-run fetch proved the branch's prior state, and the
+   * number differs from the pre-run snapshot — command/output text alone
+   * cannot attribute a printed URL to gh's own execution, and a retry that
+   * passes the execution gate (`gh pr create || gh pr view`) resolves the
+   * branch's EXISTING PR, which the pre-run snapshot declines. The
+   * pre-state proof is per-session: two sessions sharing one checkout can
+   * still race inside the snapshot→bind window, which this gate does not
+   * serialize.
+   *
+   * `cwd` is the ATTRIBUTION directory, not necessarily the launch one: the
+   * caller resolves the command's static `cd` chain first (see
+   * `resolveGhPrCreateDirectory`) and snapshots the same directory, so a
+   * `cd <worktree> && gh pr create` without the `directory` param attributes
+   * the worktree's branch rather than the launch branch's.
+   *
+   * Scope (by design): only a FOREGROUND run that settled in this call —
+   * an uninterrupted one, or one whose promote was refused because the
+   * child had already exited — reaches this gate. A run promoted to the
+   * background mid-flight and an `is_background: true` run settle through
+   * the background registry, whose output streams to a file and whose
+   * pre-run snapshot was never taken; they are not bound live, and the
+   * transcript is deliberately not a recovery source (no gh-side
+   * attribution). Such a PR binds through `/review <N>`, `/verify-pr <N>`,
+   * or the worktree `pr-<N>` convention — the last only when the daemon
+   * created the worktree and wrote its sidecar; a plain `git worktree add`
+   * writes none, so backfill does NOT recover that shape.
+   */
+  private bindGhPrCreate(
+    command: string,
+    output: string,
+    cwd: string,
+    preRunPrSnapshot: BranchPullRequestSnapshot | undefined,
+    preRunBranch: string | undefined,
+    preRunRepoKeys: AttributionRepoKeys | undefined,
+    ghCreateEnv?: Readonly<Record<string, string | undefined>>,
+  ): void {
+    if (this.config.getShellExecutionSandbox?.()) return;
+    void (async () => {
+      try {
+        if (!commandRunsGhPrCreate(command)) return;
+        // An ERRORED pre-run fetch proved nothing about the branch's prior
+        // PRs — decline instead of failing open, or a branch whose snapshot
+        // flaked would bind its existing PR as this session's creation.
+        if (preRunPrSnapshot?.status === 'error') {
+          debugLogger.debug(
+            'gh pr create not bound: pre-run PR snapshot unavailable',
+          );
+          return;
+        }
+        // The attribution directory the caller resolved: the launch
+        // directory (`directory` param, else target dir), or the directory
+        // the command's own static `cd` chain proved. gh resolves THAT
+        // repo's branch, and the pre-run snapshot was taken in the same
+        // directory, so the two legs compare like with like. A directory
+        // change the resolver could not prove falls back to the launch
+        // directory and is surfaced as a tool-result notice.
+        const created = await fetchCurrentBranchPullRequest(cwd, ghCreateEnv);
+        if (created.status !== 'pr' || created.state !== 'open') {
+          // Keep the facts distinct: `none` is gh's proved absence for this
+          // branch; `error` means gh could not answer at all; a merged/closed
+          // PR arrives as status `pr` with a non-open state. A paraphrase that
+          // names only one cause sends the operator hunting for a PR this gate
+          // already ruled on.
+          debugLogger.debug('gh pr create not bound: post-run gh resolution', {
+            status: created.status,
+            ...(created.status === 'pr' ? { state: created.state } : {}),
+          });
+          return;
+        }
+        // The run resolved the branch's EXISTING PR — nothing was created
+        // (a retry's view segment exits 0 and prints the existing URL).
+        // Binding would stamp this session as creator of a PR it did not
+        // create, at a fresh createdAt that falsifies the badge's
+        // binding-time order.
+        if (
+          preRunPrSnapshot?.status === 'pr' &&
+          created.number === preRunPrSnapshot.number
+        ) {
+          debugLogger.debug(
+            'gh pr create not bound: PR already existed before the run',
+            { number: created.number },
+          );
+          return;
+        }
+        // Repo identity lives in on-disk state an in-command
+        // `git remote set-url origin` / `gh repo set-default` retargets, so
+        // the resolved PR must belong to a repo gh already attributed to
+        // this checkout BEFORE the run (itself, or its fork parent — from
+        // a fork checkout gh resolves the parent for PR operations). An
+        // unresolvable pre-run identity fails closed like the errored
+        // snapshot arm.
+        const createdRepoKey = repoKeyFromWebUrl(created.url);
+        if (
+          createdRepoKey === undefined ||
+          preRunRepoKeys === undefined ||
+          (createdRepoKey !== preRunRepoKeys.resolved &&
+            createdRepoKey !== preRunRepoKeys.parent)
+        ) {
+          debugLogger.debug('gh pr create not bound: repo identity mismatch', {
+            created: createdRepoKey ?? 'unknown',
+            expected: preRunRepoKeys?.resolved ?? 'unknown',
+            parent: preRunRepoKeys?.parent ?? 'unknown',
+          });
+          return;
+        }
+        // Branch identity: a command that switched branches mid-run
+        // resolves the NEW branch's existing PR post-run (its `|| gh pr
+        // view` segment prints the URL and exits 0); only a PR whose head
+        // branch is the pre-run branch was created by this run. An
+        // uncaptured pre-run branch (detached HEAD, git failure) cannot
+        // prove stability — decline.
+        if (
+          preRunBranch === undefined ||
+          created.headRefName !== preRunBranch
+        ) {
+          debugLogger.debug('gh pr create not bound: branch mismatch', {
+            created: created.headRefName ?? 'unknown',
+            expected: preRunBranch ?? 'unknown',
+          });
+          return;
+        }
+        if (!output.includes(created.url)) {
+          debugLogger.debug(
+            'gh pr create not bound: URL absent from the command output',
+          );
+          return;
+        }
+        const sessionService = this.config.getSessionService();
+        // Re-resolve the session's archive location immediately before the
+        // locked mutation: an archive transition landing during the gh
+        // round-trip above must not strand the binding on a resurrected
+        // active sidecar.
+        let archiveState: 'active' | 'archived' = 'active';
+        try {
+          if (
+            (await sessionService.getSessionLocation(
+              this.config.getSessionId(),
+            )) === 'archived'
+          ) {
+            archiveState = 'archived';
+          }
+        } catch {
+          // Best-effort binding — keep the default active location.
+        }
+        const prPath = sessionService.getPrSessionPathForArchiveState(
+          this.config.getSessionId(),
+          archiveState,
+        );
+        // The same PR already bound stays untouched (position and
+        // createdAt): only a genuinely new binding persists and notifies.
+        // A same-number entry pointing at ANOTHER repo is another PR and
+        // is re-bound here (the created one must win that slot).
+        const createdPr = {
+          number: created.number,
+          url: created.url,
+          state: created.state,
+        };
+        const applied = await upsertSessionPrs(prPath, [
+          { ...createdPr, source: 'create' },
+        ]);
+        if (!applied.added.includes(created.number)) {
+          debugLogger.debug('gh pr create not bound: already bound', {
+            number: created.number,
+          });
+          return;
+        }
+        // The daemon never sees this write; the notification carries the
+        // catalog mark so live-state clients refetch it (~2s) instead of
+        // waiting for unrelated catalog churn.
+        this.config
+          .getSessionService()
+          .emitSessionPrBound(this.config.getSessionId(), createdPr);
+      } catch (error) {
+        // Best-effort binding; name the swallowed cause so silence reads as a
+        // failure, not as "the gate never ran".
+        debugLogger.debug('gh pr create binding failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  }
+
+  /**
+   * Foreground → background promote handler. Called when the foreground
+   * execute path observes `result.promoted: true` (the user pressed
+   * Ctrl+B mid-flight). Writes the initial snapshot + open the
+   * post-promote append stream so subsequent child bytes land in
+   * `bg_xxx.output`, registers a `BackgroundShellEntry` in the same
+   * registry the `is_background: true` path uses, wires settle so
+   * natural child exit transitions the entry to `'completed'` /
+   * `'failed'`, and returns a model-facing `ToolResult` pointing at
+   * `/tasks` / the dialog / `task_stop` for follow-up.
+   *
+   * PR-2.5: post-promote stream redirect + natural-exit registry
+   * settle are now live via the `postPromote` callbacks wired in
+   * `executeForeground`. The `promoteArtifacts` parameter carries the
+   * pre-allocated buffer/stream slots that absorb the race between
+   * service-side promote-time data flush and this finalizer running.
+   *
+   * `headBeforeCommand` is the HEAD state captured synchronously before
+   * spawn (null unless the command carried a commit recognisable as
+   * landing in our cwd, unsandboxed). A promoted command settles after
+   * `execute()` has returned, so the foreground registration block never
+   * runs for it — registration happens here, at settle (#12514).
+   */
+  private async handlePromotedForeground(
+    result: ShellExecutionResult,
+    cwd: string,
+    commandToExecute: string,
+    abortController: AbortController,
+    promoteArtifacts: PromoteArtifacts,
+    headBeforeCommand: GitHeadBeforeCommand | null,
+  ): Promise<ToolResult> {
+    // Mirror executeBackground's outputPath layout so /tasks-on-disk and
+    // ReadFileTool's auto-allow rules treat foreground-promoted shells
+    // and originally-background shells identically.
+    const outputDir = path.join(
+      this.config.storage.getProjectTempDir(),
+      'background-shells',
+      this.config.getSessionId(),
+    );
+    // The service has already detached its kill path by the time we
+    // get here (PR-1's ownership-transfer contract), so any throw
+    // before we wire up the registry's kill listener leaves the still-
+    // running child as an orphan zombie that nothing can stop until
+    // the OS reaps it on session end. Wrap the mkdir + write best-
+    // effort: if either fails, log + reap the child immediately and
+    // report the failure to the caller (mirrors the safety pattern
+    // around `registry.register` further down).
+    let mkdirError: Error | undefined;
+    try {
+      fs.mkdirSync(outputDir, { recursive: true });
+    } catch (err) {
+      mkdirError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (mkdirError) {
+      debugLogger.warn(
+        `promote: mkdirSync(${outputDir}) failed before registry register — killing orphan child: ${mkdirError.message}`,
+      );
+      const pid = result.pid;
+      if (pid !== undefined) {
+        if (os.platform() === 'win32') {
+          try {
+            const taskkillChild = childProcess.spawn(
+              'taskkill',
+              ['/pid', String(pid), '/f', '/t'],
+              // The desktop runtime daemon has no console; without this
+              // flag each console-app child allocates a visible window.
+              { windowsHide: true },
+            );
+            taskkillChild.on('error', () => {
+              /* swallow — already in error path */
+            });
+          } catch {
+            /* swallow */
+          }
+        } else {
+          try {
+            process.kill(-pid, 'SIGTERM');
+          } catch {
+            /* swallow — pid gone or perms */
+          }
+        }
+      }
+      throw mkdirError;
+    }
+
+    const shellId = `bg_${crypto.randomBytes(4).toString('hex')}`;
+    const outputPath = path.join(outputDir, `shell-${shellId}.output`);
+    // PR-2.5: open an append-mode write stream so the initial snapshot
+    // AND post-promote bytes from the still-running child both land in
+    // the same file. Synchronous open via `createWriteStream` with
+    // `flags: 'w'` (overwrite) — if a stale file is somehow there from
+    // a prior session with the same shellId (vanishingly unlikely
+    // given the randomBytes), start fresh. Stream errors (ENOSPC mid-
+    // stream, permission flip) are logged via 'error' listener; we
+    // never let them crash the daemon.
+    let outputStream: fs.WriteStream | null = null;
+    try {
+      outputStream = fs.createWriteStream(outputPath, { flags: 'w' });
+      // PR-2.5 wave-2: `createWriteStream` reports common
+      // failures (ENOENT / EACCES / ENOSPC during the async libuv
+      // `open`) via an `'error'` event AFTER this synchronous call
+      // returns — they do NOT throw. Without latching the failure
+      // here, `promoteArtifacts.stream` would still point at an
+      // already-broken stream, `postPromote.onData` would `write` into
+      // it (catching the throw via its own try/catch but never
+      // releasing the buffer), and `onSettleWired` would attach a
+      // `'finish'` listener that never fires → registry stuck on
+      // `running` forever. Latch the failure: null the stream,
+      // mark `streamClosed` so `onData` drops chunks, and let
+      // `onSettleWired` transition the registry immediately (its
+      // existing `if (!stream)` branch handles that case).
+      outputStream.on('error', (err) => {
+        debugLogger.warn(
+          `promote: output write stream error for ${outputPath}: ${getErrorMessage(err)}`,
+        );
+        const droppedChunks = promoteArtifacts.buffer.length;
+        promoteArtifacts.stream = null;
+        promoteArtifacts.streamClosed = true;
+        try {
+          fs.appendFileSync(
+            outputPath,
+            `\n[WARNING: post-promote output lost — stream error (${getErrorMessage(err)}). ${droppedChunks} buffered chunks dropped.]\n`,
+          );
+        } catch {
+          // Best-effort diagnostic — if the append itself fails
+          // (e.g. disk full), the debugLogger.warn above is the
+          // only trace left.
+        }
+      });
+      // Initial snapshot first, so it always precedes post-promote
+      // bytes in the file (write ordering is FIFO on a single stream).
+      outputStream.write(result.output);
+      // PR-2.5 wave-4: assign the stream BEFORE draining
+      // the buffer, not after. The drain + assign block is synchronous
+      // today (single-tick JS, so a service-side `onData` callback
+      // cannot fire between drain-end and assign), but the assign-
+      // after-drain order leaves a hazard for any future refactor
+      // that introduces an `await` inside the drain — a chunk arriving
+      // in that window would be pushed into `promoteArtifacts.buffer`
+      // (because `stream` is still null), then later chunks would write
+      // directly to the stream after assign, producing out-of-order
+      // bytes in `bg_xxx.output` until the settle drain caught the
+      // straggler. Assign-first eliminates the hazard entirely:
+      // concurrent `onData` writes go straight through after the
+      // queued snapshot + the queued drained chunks, in the correct
+      // FIFO order on the stream.
+      promoteArtifacts.stream = outputStream;
+      while (promoteArtifacts.buffer.length > 0) {
+        const chunk = promoteArtifacts.buffer.shift()!;
+        outputStream.write(chunk);
+      }
+    } catch (err) {
+      debugLogger.warn(
+        `promote: failed to open output stream for ${outputPath}: ${getErrorMessage(err)}`,
+      );
+      // Stream failure is recoverable — the registry entry is still
+      // valuable on its own; the file is the inspection surface only.
+      // Continue without a stream; future onData chunks are dropped
+      // (their warns will accumulate in the log, which is enough
+      // observability for a rare disk failure case).
+      promoteArtifacts.stream = null;
+      // Latch streamClosed so the foreground postPromote.onData
+      // handler stops buffering chunks that would never be drained
+      // (the drain path only runs when `stream` becomes non-null,
+      // which never happens after this branch).
+      promoteArtifacts.streamClosed = true;
+      // PR-2.5 wave-3: record how many pre-
+      // finalizer post-promote chunks are being dropped. Without
+      // this an oncall engineer reading a truncated `bg_xxx.output`
+      // has no signal that the truncation is due to stream-open
+      // failure rather than the child not producing more output.
+      // The chunks themselves are gone (no salvage path exists once
+      // the stream open has failed and the buffer drain depends on
+      // a non-null stream slot).
+      if (promoteArtifacts.buffer.length > 0) {
+        debugLogger.warn(
+          `promote: dropping ${promoteArtifacts.buffer.length} buffered post-promote chunks for ${outputPath} (stream open failed before drain)`,
+        );
+        promoteArtifacts.buffer.length = 0;
+      }
+      // Last-ditch: try a sync snapshot write so /tasks still has
+      // SOMETHING readable; the buffer chunks are lost in this branch.
+      try {
+        fs.writeFileSync(outputPath, result.output);
+      } catch (err2) {
+        debugLogger.warn(
+          `promote: snapshot fallback writeFileSync also failed for ${outputPath}: ${getErrorMessage(err2)}`,
+        );
+      }
+    }
+
+    const startTime = Date.now();
+    const registry = this.config.getBackgroundShellRegistry();
+    // Create a FRESH AbortController for the registry entry. Using the
+    // promote AbortController directly (which is already in the
+    // `aborted` state — that's what triggered the promote) would be
+    // a real bug: `task_stop bg_xxx` calls `entry.abortController.abort()`
+    // which is a no-op on an already-aborted controller, AND
+    // `ShellExecutionService` has detached its abort listener as part
+    // of the promote handoff (PR-1's ownership-transfer contract), so
+    // there's nobody left to translate the abort into an actual signal
+    // to the still-running child. Instead, the entry gets a new
+    // controller, and we wire the abort listener directly to send
+    // SIGTERM → SIGKILL ourselves (mirroring the kill semantics
+    // `ShellExecutionService.execute()`'s abort handler uses for the
+    // non-promote path) and to mark the registry entry `cancelled`.
+    const entryAc = new AbortController();
+    const cancelChild = async () => {
+      const pid = result.pid;
+      if (pid !== undefined) {
+        if (os.platform() === 'win32') {
+          try {
+            const taskkillChild = childProcess.spawn(
+              'taskkill',
+              ['/pid', String(pid), '/f', '/t'],
+              // The desktop runtime daemon has no console; without this
+              // flag each console-app child allocates a visible window.
+              { windowsHide: true },
+            );
+            // Without an 'error' listener on the spawned ChildProcess,
+            // a taskkill spawn failure (binary missing, permission
+            // denied, etc.) would emit 'error' with no listener — which
+            // crashes Node by default. Log + drop is the sane recovery:
+            // the registry entry still transitions via `registry.cancel`
+            // below; the still-running child is at worst an orphan,
+            // which Windows reaps when the CLI session ends.
+            taskkillChild.on('error', (err) => {
+              debugLogger.warn(
+                `promote: taskkill spawn failed for pid=${pid}: ${err.message}`,
+              );
+            });
+          } catch (e) {
+            // childProcess.spawn itself throwing (sync) is rare but possible
+            // (e.g. EMFILE — too many open files) — same recovery.
+            debugLogger.warn(
+              `promote: childProcess.spawn('taskkill') threw for pid=${pid}: ${getErrorMessage(e)}`,
+            );
+          }
+        } else {
+          try {
+            // Negative pid → kill the whole process group; matches the
+            // `detached: !isWindows` spawn the foreground path uses.
+            process.kill(-pid, 'SIGTERM');
+            await new Promise((res) =>
+              setTimeout(res, PROMOTE_CANCEL_SIGKILL_TIMEOUT_MS),
+            );
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              // Already dead before SIGKILL — happy path.
+            }
+          } catch (e) {
+            debugLogger.warn(
+              `promote: process.kill on -${pid} threw: ${getErrorMessage(e)}`,
+            );
+          }
+        }
+      }
+      // Sync-mark the registry entry `cancelled` so /tasks reflects the
+      // user intent immediately. (Recursive note: `registry.cancel`
+      // calls `entry.abortController.abort()` internally, but our
+      // entryAc is already aborted by the time we got here, so that
+      // call is a no-op + our listener was `{ once: true }` and has
+      // already detached.)
+      registry.cancel(shellId, Date.now());
+    };
+    entryAc.signal.addEventListener('abort', () => void cancelChild(), {
+      once: true,
+    });
+    const entry: ShellTaskRegistration = {
+      shellId,
+      // Use `commandToExecute` (post-co-author transform) so the registry
+      // shows what actually ran. `this.params.command` is the pre-transform
+      // form and would diverge for git-commit invocations that
+      // `addCoAuthorToGitCommit()` rewrote (#3894 review).
+      command: commandToExecute,
+      cwd,
+      pid: result.pid,
+      status: 'running',
+      startTime,
+      outputPath,
+      abortController: entryAc,
+      toolUseId: this.callId,
+    };
+    // Reference `abortController` so it's not unused — the parameter
+    // is kept on the signature so a future PR-2.5 that needs to
+    // double-link the original promote signal can read it without
+    // re-plumbing.
+    void abortController;
+
+    // `registry.register` is internally safe today (Map.set + emit),
+    // but if a future implementation throws, the promoted child is
+    // already detached from the service and would become an orphan
+    // zombie with no kill path. Wrap defensively: best-effort kill the
+    // child and re-throw so the scheduler surfaces the failure instead
+    // of pretending promote succeeded.
+    try {
+      registry.register(entry);
+    } catch (e) {
+      debugLogger.warn(
+        `promote: registry.register threw for ${shellId} (pid=${result.pid}) — killing orphan child: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      try {
+        entryAc.abort();
+      } catch {
+        /* swallow — we're already in an error path */
+      }
+      // PR-2.5: close the output stream so the FD doesn't leak past
+      // the throw. Best-effort — if .end() itself throws we're
+      // already in an error path with the orphan-child kill already
+      // in flight.
+      try {
+        promoteArtifacts.stream?.end();
+      } catch {
+        /* swallow */
+      }
+      promoteArtifacts.stream = null;
+      throw e;
+    }
+
+    // PR-2.5: wire the post-promote settle so a natural child exit
+    // (or spawn-side error) transitions the registry entry from
+    // `'running'` to `'completed'` / `'failed'`. Without this the
+    // entry stays `'running'` until `task_stop` / session-end. The
+    // service's `postPromote.onSettle` fires AT MOST ONCE per
+    // promote, and `registry.complete` / `registry.fail` are
+    // idempotent (no-op when status !== 'running'), so a race with
+    // `entryAc.abort() → registry.cancel` (task_stop fired during the
+    // exit window) is safe: whichever lands first wins, the other
+    // becomes a no-op.
+    // Status flags consumed by the model-facing copy below.
+    //
+    // - `postPromoteSettleObserved`: SET SYNCHRONOUSLY inside
+    //   `onSettleWired` the moment we know the child has exited (the
+    //   service has called us with settle info). Independent of
+    //   whether the registry transition has actually completed yet,
+    //   because the transition may be deferred awaiting the output
+    //   stream's `'finish'` event (libuv flush). This is the flag
+    //   the model-facing copy branches on: once we know the child has
+    //   exited, saying "Status: running" + suggesting `task_stop`
+    //   would mislead the agent.
+    // - `postPromoteFinalStatus`: classified from the settle info at
+    //   the same synchronous moment, so the status line can report
+    //   the right terminal status even if the registry transition is
+    //   still in flight.
+    //
+    // PR-2.5 wave-2: originally the model-facing copy
+    // checked a `postPromoteAlreadySettled` flag that was only flipped
+    // AFTER the registry transition fired (post-flush). A fast-exited
+    // promoted command could therefore land "Status: running" +
+    // `task_stop` instructions in the model copy even when settle was
+    // already queued, because the queued-settle drain returned before
+    // the stream's 'finish' event fired. The two flags decouple
+    // "child has exited" (what the agent cares about) from "registry
+    // transition has run" (which can lag behind libuv flush).
+    let postPromoteSettleObserved = false;
+    let postPromoteFinalStatus: 'completed' | 'failed' | null = null;
+    const classifySettle = (
+      info: ShellPostPromoteSettleInfo,
+    ): { status: 'completed' | 'failed'; failMsg: string | null } => {
+      // Decision table: `error` → fail (spawn-side failure); a non-zero
+      // signal means the process was killed (including node-pty's
+      // `exitCode: 0, signal: N` shape), then `exitCode === 0` → complete;
+      // non-zero exitCode → fail; everything-null → fail with a generic
+      // message.
+      if (info.error) return { status: 'failed', failMsg: info.error.message };
+      if (isSignalTermination(info.signal)) {
+        return {
+          status: 'failed',
+          failMsg: `Terminated by signal ${info.signal}`,
+        };
+      }
+      if (info.exitCode === 0) return { status: 'completed', failMsg: null };
+      if (info.exitCode !== null)
+        return {
+          status: 'failed',
+          failMsg: `Exited with code ${info.exitCode}`,
+        };
+      // PR-2.5 wave-3: this branch is meant to
+      // be unreachable — the service always populates one of
+      // `error` / `exitCode` / `signal`. Hitting it means the
+      // service emitted a defective settle info object, which is a
+      // logic bug. Capture the actual field values in the failure
+      // message AND warn-log so the oncall engineer reading
+      // `/tasks` or the debug log can tell THIS path apart from the
+      // other "failed" branches. (`info.error` has been narrowed to
+      // `never` by the preceding `if (info.error) return`, so we
+      // can't read `.message` here — by construction it would be
+      // `undefined` at runtime anyway.)
+      debugLogger.warn(
+        `promote: classifySettle all-null fallback hit for ${shellId} — ` +
+          `exitCode=${info.exitCode}, signal=${info.signal}, error=undefined`,
+      );
+      return {
+        status: 'failed',
+        failMsg: `Exited with unknown status (exitCode=${info.exitCode}, signal=${info.signal}, error=undefined)`,
+      };
+    };
+    const transitionRegistry = (info: ShellPostPromoteSettleInfo) => {
+      // `task_stop` aborts the entry before the child necessarily reports
+      // its signal. Preserve the user-intended `cancelled` state instead of
+      // allowing the later signal settle to overwrite it as `failed`.
+      if (entryAc.signal.aborted) {
+        registry.cancel(shellId, info.endTime);
+        return;
+      }
+      const cls = classifySettle(info);
+      if (cls.status === 'completed') {
+        registry.complete(shellId, info.exitCode as number, info.endTime);
+      } else {
+        registry.fail(shellId, cls.failMsg as string, info.endTime);
+      }
+    };
+    // Session-commit registration for the promoted path (#12514 A.3).
+    // `execute()` returns the promote ToolResult without reaching the
+    // foreground registration block, so a commit landed by a promoted
+    // command would never earn the amend exemption. The pre-spawn HEAD
+    // state arrives from the caller, gated there on
+    // `attributableInCwd` (and non-sandboxed), so a null here means the
+    // command carried no commit recognisable as landing in our cwd —
+    // `cd /elsewhere && git commit` stays unregistered exactly as the
+    // foreground path leaves it. An unborn HEAD is a distinct value:
+    // `rev-parse --git-dir` succeeded but `HEAD` had no commit yet, so a
+    // root commit from this command is still attributable (#12514-D).
+    //
+    // Registration is settle-only by design: the commit can land at any
+    // point in the backgrounded child's life, and the only moment this
+    // path can observe "the child is done" is its settle. So for a child
+    // that is still running the exemption arrives later than the
+    // ToolResult that precedes it (pinned by the deferred-settle row in
+    // `shell.session-commit-tracking.test.ts`), and for a child that
+    // never settles (`npm run dev`, `tail -f`) it never arrives. Closing
+    // that needs a probe independent of the settle, which is a different
+    // mechanism than this PR's; the promote handoff probe alone would
+    // still miss a commit that lands after the user pressed Ctrl+B.
+    let promotedCommitRegistration: Promise<void> | null = null;
+    // Snapshot the registry generation at promote time. `Config.
+    // setApprovalMode` clears the session-commit registry on every real
+    // transition because exemptions must not carry across that boundary
+    // — but this registration fires when the child exits, arbitrarily
+    // later, so without the check a settle landing after such a
+    // transition writes the exemption straight back into the cleared
+    // registry.
+    const registrationGeneration = getSessionCommitGeneration();
+    const registerPromotedCommit = (): void => {
+      if (headBeforeCommand === null || promotedCommitRegistration !== null) {
+        return;
+      }
+      if (getSessionCommitGeneration() !== registrationGeneration) {
+        // Fail-closed: the registry this decision was made against no
+        // longer exists, so the exemption it would grant is stale. The
+        // agent's own commit stays amend-blocked until it commits again
+        // inside the current registry generation.
+        debugLogger.warn(
+          `promote: skipping session-commit registration in ${cwd}: the ` +
+            `session-commit registry was cleared (approval-mode transition or ` +
+            `session end) after this command was promoted, so the exemption ` +
+            `must not carry across that boundary.`,
+        );
+        return;
+      }
+      promotedCommitRegistration = this.trackSessionCommit(
+        cwd,
+        headBeforeCommand.sha,
+        // Lineage, not mere difference. This runs when the backgrounded
+        // child exits — arbitrarily later than the caller's pre-spawn
+        // capture — so a commit anybody else lands in this repository
+        // while the child runs is the newest `commit:` entry by then,
+        // and `head.sha !== preHead` alone would adopt it: the foreign
+        // commit would earn the amend exemption and the promoted one
+        // would lose its own. Requiring that entry to have moved HEAD
+        // *from* `preHead` rejects the foreign one unless this command's
+        // own commit landed first; a foreign commit landed straight on
+        // `preHead` still passes — the #12523 residue disclosed on
+        // `trackSessionCommit`'s `requirePredecessor`.
+        headBeforeCommand.unborn ? null : headBeforeCommand.sha,
+      ).catch((err: unknown) => {
+        // Registration must never break the settle path — a failure
+        // here costs the exemption (fail-closed), nothing more.
+        debugLogger.warn(
+          `promote: session-commit registration failed: ${getErrorMessage(err)}`,
+        );
+      });
+    };
+    promoteArtifacts.onSettleWired = (info) => {
+      // The child has exited — if the promoted command landed a commit
+      // in our cwd, this is the moment to register it (the foreground
+      // path's equivalent runs after the foreground result resolves).
+      registerPromotedCommit();
+      // Synchronous observation — the child has exited; classify now
+      // so the model-facing copy can branch correctly even when the
+      // registry transition is deferred behind the stream's flush.
+      const cls = classifySettle(info);
+      postPromoteFinalStatus = cls.status;
+      postPromoteSettleObserved = true;
+      // Wait for the output stream to fully FLUSH before transitioning
+      // the registry. `stream.end()` is asynchronous — pending writes
+      // can still be in the libuv queue when it returns. Without the
+      // 'finish' wait, `/tasks` consumers can observe the entry as
+      // `completed`/`failed` and read the output file BEFORE the
+      // trailing bytes are on disk, producing truncated logs.
+      const stream = promoteArtifacts.stream;
+      // PR-2.5 wave-3: drain the pre-settle
+      // buffer to the stream BEFORE nulling the shared slot. Service-
+      // side `onData` callbacks that race the foreground finalizer
+      // can land chunks in the buffer between when the wire fires
+      // and when the buffer drain (during stream-open) sees them.
+      // Without this drain those chunks are stranded. AND latch
+      // `streamClosed` together with the null so that any
+      // chunk arriving AFTER `.end()` (during the flush window —
+      // unlikely once the service has emitted settle, but kernel
+      // buffers can deliver late on PTY) is DROPPED via the
+      // `else if (promoteArtifacts.streamClosed)` arm in `onData`
+      // instead of being pushed into the now-undrainable buffer.
+      if (stream) {
+        while (promoteArtifacts.buffer.length > 0) {
+          try {
+            stream.write(promoteArtifacts.buffer.shift()!);
+          } catch (writeErr) {
+            // Stream write failure during pre-end drain — log + drop,
+            // same recovery posture as the foreground `onData` write
+            // path. The error event will fire async if the stream is
+            // dead, latching `streamClosed` via the 'error' handler.
+            debugLogger.warn(
+              `promote: pre-end buffer drain write failed: ${getErrorMessage(writeErr)}`,
+            );
+          }
+        }
+      }
+      promoteArtifacts.stream = null;
+      promoteArtifacts.streamClosed = true;
+      if (!stream) {
+        // No stream (open failed or already ended) — transition right
+        // away, no flush to wait on.
+        transitionRegistry(info);
+        return;
+      }
+      endStreamThenSettle(stream, 'promote', shellId, () =>
+        transitionRegistry(info),
+      );
+    };
+    // Drain a settle that landed BEFORE the wire installed (fast
+    // commands can exit between `result.promoted` and this line).
+    // After this call returns, `postPromoteSettleObserved` is true
+    // if a settle was queued — that's the case the model-facing copy
+    // below branches on so the message doesn't say "Status: running"
+    // for a process that already finished during the registration
+    // window.
+    if (promoteArtifacts.settleQueued) {
+      const queued = promoteArtifacts.settleQueued;
+      promoteArtifacts.settleQueued = null;
+      promoteArtifacts.onSettleWired(queued);
+    }
+    // When the settle was already queued (a fast-settling promoted
+    // command), the registration probe kicked off above is in flight —
+    // await it so the exemption is in place by the time the ToolResult
+    // is returned. For a still-running child this is null and costs
+    // nothing; the registration then completes via `onSettleWired`
+    // whenever the child exits.
+    await promotedCommitRegistration;
+
+    // Build the model-facing status line based on whether the settle
+    // was observed synchronously (i.e. the child has exited). Branch
+    // on `postPromoteSettleObserved` rather than the post-flush latch
+    // — see the flag block above for the rationale.
+    const statusLine = postPromoteSettleObserved
+      ? `Status: ${postPromoteFinalStatus ?? 'settled'}. PID: ${result.pid ?? '(unknown)'}.`
+      : `Status: running. PID: ${result.pid ?? '(unknown)'}.`;
+    const statusFileLine = statusFileGuidance(outputPath);
+    const inspectLine = `To inspect: \`/tasks\` (text), the Background tasks dialog (↓ + Enter on the footer pill), or \`Read\` the output file directly.`;
+    const stopLine = postPromoteSettleObserved
+      ? `Process has already exited; no \`task_stop\` needed (the entry is observable in \`/tasks\` for inspection).`
+      : `To stop the now-background process: \`task_stop({ task_id: '${shellId}' })\`.`;
+    const llmContent = [
+      `Foreground command "${commandToExecute}" promoted to background as ${shellId}.`,
+      statusLine,
+      `Output snapshot at promote time saved to: ${outputPath}`,
+      statusFileLine,
+      inspectLine,
+      stopLine,
+    ].join('\n');
+
+    debugLogger.debug(
+      `promote: registered ${shellId} (pid=${result.pid}) — outputPath=${outputPath}`,
+    );
+
+    return {
+      llmContent,
+      returnDisplay: `Promoted to background: ${shellId}`,
+    };
+  }
+
+  /**
+   * Background-execution path: spawn the command into a managed registry
+   * entry instead of detaching with `&`. Output streams to a per-shell file
+   * the agent can `Read`; cancellation flows through the entry's
+   * AbortController; the registry's terminal status is set when the process
+   * exits. Returns immediately so the agent's turn isn't blocked.
+   */
+  private async executeBackground(
+    signal: AbortSignal,
+    shellExecutionConfig?: ShellExecutionConfig,
+  ): Promise<ToolResult> {
+    const strippedCommand = stripShellWrapper(this.params.command);
+
+    // The background lifecycle (BackgroundShellRegistry) doesn't run
+    // the post-command attribution path — there's no clean place to
+    // hook pre/post-HEAD comparison and `git notes` writes between
+    // the early `Background shell started` return and the eventual
+    // process exit. Allowing `git commit` to slip through would leave
+    // the new commit without notes and let stale per-file attribution
+    // leak into the next foreground commit. Refuse the request and
+    // tell the user to run it foreground.
+    //
+    // Use the broader `hasCommit` flag rather than `attributableInCwd`:
+    // `cd /elsewhere && git commit` should still be refused even
+    // though we wouldn't attribute it.
+    if (
+      gitCommitContext(
+        strippedCommand,
+        this.params.directory || this.config.getTargetDir(),
+      ).hasCommit
+    ) {
+      return {
+        llmContent:
+          'Refusing to run `git commit` in background mode: AI-attribution notes ' +
+          'are written by the foreground completion path. Re-run the commit ' +
+          'with is_background=false (or split it out of the compound command).',
+        returnDisplay:
+          'Refused: `git commit` is not supported in background shell mode.',
+      };
+    }
+    // Strip a single bare trailing `&` (the bash background operator) before
+    // spawn: bash treats it as background-detach, exits the wrapper
+    // immediately, and the real child outlives the wrapper — the registry
+    // would settle as `completed` while the shell is still running, and
+    // chunked output would land on a closed stream. The managed path is
+    // itself the backgrounding mechanism, so the trailing `&` is redundant.
+    //
+    // Deliberately precise: do not touch `&&` (logical AND), `\&` (escaped
+    // literal `&`), or commands without a trailing `&`. Earlier `\s*&+\s*$`
+    // was both too greedy (it ate `&&` and `\&`) and a ReDoS hazard on
+    // long all-`&` inputs. Plain string checks here are linear and clearer
+    // than a lookbehind regex.
+    //
+    // Operate on the trimmed *original* command so leading env assignments
+    // / shell wrappers survive through to execution; ShellExecutionService
+    // re-runs the user-approved invocation verbatim.
+    const trimmedOriginal = this.params.command.trim();
+    const noTrailingAmp = stripTrailingBackgroundAmp(trimmedOriginal);
+    if (noTrailingAmp !== trimmedOriginal) {
+      debugLogger.warn(
+        'Stripped trailing & from background shell command — managed path handles backgrounding',
+      );
+    }
+    const processedCommand = this.config.getShellExecutionSandbox?.()
+      ? noTrailingAmp
+      : this.addAttributionToPR(this.addCoAuthorToGitCommit(noTrailingAmp));
+    const cwd = this.params.directory || this.config.getTargetDir();
+
+    // Output goes under the project temp dir (which `ReadFileTool`
+    // auto-allows by default), so the LLM can `Read` the captured output
+    // without bouncing off a permission prompt — important because
+    // background-agent contexts can't surface interactive prompts.
+    const outputDir = path.join(
+      this.config.storage.getProjectTempDir(),
+      'background-shells',
+      this.config.getSessionId(),
+    );
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const shellId = `bg_${crypto.randomBytes(4).toString('hex')}`;
+    const outputPath = path.join(outputDir, `shell-${shellId}.output`);
+
+    // Background shells are explicitly independent of the current turn:
+    // the user pressing Ctrl+C on a turn (which aborts `signal`) should
+    // NOT kill a long-running dev server / watcher they intentionally
+    // backgrounded. Cancellation flows only through the entry's own
+    // AbortController, driven by future `task_stop` integration (#3471).
+    // The `signal` parameter is still honored for the synchronous early
+    // return below (don't even spawn if the agent already aborted), but
+    // we deliberately do not forward it.
+    const entryAc = new AbortController();
+
+    const outputStream = fs.createWriteStream(outputPath, { flags: 'w' });
+    // Without an 'error' listener, a write failure (disk full, permission
+    // change, fs going away) would surface as an uncaught exception and
+    // kill the entire CLI session. Log + drop is the sane default — the
+    // process keeps running, the registry still settles via resultPromise.
+    outputStream.on('error', (err) => {
+      debugLogger.warn(
+        `background shell ${shellId} output write error: ${err.message}`,
+      );
+    });
+
+    const startTime = Date.now();
+    const registration: ShellTaskRegistration = {
+      shellId,
+      command: processedCommand,
+      cwd,
+      status: 'running',
+      startTime,
+      outputPath,
+      abortController: entryAc,
+      toolUseId: this.callId,
+    };
+
+    let executionHandle;
+    try {
+      executionHandle = await executeRuntimeShell(
+        this.config,
+        processedCommand,
+        cwd,
+        (event: ShellOutputEvent) => {
+          if (event.type === 'data' && typeof event.chunk === 'string') {
+            // Strip ANSI escape codes (color, cursor-move, clear-screen) before
+            // writing — agents read the file as plain text, and dev servers /
+            // build tools spam plenty of escape sequences that would render as
+            // garbage. Costs ~one regex per chunk; cheap relative to disk I/O.
+            outputStream.write(stripAnsi(event.chunk));
+          }
+          // ANSI array chunks and binary streams are not written to the output
+          // file: agents read the file as plain text and binary spam would be
+          // unhelpful.
+        },
+        entryAc.signal,
+        // Background shells are non-interactive by design — no terminal to
+        // attach a PTY to, no human to type at it. Force the child_process
+        // path so we don't pull in node-pty for fire-and-forget commands.
+        false,
+        shellExecutionConfig ?? {},
+        // Stream stdout/stderr through to the output file as chunks arrive.
+        // Default child_process mode buffers until exit, which would leave
+        // dev-server / watcher output files empty until the process dies.
+        { streamStdout: true },
+      );
+    } catch (error) {
+      outputStream.destroy();
+      try {
+        fs.rmSync(outputPath, { force: true });
+      } catch (cleanupError) {
+        debugLogger.warn(
+          `background shell ${shellId} output cleanup failed: ${getErrorMessage(cleanupError)}`,
+        );
+      }
+      throw error;
+    }
+    const { result: resultPromise, pid } = executionHandle;
+
+    if (pid !== undefined) registration.pid = pid;
+    const registry = this.config.getBackgroundShellRegistry();
+    // Symmetric with the promote path above: `register` is internally
+    // safe today (Map.set + emit), but a throwing subscriber would
+    // propagate here and leave the already-spawned child + open output
+    // stream unreachable by `/tasks` / `task_stop`. Best-effort abort
+    // the child, tear down the stream, and re-throw so the launch fails
+    // visibly instead of leaking.
+    try {
+      registry.register(registration);
+    } catch (e) {
+      debugLogger.warn(
+        `background shell ${shellId} register threw (pid=${pid}) — aborting orphan child: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      try {
+        entryAc.abort();
+      } catch {
+        /* swallow — we're already in an error path */
+      }
+      try {
+        outputStream.destroy();
+      } catch {
+        /* swallow — we're already in an error path */
+      }
+      throw e;
+    }
+
+    // Settle in the background — do NOT await here, the agent should be
+    // unblocked immediately.
+    //
+    // Same flush-ordering hazard as the promote settle path: transition
+    // the registry only after the output stream has flushed, so the
+    // status sidecar can't report a terminal state while the trailing
+    // output bytes are still in the libuv queue. The exit timestamp is
+    // captured BEFORE the flush wait — endTime records when the child
+    // exited, not when its bytes reached disk.
+    void resultPromise.then(
+      (result) => {
+        const endTime = Date.now();
+        endStreamThenSettle(outputStream, 'background', shellId, () => {
+          if (entryAc.signal.aborted) {
+            if (registry.get(shellId)?.status === 'running') {
+              registry.cancel(shellId, endTime);
+            }
+          } else if (
+            result.error ||
+            (result.exitCode !== null && result.exitCode !== 0) ||
+            isSignalTermination(result.signal)
+          ) {
+            // Non-zero exit / killed by signal / spawn error all count as failed.
+            // Treating them as `completed` would let `/tasks` (and any future
+            // model-facing notification) misreport a failed `npm test` or
+            // `false` command as a success.
+            const reason = result.error
+              ? result.error.message
+              : isSignalTermination(result.signal)
+                ? `terminated by signal ${result.signal}`
+                : `exited with code ${result.exitCode}`;
+            registry.fail(shellId, reason, endTime);
+          } else {
+            registry.complete(shellId, result.exitCode ?? 0, endTime);
+          }
+        });
+      },
+      (err) => {
+        const endTime = Date.now();
+        endStreamThenSettle(outputStream, 'background', shellId, () =>
+          registry.fail(shellId, getErrorMessage(err), endTime),
+        );
+      },
+    );
+
+    const pidLine = pid !== undefined ? `pid: ${pid}\n` : '';
+    return {
+      llmContent:
+        `Background shell started.\n` +
+        `id: ${shellId}\n` +
+        pidLine +
+        `output file: ${outputPath}\n` +
+        `${statusFileGuidance(outputPath)}\n` +
+        `To inspect: /tasks (text) or the interactive Background tasks dialog (focus the footer Background tasks pill, then Enter — detail view + live updates). Read the output file directly to view the captured output.`,
+      returnDisplay: `Background shell ${shellId} started${pid !== undefined ? ` (pid ${pid})` : ''}.`,
+    };
+  }
+
+  /**
+   * Count the commits between `preHead` (exclusive) and `postHead`
+   * (inclusive). SHA-pinned on both ends so a post-commit hook moving
+   * HEAD between this check and the note write can't change the
+   * answer (`HEAD~1..HEAD` here would race the same TOCTOU window
+   * the diff calls were just pinned against). Returns 0 if either
+   * side is unreadable. Goes through `child_process.execFile` with
+   * argv to stay independent of the mockable `ShellExecutionService`.
+   */
+  private async countCommitsAfter(
+    cwd: string,
+    preHead: string,
+    postHead: string,
+  ): Promise<number> {
+    return this.runGitCount(cwd, [
+      'rev-list',
+      '--count',
+      `${preHead}..${postHead}`,
+    ]);
+  }
+
+  /**
+   * Count commits reachable from `postHead` when the repo had no prior
+   * HEAD before the user's command — i.e. the very first commit (or
+   * compound `init && commit && commit ...`). Without this fallback
+   * the multi-commit guard would be skipped on a brand-new repo and
+   * mis-attribute combined data to the final commit. SHA-pinned for
+   * the same reason as `countCommitsAfter`.
+   */
+  private async countCommitsFromRoot(
+    cwd: string,
+    postHead: string,
+  ): Promise<number> {
+    return this.runGitCount(cwd, ['rev-list', '--count', postHead]);
+  }
+
+  /** Shared helper for the two `rev-list --count` invocations. */
+  private async runGitCount(cwd: string, args: string[]): Promise<number> {
+    return new Promise((resolve) => {
+      const child = childProcess.execFile(
+        'git',
+        args,
+        { cwd, timeout: 2000, windowsHide: true },
+        (error, stdout) => {
+          if (error) {
+            resolve(0);
+            return;
+          }
+          const n = parseInt(String(stdout).trim(), 10);
+          resolve(Number.isFinite(n) && n > 0 ? n : 0);
+        },
+      );
+      child.on('error', () => {});
+    });
+  }
+
+  /**
+   * Read the current HEAD SHA, or null if unavailable (no commits
+   * yet, not a git repo, or git failed). Used to detect whether a
+   * `git commit` actually created a new commit, independent of the
+   * shell's exit code. Goes through `child_process.execFile` rather
+   * than {@link ShellExecutionService} so the lookup is unaffected
+   * by test mocks of the shell service and stays well clear of any
+   * user-supplied shell wrapper.
+   */
+  private async getGitHead(cwd: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const child = childProcess.execFile(
+        'git',
+        ['rev-parse', 'HEAD'],
+        { cwd, timeout: 2000, windowsHide: true },
+        (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          const sha = String(stdout).trim();
+          resolve(sha.length > 0 ? sha : null);
+        },
+      );
+      // Suppress unhandled-error events from the child stream (e.g. ENOENT
+      // when git is missing); the callback still receives the error.
+      child.on('error', () => {});
+    });
+  }
+
+  /**
+   * Synchronous pre-spawn HEAD probe. Captured BEFORE the user's shell
+   * command spawns so a fast `git commit` (hot-cached, no hooks) cannot
+   * move HEAD before our async rev-parse has a chance to read it — a real
+   * race seen on slow filesystems / heavy contention where preHead would
+   * otherwise resolve to the new SHA, postHead would match, and
+   * `attachCommitAttribution` would silently skip writing the attribution
+   * note even though the commit succeeded.
+   *
+   * A non-repository, missing git binary, or failed `--git-dir` probe
+   * returns `null`. A verified repository whose HEAD has no commit returns
+   * `{ sha: null, unborn: true }` instead: callers that need a SHA still
+   * see null, while session-commit registration can require an explicitly
+   * empty predecessor rather than conflating the unborn state with a
+   * failed probe.
+   *
+   * Worst case is ~10–50 ms of event-loop block per commit-shaped shell
+   * command; acceptable trade for correctness of the post-command HEAD
+   * comparison.
+   */
+  private getGitHeadBeforeCommand(cwd: string): GitHeadBeforeCommand | null {
+    try {
+      const stdout = childProcess.execFileSync(
+        'git',
+        ['rev-parse', '--verify', 'HEAD'],
+        {
+          cwd,
+          timeout: 2000,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      );
+      const sha = String(stdout).trim();
+      if (sha.length > 0) return { sha, unborn: false };
+      return null;
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('status' in error) ||
+        error.status !== 128 ||
+        !('signal' in error) ||
+        error.signal !== null
+      ) {
+        return null;
+      }
+      // A failed HEAD lookup is either an unborn branch or no repository.
+    }
+    try {
+      childProcess.execFileSync('git', ['rev-parse', '--git-dir'], {
+        cwd,
+        timeout: 2000,
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      return { sha: null, unborn: true };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Record HEAD in the session registry (`permissions/destructive-commands.ts`)
+   * when a `git commit` put it there.
+   *
+   * The registry used to exempt a later `git commit --amend` from the AUTO
+   * destructive-command block. Since #13570 every amend asks for approval and
+   * nothing reads it for that decision, but the attribution it records is still
+   * what the Co-authored-by trailer and the git notes are written against, so a
+   * wrong registration is still a real defect. The registry stays a published
+   * export; removing it and this wiring is a separate change.
+   *
+   * The criterion is "the newest HEAD reflog entry is a `commit` verb, and
+   * HEAD moved". Exit code is too strict (`git commit -m x && npm test` can
+   * land the commit and then fail). HEAD movement alone is too loose, and
+   * fail-open: in `git pull && git commit -m x` with nothing staged, the pull
+   * fast-forwards onto somebody else's commit and the commit then exits
+   * non-zero — and because `gitCommitContext` does not treat
+   * `pull`/`checkout`/`merge` as cwd-shifting and the call site has no
+   * exit-code gate, that chain really does reach here. A movement-only test
+   * would register a human's SHA as the agent's own.
+   *
+   * Where the reflog cannot answer at all (`core.logAllRefUpdates` off, reflog
+   * expired, git missing) nothing registers, so that branch costs a missing
+   * attribution and never a wrong one.
+   *
+   * The reflog read does *not* establish that this command's own `git commit`
+   * created HEAD, and no local read can: `preHead` is taken before the spawn
+   * and the reflog after the whole command, so a commit another process lands
+   * in the same repository inside that window is the newest `commit:` entry
+   * and registers instead — attributing a foreign commit to the agent and
+   * costing it its own attribution, since the foreign entry is the newest one.
+   * Binding an entry to this child
+   * needs a signal not derivable from reflog shape, and the cheap candidate is
+   * unsound: a chain-level `GIT_REFLOG_ACTION` stamp rewrites the action of
+   * every reflog-writing git call in the single `/bin/bash -c` child, so a
+   * trailing `checkout` would write a `commit:` verb too. Per-invocation
+   * stamping means changing how the executor spawns. Tracked in #12523.
+   *
+   * No multi-commit guard, unlike {@link attachCommitAttribution}, which has
+   * to *partition* per-file contribution and so bails. In `commit a &&
+   * commit b` HEAD is `b`, created by this command, so registering it is
+   * sound and `a` stays unregistered.
+   *
+   * `requirePredecessor` is the promoted path's lineage guard and is
+   * deliberately not applied to the foreground one. There, the window
+   * between the pre-spawn capture and this reflog read is the command's
+   * own duration — the trade-off #12523 tracks and this docblock
+   * discloses. On a Ctrl+B promote the same window is the backgrounded
+   * child's whole (deliberately long) lifetime, so a commit anybody else
+   * lands in this repository meanwhile is not a narrow race but the
+   * expected shape, and difference-from-`preHead` alone would adopt it.
+   * Passing the captured `preHead` here requires the entry that created
+   * HEAD to have moved it *from* that SHA. For an unborn repository the
+   * expected predecessor is explicitly `null`, which lets the initial
+   * commit register without treating a failed probe as a valid empty
+   * history. That sentinel is not provenance: every root commit satisfies
+   * it, so a root commit somebody else lands during the promoted window is
+   * indistinguishable from this command's own and registers too (#12523).
+   * A born HEAD narrows that window but does not close it: a foreign commit
+   * landed directly on `preHead` while this command's own commit never
+   * landed has the same predecessor and registers too, the same #12523
+   * residue. Fail-closed once this command's own commit landed first: a
+   * foreign commit on top of it never earns an exemption, and a multi-commit
+   * promoted chain (`commit a && commit b`, whose newest entry descends
+   * from `a`) loses one it had earned rather than guessing. The foreground
+   * call site passes nothing and keeps the disclosed window unchanged.
+   */
+  private async trackSessionCommit(
+    cwd: string,
+    preHead: string | null,
+    requirePredecessor?: string | null,
+  ): Promise<void> {
+    const head = await this.getGitHeadOrigin(cwd);
+    if (
+      head !== null &&
+      requirePredecessor !== undefined &&
+      head.predecessor !== requirePredecessor
+    ) {
+      // Same visibility contract as the `head === null` branch below: say
+      // which side of the lineage check failed.
+      const predecessorLabel =
+        requirePredecessor === null
+          ? '(unborn)'
+          : requirePredecessor.slice(0, 12);
+      debugLogger.warn(
+        `Session commit not registered in ${cwd}: the newest HEAD reflog entry descends from ` +
+          `${head.predecessor ?? '(no predecessor)'}, not from the pre-spawn HEAD ` +
+          `${predecessorLabel}, so it was not created by this command.`,
+      );
+      return;
+    }
+    // Neither condition subsumes the other: `createdByCommit` rejects a HEAD
+    // something else relocated, and the `preHead` comparison rejects a commit
+    // that never moved HEAD (nothing staged), which would otherwise
+    // re-register the pre-existing HEAD.
+    if (head !== null && head.createdByCommit && head.sha !== preHead) {
+      registerSessionCommit(head.sha);
+    } else if (head === null) {
+      // Failing closed is the intent; failing closed *invisibly* is not.
+      // Nothing else separates "the reflog could not answer" (reflogs off,
+      // expired, probe timed out) from a genuine attribution failure. Same
+      // shape as the attribution refusal in `attachCommitAttribution`.
+      debugLogger.warn(
+        `Session commit not registered in ${cwd}: the HEAD reflog could not answer, so this commit is not attributed to the session.`,
+      );
+    }
+  }
+
+  /**
+   * Read HEAD, the reflog action that last moved it, and the SHA that
+   * entry moved it *from*, in one subprocess.
+   *
+   * `--no-show-signature` is required, not cosmetic: with
+   * `log.showSignature=true` git prints the signature verdict ahead of the
+   * formatted output, shifting both fields and making an agent's own signed
+   * commit look uncommitted. Inert when nothing is signed.
+   *
+   * `-2` rather than `-1` so the second entry's SHA is available as the
+   * newest entry's predecessor — the lineage input
+   * {@link trackSessionCommit} requires on the promoted path. It costs one
+   * extra reflog record inside the same 2 s budget.
+   *
+   * Returns `null` when git cannot answer (not a repo, no HEAD, reflog off or
+   * expired, git missing) so every caller fails closed. `predecessor` is
+   * `null` when the reflog holds a single entry (an initial commit, or one
+   * expired down to a single record).
+   */
+  private async getGitHeadOrigin(cwd: string): Promise<{
+    sha: string;
+    createdByCommit: boolean;
+    predecessor: string | null;
+  } | null> {
+    return new Promise((resolve) => {
+      const child = childProcess.execFile(
+        'git',
+        ['log', '-g', '-2', '--no-show-signature', '--format=%H%n%gs', 'HEAD'],
+        { cwd, timeout: 2000, windowsHide: true },
+        (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          // One line per field, newest entry first: its SHA, its reflog
+          // subject, then the previous entry's SHA (whose subject is not
+          // read).
+          const [sha, subject, predecessor] = String(stdout).split('\n');
+          if (!sha || !subject) {
+            resolve(null);
+            return;
+          }
+          // Reflog verbs are not localised by git. `\b` admits `commit:`,
+          // `commit (initial|amend|merge):` and excludes every other verb.
+          resolve({
+            sha: sha.trim(),
+            createdByCommit: /^commit\b/.test(subject),
+            predecessor: predecessor?.trim() || null,
+          });
+        },
+      );
+      // Suppress unhandled-error events from the child stream (e.g. ENOENT
+      // when git is missing); the callback still receives the error.
+      child.on('error', () => {});
+    });
+  }
+
+  /**
+   * After a successful git commit, attach per-file AI attribution metadata
+   * as git notes. Analyzes staged files via `git diff` to calculate real
+   * AI vs human contribution percentages.
+   *
+   * Detects commit creation by HEAD movement, not by shell exit code:
+   * for compound commands like `git commit -m "x" && npm test`, the
+   * commit can succeed and a later step can fail. Gating on `exitCode
+   * !== 0` would skip attribution for the successful commit, so we
+   * compare pre- and post-command HEAD instead.
+   *
+   * Respects the gitCoAuthor.commit setting: if the user disables commit
+   * attribution, the per-file note is skipped too (same toggle governs
+   * the Co-authored-by trailer and the git-notes payload).
+   */
+  private async attachCommitAttribution(
+    cwd: string,
+    preHead: string | null,
+    isAmend: boolean,
+  ): Promise<string | null> {
+    // Returns a one-line warning suitable for appending to the tool's
+    // returnDisplay when a write that the user could plausibly fix
+    // (note exec failure, payload too large, exception during diff
+    // analysis) drops the AI-attribution note. Returns null when the
+    // skip is intentional / inherent to the situation (no commit
+    // landed, multi-commit chain, attribution toggle off, no tracked
+    // edits) — those don't need user-visible feedback.
+    // Caller (`execute`) gates this with `commitCtx.attributableInCwd`,
+    // so we don't re-parse the command here. Re-parsing would be dead
+    // work and a maintenance trap — if the two checks ever drifted,
+    // trailer injection and git-notes writes could diverge silently.
+
+    const postHead = await this.getGitHead(cwd);
+    const commitCreated = postHead !== null && postHead !== preHead;
+    const attributionService = CommitAttributionService.getInstance();
+
+    if (!commitCreated) {
+      // HEAD didn't move in this cwd. Possible causes:
+      //   1. Commit failed (hook rejected, nothing staged, etc.)
+      //   2. User did `git commit && git reset HEAD~1` — HEAD reverted
+      //   3. Submodule case (`cd submodule && git commit`) — the inner
+      //      repo's HEAD moved, ours didn't
+      // We can't tell these apart reliably from here. Dropping the
+      // per-file attributions on (1)/(2) is fine in isolation, but on
+      // (3) we'd silently lose the user's outer-repo edits even though
+      // none of them were committed. Leave attributions intact instead:
+      // a later successful commit will overwrite the counters and the
+      // accumulated aiContribution still represents real AI work.
+      return null;
+    }
+
+    // Refuse to attribute when a single shell command produced more
+    // than one commit (e.g. `git commit -m a && git commit -m b`).
+    // Our singleton has no way to partition the per-file AI
+    // contribution across the individual commits, so attaching the
+    // combined note to HEAD would mis-attribute earlier commits'
+    // changes to the last one. Snapshot prompt counters and bail.
+    //
+    // For a brand-new repo (preHead === null), use `git rev-list
+    // --count HEAD` so the very first compound `init && commit a &&
+    // commit b` chain still gets caught.
+    const commitCount =
+      preHead !== null
+        ? await this.countCommitsAfter(cwd, preHead, postHead)
+        : await this.countCommitsFromRoot(cwd, postHead);
+    // commitCreated has already established that HEAD moved, so we
+    // expect exactly 1 commit. Anything else is suspicious:
+    // - >1: actual multi-commit chain we can't partition
+    // - 0:  rev-list errored / timed out — could not verify, so
+    //   we'd otherwise silently attribute as a single commit even
+    //   though the count is unknown
+    // Bail in either case.
+    if (commitCount !== 1) {
+      const reason =
+        commitCount === 0
+          ? 'commit count unavailable (rev-list failed) ' +
+            'after HEAD moved — refusing to assume single commit'
+          : `multi-commit shell command (${commitCount} commits since ` +
+            `${preHead ? preHead.slice(0, 12) : 'repo root'})`;
+      debugLogger.warn(`Refusing AI attribution: ${reason}.`);
+      // Snapshot the prompt counter but do NOT clear per-file
+      // attributions: in a `commit a && commit b` chain, the user
+      // may have unstaged AI edits to files that appeared in NEITHER
+      // commit. Wholesale-clearing here would erase those even
+      // though the rest of the flow is built to preserve unstaged
+      // entries across partial commits.
+      attributionService.noteCommitWithoutClearing();
+      return null;
+    }
+
+    // A new commit landed. Even when no per-file attribution was
+    // tracked (rare but possible — e.g. user committed external
+    // changes), we still need to snapshot the prompt counters as
+    // "at last commit" so a later `gh pr create` doesn't report an
+    // inflated N-shotted count spanning multiple commits.
+    if (!attributionService.hasAttributions()) {
+      attributionService.noteCommitWithoutClearing();
+      return null;
+    }
+
+    let committedAbsolutePaths: Set<string> | null = null;
+    // Separate from `committedAbsolutePaths` so a failed note write
+    // (oversized payload, `git notes` non-zero exit, exception) does
+    // NOT also delete the per-file attribution data the user might
+    // need to amend & retry. `shouldClear` flips to the partial-clear
+    // set only on (a) note-write success, or (b) attribution toggle
+    // OFF — both cases where the file is genuinely "done" from the
+    // attribution path's POV.
+    let shouldClear: Set<string> | null = null;
+    let warning: string | null = null;
+    try {
+      // Analyze the just-committed files by diffing the captured
+      // `postHead` against its parent (or `preHead` for amend). All
+      // diff calls are SHA-pinned so a post-commit hook / chained
+      // `git tag` / parallel git process moving HEAD between the
+      // analysis phase and the note write can't leave the note
+      // attached to commit A but describing commit B.
+      const stagedInfo = await this.getCommittedFileInfo(
+        cwd,
+        isAmend,
+        postHead,
+        preHead,
+      );
+
+      // null = analysis failed (shallow clone, --amend without reflog,
+      // partial diff failure, etc.). Leave `committedAbsolutePaths`
+      // null so the finally block calls `noteCommitWithoutClearing()`
+      // — snapshotting the prompt counter while leaving per-file
+      // attributions intact. (Earlier revisions of this code did a
+      // wholesale clear here, but that erased pending unstaged AI
+      // edits for files outside the just-failed commit; the
+      // smaller-evil trade-off is documented in the finally block.)
+      // Skip the note write entirely — emitting a structurally valid
+      // but factually wrong all-zero note is worse than no note.
+      if (stagedInfo === null) {
+        warning =
+          'AI attribution note skipped: could not analyze the commit ' +
+          'diff (shallow clone, missing reflog for --amend, or partial ' +
+          '`git diff` failure). Co-authored-by trailer is unaffected.';
+        return warning; // finally still runs for cleanup
+      }
+
+      // Pass the actual model name (e.g. `qwen3-coder-plus`) rather than the
+      // co-author display label so the note's `generator` field reflects
+      // which model produced the changes — and so generateNotePayload's
+      // sanitizeModelName() actually has the codename it's meant to scrub.
+      // The base directory must be the git repo root: getCommittedFileInfo
+      // returns paths relative to `git rev-parse --show-toplevel`, and any
+      // mismatch here would cause path.relative to produce `../...` keys
+      // that never match in the AI-attribution lookup.
+      const baseDir = stagedInfo.repoRoot ?? this.config.getTargetDir();
+
+      // Capture the absolute paths actually included in this commit so
+      // the finally block can do a partial clear: files the AI edited
+      // but the user didn't `git add` should still be tracked for a
+      // later commit.
+      //
+      // Match against the canonical keys already stored in
+      // `fileAttributions` (recordEdit canonicalises every component
+      // via realpathSync) rather than re-resolving each diff path on
+      // the fly. Re-resolving fails for deleted files (realpathSync
+      // throws on a missing leaf) and for files behind intermediate
+      // symlinked directories (path.resolve only canonicalises the
+      // base) — both cases produced cleanup keys that didn't match
+      // the stored canonical keys, leaking stale per-file attribution
+      // into subsequent commits.
+      let canonicalBase: string;
+      try {
+        canonicalBase = fs.realpathSync(baseDir);
+      } catch {
+        canonicalBase = baseDir;
+      }
+
+      attributionService.applyCommittedRenames(
+        stagedInfo.renamedFiles,
+        canonicalBase,
+      );
+
+      // First-pass match: which tracked entries are part of THIS
+      // commit? Validation must run against this subset only — a
+      // tracked file the user didn't stage isn't in HEAD's new tree
+      // post-commit (HEAD still has the pre-AI-edit version), so
+      // `git show HEAD:<rel>` would return the OLD content and the
+      // hash divergence check would drop the AI's pending unstaged
+      // work. Scope the reader to the committed set only.
+      const committedScope = attributionService.matchCommittedFiles(
+        stagedInfo.files,
+        canonicalBase,
+      );
+
+      // Drop tracked entries whose COMMITTED content has diverged
+      // from what AI's last write recorded — catches the case where
+      // the user paste-replaced via an external editor, ran
+      // `git checkout`, or otherwise modified the file outside the
+      // Edit/Write tools. Validate against the COMMITTED blob rather
+      // than the live working tree: the user can `git add` AI's
+      // content, then make additional unstaged edits, then
+      // `git commit` — the commit's blob still matches AI's recorded
+      // hash, but the working-tree file does not. A working-tree
+      // comparison would drop the entry on a commit that legitimately
+      // came from AI.
+      //
+      // Pin the read to the captured `postHead` SHA, NOT the symbolic
+      // `HEAD`, for the same TOCTOU reason `buildGitNotesCommand`
+      // does: a post-commit hook or chained command can advance HEAD
+      // between our postHead capture and these reads, and a symbolic
+      // `git show HEAD:<rel>` would then compare against the WRONG
+      // commit's content and spuriously drop entries.
+      attributionService.validateAgainst((absPath) => {
+        // ONLY check files that landed in this commit. Anything else
+        // (unstaged AI work, files in other directories) returns null
+        // so validateAgainst leaves them alone.
+        if (!committedScope.has(absPath)) return null;
+        const rel = path
+          .relative(canonicalBase, absPath)
+          .split(path.sep)
+          .join('/');
+        if (!rel || rel.startsWith('..')) return null;
+        try {
+          return childProcess
+            .execFileSync('git', ['show', `${postHead}:${rel}`], {
+              cwd,
+              timeout: 2000,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'ignore'],
+              maxBuffer: 16 * 1024 * 1024,
+            })
+            .toString('utf-8');
+        } catch {
+          // No committed content (deleted file, file not in the
+          // commit, or git error) — leave the entry alone.
+          return null;
+        }
+      });
+
+      // Recompute the committed set after validation: dropped entries
+      // shouldn't appear in the per-file payload OR in the partial
+      // clear set (they were already deleted from fileAttributions).
+      committedAbsolutePaths = attributionService.matchCommittedFiles(
+        stagedInfo.files,
+        canonicalBase,
+      );
+
+      // No file in this commit was AI-touched in the current session.
+      // Writing a note anyway would emit an all-zero "0% AI" payload
+      // attached to a commit that legitimately had no AI involvement
+      // — actively misleading. Skip the note; the partial clear in
+      // the finally block is a no-op (empty set) so unrelated pending
+      // attributions stay tracked for a later commit.
+      if (committedAbsolutePaths.size === 0) {
+        return null;
+      }
+
+      // Toggle gate AFTER computing committedAbsolutePaths so the
+      // finally block still does a proper partial clear of files
+      // that just landed. Without this, a user who turned off
+      // attribution would have those just-committed files' tracked
+      // AI work sit in the singleton; flipping the toggle back on
+      // and committing the same file again would re-attribute the
+      // earlier (already-committed) AI edits to the new commit.
+      const gitCoAuthorSettings = this.config.getGitCoAuthor();
+      if (!gitCoAuthorSettings.commit) {
+        // Toggle-off but the commit landed — partial-clear the files
+        // that just landed so re-enabling later doesn't re-attribute
+        // earlier (already-committed) AI edits to a future commit.
+        shouldClear = committedAbsolutePaths;
+        return null;
+      }
+
+      const note = attributionService.generateNotePayload(
+        stagedInfo,
+        baseDir,
+        this.config.getModel(),
+      );
+      // Pin the note to the SHA we captured at commit-detection time
+      // (`postHead`) rather than the symbolic `HEAD`. A post-commit
+      // hook, chained `git commit && git tag -m ...`, or parallel
+      // process can advance HEAD between that capture and this
+      // execFile — without the SHA pin, `-f` would silently land the
+      // note on the wrong commit.
+      const notesCommand = buildGitNotesCommand(note, postHead);
+
+      if (!notesCommand) {
+        debugLogger.warn(
+          'AI attribution note too large, skipping git notes attachment',
+        );
+        warning =
+          'AI attribution note skipped: payload exceeded the 30 KB ' +
+          'size cap (large generated-file exclusion list?). ' +
+          'Co-authored-by trailer is unaffected.';
+        // Leave per-file state intact: the user might `git commit
+        // --amend` after pruning excluded paths, and partial-clearing
+        // here would erase the data they'd need to retry.
+        return warning;
+      }
+
+      // Use execFile with argv (rather than ShellExecutionService) so the
+      // JSON note isn't subjected to shell quoting at all — important on
+      // Windows where the bash-style escape used previously is invalid
+      // for cmd.exe / PowerShell. 5s timeout keeps a wedged repo from
+      // stalling the user-visible turn.
+      const { exitCode, output, timedOut } = await new Promise<{
+        exitCode: number | null;
+        output: string;
+        timedOut: boolean;
+      }>((resolve) => {
+        const child = childProcess.execFile(
+          notesCommand.command,
+          notesCommand.args,
+          { cwd, timeout: 5000, windowsHide: true },
+          (error, stdout, stderr) => {
+            const merged = (stdout || '') + (stderr || '');
+            if (error) {
+              // execFile signals timeout via either `error.killed === true`
+              // + `error.signal === 'SIGTERM'` (default kill), or
+              // `error.code === 'ETIMEDOUT'` on some platforms. Detect
+              // both so the caller's warning can name the actual cause
+              // ("timed out") instead of mislabeling it as exit-code 1.
+              const errno = error as NodeJS.ErrnoException & {
+                killed?: boolean;
+                signal?: string | null;
+              };
+              const isTimeout =
+                errno.code === 'ETIMEDOUT' ||
+                (errno.killed === true && errno.signal === 'SIGTERM');
+              const code =
+                typeof errno.code === 'number'
+                  ? (errno.code as unknown as number)
+                  : null;
+              resolve({
+                exitCode: code ?? 1,
+                output: merged,
+                timedOut: isTimeout,
+              });
+            } else {
+              resolve({ exitCode: 0, output: merged, timedOut: false });
+            }
+          },
+        );
+        child.on('error', () => {});
+      });
+
+      if (exitCode !== 0) {
+        if (timedOut) {
+          debugLogger.warn(`git notes timed out after 5s: ${output}`);
+          warning =
+            'AI attribution note skipped: `git notes add` timed out ' +
+            'after 5s' +
+            (output ? ` (${output.trim().slice(0, 120)})` : '') +
+            '. Co-authored-by trailer is unaffected.';
+        } else {
+          debugLogger.warn(`git notes exited with code ${exitCode}: ${output}`);
+          warning =
+            `AI attribution note skipped: \`git notes add\` exited ${exitCode}` +
+            (output ? ` (${output.trim().slice(0, 120)})` : '') +
+            '. Co-authored-by trailer is unaffected.';
+        }
+        // Note didn't land — leave per-file state intact so the user
+        // can amend the commit (or manually run `git notes add`)
+        // without losing attribution data they'd need to reproduce.
+      } else {
+        debugLogger.debug(
+          `Attached AI attribution note: ${note.summary.aiPercent}% AI, ${note.summary.totalFilesTouched} file(s)`,
+        );
+        // Successful note write — partial-clear the just-committed
+        // files so a later commit doesn't re-attribute them.
+        shouldClear = committedAbsolutePaths;
+      }
+    } catch (err) {
+      debugLogger.warn(
+        `Failed to attach AI attribution note: ${getErrorMessage(err)}`,
+      );
+      warning =
+        `AI attribution note skipped: ${getErrorMessage(err).slice(0, 120)}. ` +
+        'Co-authored-by trailer is unaffected.';
+    } finally {
+      // Partial clear: only drop tracking for files that landed in
+      // this commit AND the note write actually succeeded (or the
+      // user disabled the toggle). `shouldClear` stays null when the
+      // note was skipped (oversized payload, non-zero exit, exception)
+      // so the user can amend & retry without their per-file
+      // attribution being silently destroyed first. When `shouldClear`
+      // is null, just snapshot the prompt counter — DON'T
+      // wholesale-clear, since that would erase pending AI edits for
+      // files the user never staged in this commit.
+      if (shouldClear) {
+        attributionService.clearAttributedFiles(shouldClear);
+      } else {
+        attributionService.noteCommitWithoutClearing();
+      }
+    }
+    return warning;
+  }
+
+  /**
+   * Get information about files in the just-landed commit by diffing
+   * the captured `postHead` against its parent (`${postHead}~1`), or
+   * for amend against `preHead` (the captured pre-amend SHA). All
+   * probes/diffs are SHA-pinned so a post-commit hook moving HEAD
+   * between this call and the eventual `git notes` write can't make
+   * the note describe a different commit than it attaches to.
+   *
+   * Returns:
+   * - A populated `StagedFileInfo` when analysis succeeded.
+   * - An empty `StagedFileInfo` when the commit truly has no files
+   *   (e.g. `--allow-empty`). The caller does a no-op partial clear so
+   *   pending AI attributions stay tracked for the next real commit.
+   * - `null` when analysis itself failed (shallow clone with no parent
+   *   object, --amend with `preHead === null` or unresolvable `preHead`,
+   *   partial diff failure, exception).
+   *   The caller treats this as "could not determine the committed
+   *   set" and falls back to `noteCommitWithoutClearing()` — snapshots
+   *   the prompt counter but leaves per-file attribution intact, so
+   *   pending AI edits for files NOT in the just-committed set don't
+   *   get wiped along with the analysis failure. (The just-committed
+   *   file's stale entry may re-attribute on a later commit; that's
+   *   the smaller evil compared to wholesale loss.)
+   */
+  private async getCommittedFileInfo(
+    cwd: string,
+    isAmend: boolean,
+    postHead: string,
+    preHead: string | null,
+  ): Promise<StagedFileInfo | null> {
+    const empty: StagedFileInfo = {
+      files: [],
+      diffSizes: new Map(),
+      deletedFiles: new Set(),
+      renamedFiles: new Map(),
+    };
+
+    // Distinguish a successful git command with no output (e.g.
+    // `--allow-empty` -> empty `--name-only` listing) from a failed
+    // git command (silenced by ShellExecutionService) so the caller
+    // can choose between the empty-commit sentinel and the analysis-
+    // failure sentinel. Returning the same `''` for both used to
+    // alias `--allow-empty` to a `--name-only` failure, which left
+    // pending attributions tracked across the just-committed file
+    // and re-attributed it on the next commit.
+    const runGit = async (args: string): Promise<string | null> => {
+      const handle = await ShellExecutionService.execute(
+        `git ${args}`,
+        cwd,
+        () => {},
+        AbortSignal.timeout(5000),
+        false,
+        {},
+      );
+      const r = await handle.result;
+      return r.exitCode === 0 ? r.output : null;
+    };
+
+    try {
+      // SHA-pin every probe and diff to the captured `postHead` (and
+      // `preHead` for amend). Using symbolic `HEAD` here would re-open
+      // the same TOCTOU class that the `git notes` write was already
+      // pinned against: between this analysis phase and the note write,
+      // a post-commit hook (husky/lefthook auto-amend, sign-off, signed
+      // commits adjustment), a chained `git tag -m ...`, or a parallel
+      // git process can advance HEAD — and then `HEAD~1..HEAD` /
+      // `diff-tree HEAD` would describe whatever commit HEAD now
+      // points at, while the note still attaches to the original
+      // `postHead`. The result is a note on commit A whose contents
+      // describe commit B. Pinning to `postHead` keeps the analysis
+      // and the note consistent.
+      //
+      // The three calls are independent — fan out so we don't pay the
+      // spawn latency serially. Same for the three diff calls below
+      // once we know which form to use.
+      // - `rev-parse --verify ${postHead}~1`: probe whether the parent
+      //   OBJECT is locally available (fails in shallow clones where
+      //   the parent was pruned).
+      // - `log -1 --pretty=%P ${postHead}`: read the parent SHA from
+      //   the commit metadata. Works regardless of shallow status
+      //   because the parent SHA is recorded on the commit itself, not
+      //   derived by walking. Empty output = postHead is a true root
+      //   commit. Non-empty output = postHead has a parent (whether or
+      //   not its object is locally available).
+      // - `rev-parse --show-toplevel`: capture the repo root (HEAD-
+      //   independent).
+      //
+      // `rev-list --count` looks tempting as a "is this a root
+      // commit?" probe but it returns 1 in a depth-1 shallow clone
+      // (only the local object is reachable), aliasing the shallow
+      // and root cases. The parent-SHA approach disambiguates them
+      // correctly.
+      const [hasParentOutput, parentShaOutput, repoRootOutput] =
+        await Promise.all([
+          runGit(`rev-parse --verify ${postHead}~1`),
+          runGit(`log -1 --pretty=%P ${postHead}`),
+          runGit('rev-parse --show-toplevel'),
+        ]);
+      // `rev-parse --verify <sha>~1` is allowed to fail (shallow
+      // clone, true root commit) — treat null and '' uniformly.
+      const hasParent = hasParentOutput !== null && hasParentOutput.length > 0;
+      // `log -1 --pretty=%P <sha>` MUST succeed; if git can't read
+      // postHead's metadata we have no way to tell shallow apart from
+      // a real root commit. Bail.
+      if (parentShaOutput === null) {
+        debugLogger.warn(
+          'getCommittedFileInfo: log -1 --pretty=%P <postHead> failed; ' +
+            'cannot distinguish shallow clone from true root commit.',
+        );
+        return null;
+      }
+      const isTrueRootCommit = parentShaOutput.trim().length === 0;
+      // Shallow clone: postHead has a parent recorded but the object
+      // isn't local. Bail rather than over-attribute via --root.
+      if (!hasParent && !isTrueRootCommit) {
+        debugLogger.warn(
+          'getCommittedFileInfo: <postHead>~1 unreadable but commit is not ' +
+            'the true root (shallow clone?); skipping attribution to avoid ' +
+            'attributing the entire commit contents.',
+        );
+        return null;
+      }
+      // Capture the repo root so the attribution service can
+      // reconcile paths from `git diff` (relative to the toplevel)
+      // against absolute paths recorded by the edit/write tools.
+      // Using the configured target directory as base would zero out
+      // attribution for any file outside it. Tolerate failure (null
+      // -> empty string -> caller falls back to targetDir).
+      const repoRoot = (repoRootOutput ?? '').trim();
+
+      // Choose the diff range:
+      // - amend: `${preHead}..${postHead}` — the actual amend delta.
+      //   `preHead` was captured BEFORE the user's command ran and so
+      //   points at the original (pre-amend) commit. The amend rewrote
+      //   that commit into postHead; diffing them captures only what
+      //   changed in this amend, not the entire amended commit's
+      //   contents (which `${postHead}~1..${postHead}` would falsely
+      //   include — postHead's parent is the original's parent, so
+      //   diffing against it spans both commits' worth of changes).
+      // - has parent: `${postHead}~1..${postHead}` — pin both ends.
+      //   We do NOT use `${preHead}..${postHead}` here: in chains like
+      //   `git reset HEAD~3 && git commit`, preHead points well above
+      //   postHead's parent and the diff would include the reset-away
+      //   commits as deletions, dramatically over-attributing.
+      // - root commit: `diff-tree --root <postHead>` against the empty
+      //   tree.
+      let diffArgs: { name: string; status: string; numstat: string };
+      if (isAmend) {
+        // For amend, the pre-amend SHA we need is `preHead`. It must
+        // be non-null (caller's `attributableInCwd` gate already
+        // captured it for any commit attempt); a missing preHead means
+        // a brand-new repo where amend isn't meaningful anyway.
+        if (preHead === null) {
+          debugLogger.warn(
+            'getCommittedFileInfo: --amend with no preHead; skipping ' +
+              'attribution note (cannot determine amend delta).',
+          );
+          return null;
+        }
+        // Verify the pre-amend SHA still resolves. preHead is captured
+        // synchronously before spawn, but a concurrent `git gc` /
+        // `git prune` could in principle remove the object before we
+        // try to diff against it.
+        const preHeadProbe = await runGit(`rev-parse --verify ${preHead}`);
+        if (preHeadProbe === null || preHeadProbe.length === 0) {
+          debugLogger.warn(
+            'getCommittedFileInfo: --amend preHead unresolvable; skipping ' +
+              'attribution note (cannot determine amend delta).',
+          );
+          return null;
+        }
+        diffArgs = {
+          name: `diff --find-renames --name-only ${preHead} ${postHead}`,
+          status: `diff --find-renames --name-status ${preHead} ${postHead}`,
+          numstat: `diff --find-renames --numstat ${preHead} ${postHead}`,
+        };
+      } else if (hasParent) {
+        diffArgs = {
+          name: `diff --find-renames --name-only ${postHead}~1 ${postHead}`,
+          status: `diff --find-renames --name-status ${postHead}~1 ${postHead}`,
+          numstat: `diff --find-renames --numstat ${postHead}~1 ${postHead}`,
+        };
+      } else {
+        diffArgs = {
+          name: `diff-tree --root --find-renames --no-commit-id -r --name-only ${postHead}`,
+          status: `diff-tree --root --find-renames --no-commit-id -r --name-status ${postHead}`,
+          numstat: `diff-tree --root --find-renames --no-commit-id -r --numstat ${postHead}`,
+        };
+      }
+      const [nameOutput, statusOutput, numstatOutput] = await Promise.all([
+        runGit(diffArgs.name),
+        runGit(diffArgs.status),
+        runGit(diffArgs.numstat),
+      ]);
+
+      // ANY of the three diffs failing (null) is an analysis failure,
+      // NOT an empty commit. Without this check, a `--name-only` that
+      // failed silently used to alias to `--allow-empty`, leaving the
+      // just-committed file's tracked AI edit in the singleton and
+      // re-attributing it to the next commit.
+      if (
+        nameOutput === null ||
+        statusOutput === null ||
+        numstatOutput === null
+      ) {
+        debugLogger.warn(
+          'getCommittedFileInfo: one or more diff calls failed; ' +
+            'cannot distinguish empty commit from analysis failure.',
+        );
+        return null;
+      }
+
+      const files = nameOutput
+        .split('\n')
+        .map((f) => f.trim())
+        .filter(Boolean);
+      if (files.length === 0) return empty;
+
+      // Get deleted files
+      const deletedFiles = new Set<string>();
+      const renamedFiles = new Map<string, string>();
+      for (const line of statusOutput.split('\n')) {
+        if (line.startsWith('D\t')) {
+          deletedFiles.add(line.slice(2).trim());
+          continue;
+        }
+        const parts = line.split('\t');
+        const status = parts[0] ?? '';
+        if (status.startsWith('R') && parts.length >= 3) {
+          renamedFiles.set(parts[1]!.trim(), parts[2]!.trim());
+        }
+      }
+
+      // Get diff sizes from numstat output. Bail if `--numstat`
+      // returned nothing while `--name-only` succeeded — that's the
+      // partial-failure signal for `Promise.all`, and writing a note
+      // anyway would force every file's diffSize to 0, then
+      // generateNotePayload would clamp aiChars to 0 and emit a
+      // structurally valid but factually wrong all-zero attribution.
+      const diffSizes = parseNumstat(numstatOutput);
+      if (diffSizes.size === 0) {
+        debugLogger.warn(
+          'getCommittedFileInfo: --numstat returned empty while ' +
+            '--name-only listed files; skipping attribution note to ' +
+            'avoid emitting all-zero AI percentages.',
+        );
+        return null;
+      }
+
+      return {
+        files,
+        diffSizes,
+        deletedFiles,
+        renamedFiles,
+        repoRoot: repoRoot.length > 0 ? repoRoot : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Append a configured `Co-authored-by:` trailer to `git commit`
+   * commands when the commit co-author feature is enabled. No-op for
+   * commands that don't carry an inline `-m`/`-am` message (those open
+   * an editor, which we don't try to rewrite).
+   */
+  private addCoAuthorToGitCommit(command: string): string {
+    // Check if commit co-author feature is enabled
+    const gitCoAuthorSettings = this.config.getGitCoAuthor();
+
+    if (!gitCoAuthorSettings.commit) {
+      return command;
+    }
+
+    // Same shell-type guard as addAttributionToPR — bash escaping is
+    // wrong for cmd/PowerShell. Gating on the active shell rather than
+    // the OS platform keeps Windows + Git Bash users (where
+    // getShellConfiguration() reports shell:'bash') working.
+    if (getShellConfiguration().shell !== 'bash') {
+      return command;
+    }
+
+    // Shell-aware detection — a raw regex would falsely match quoted
+    // text such as `echo "git commit"` and hand a corrupted command
+    // (with the trailer mid-string) back to the executor. The
+    // in-cwd check is what we want here: only inject the
+    // trailer when we're confident the commit lands in our cwd.
+    const segmentRange = findAttributableCommitSegment(
+      command,
+      this.params.directory || this.config.getTargetDir(),
+    );
+    if (!segmentRange) {
+      return command;
+    }
+
+    // Handle different git commit patterns:
+    // Match -m "message" or -m 'message', including combined flags like -am
+    // Use separate patterns to avoid ReDoS (catastrophic backtracking).
+    // The regex tolerates `-m"msg"` shorthand (no space) — bash accepts
+    // both `-m foo` and `-mfoo`, and we shouldn't silently skip the
+    // shorthand form.
+    //
+    // The regex is scoped to the actual `git commit` segment (not the
+    // whole compound command) so a later `git tag -a v1 -m "..."` in
+    // the same chain can't be mistaken for the commit message.
+    //
+    // Pattern breakdown:
+    //   -[a-zA-Z]*m  matches -m, -am, -nm, etc. (combined short flags)
+    //   \s*          matches optional whitespace after the flag
+    //   [^"\\]       matches any char except double-quote and backslash
+    //   \\.          matches escape sequences like \" or \\
+    //   (?:...|...)* matches normal chars or escapes, repeated
+    // Match both the short form (`-m`, `-am`, combined short flags)
+    // and git's long alias `--message` (with optional `=` separator:
+    // `--message="..."`). Inner alternation is non-capturing so the
+    // existing `[full, prefix, body]` destructure still applies.
+    const FLAG_PREFIX = `(?:-[a-zA-Z]*m|--message)\\s*=?\\s*`;
+    const doubleQuotePattern = new RegExp(
+      `(${FLAG_PREFIX})"((?:[^"\\\\]|\\\\.)*)"`,
+      'g',
+    );
+    // Bash single quotes can't be escaped, so apostrophes inside a
+    // single-quoted message use the close-escape-reopen form `'\''`
+    // (e.g. `git commit -m 'don'\''t'`). The inner alternation matches
+    // either a non-apostrophe character or that escape sequence as a
+    // whole, so the trailer lands at the true end of the body — at the
+    // FINAL closing `'` after the user's content — rather than after
+    // the first interior apostrophe. Mirrors `bodySinglePattern` in
+    // `addAttributionToPR`.
+    const singleQuotePattern = new RegExp(
+      `(${FLAG_PREFIX})'((?:[^']|'\\\\'')*)'`,
+      'g',
+    );
+    // Trim a trailing shell comment from the segment so an inert
+    // `git commit -m "real" # -m "fake"` doesn't have `lastMatchOf`
+    // pick the comment's `-m "fake"` and splice the trailer into the
+    // comment (where bash discards it), leaving the actual commit
+    // unattributed.
+    const fullSegment = command.slice(segmentRange.start, segmentRange.end);
+    const commentStart = findUnquotedCommentStart(fullSegment);
+    const segment =
+      commentStart >= 0 ? fullSegment.slice(0, commentStart) : fullSegment;
+    // Git concatenates multiple `-m` values with a blank line, so the
+    // co-author trailer has to land in the *last* `-m` value to be
+    // recognised by `git interpret-trailers`. matchAll → take the
+    // last match (`lastMatchOf` is the shared helper).
+    const doubleMatch = lastMatchOf(segment.matchAll(doubleQuotePattern));
+    const singleMatch = lastMatchOf(segment.matchAll(singleQuotePattern));
+
+    // Pick whichever match appears LAST in the segment, regardless of
+    // quote style — but reject any candidate that's nested inside the
+    // other's range. For `git commit -m "docs mention -m 'flag'"` the
+    // single-quoted `-m 'flag'` lives INSIDE the double-quoted real
+    // message; without the nesting check the later (inner) `-m` would
+    // win and the trailer would be spliced into the body text.
+    const picked = pickOuterLastMatch(doubleMatch, singleMatch);
+    const match = picked.match;
+    const quote = picked.isDouble ? '"' : "'";
+
+    // Escape the configured name/email for the surrounding quote
+    // style — has to follow the actually-selected match.
+    const escape = picked.isDouble
+      ? escapeForBashDoubleQuote
+      : escapeForBashSingleQuote;
+    const escapedName = escape(gitCoAuthorSettings.name ?? '');
+    const escapedEmail = escape(gitCoAuthorSettings.email ?? '');
+    const coAuthor = `\n\nCo-authored-by: ${escapedName} <${escapedEmail}>`;
+
+    if (match) {
+      const [fullMatch, prefix, existingMessage] = match;
+
+      // Bail on `$(...)` command substitution inside the captured
+      // body: our regex's `(?:[^"\\]|\\.)*` body group stops at the
+      // first interior `"`, so a heredoc-style
+      // `git commit -m "$(cat <<'HEREDOC' ... HEREDOC)"` (which the
+      // tool description recommends for multi-line messages) would
+      // be matched only up to the first inner `"`, then the trailer
+      // would be spliced into the middle of the command
+      // substitution and break the shell command. Recognising
+      // `$(` is enough — if it's there we can't safely rewrite
+      // without a real shell parser.
+      //
+      // We do NOT bail on a bare backtick: while `\`cmd "with" quotes\``
+      // suffers the same regex-truncation bug, the common markdown-
+      // style `\`func()\`` in a commit body has no inner `"` and works
+      // fine. Bailing on any backtick would lose attribution for the
+      // common case to defend against a near-zero-traffic pathological
+      // case where the user typed raw backticks INSIDE a double-quoted
+      // body and put inner double-quotes inside the backtick span.
+      // bash itself would interpret that as command substitution
+      // anyway — almost certainly a user error rather than a real
+      // commit message — so the rewrite is at most one of several
+      // things that go wrong.
+      if (existingMessage.includes('$(')) {
+        return command;
+      }
+
+      const newMessage = existingMessage + coAuthor;
+      const replacement = prefix + quote + newMessage + quote;
+
+      // Splice the modified segment back into the original command,
+      // preserving everything outside the commit segment exactly as
+      // the caller had it.
+      const matchStart = (match.index ?? 0) + segmentRange.start;
+      if (matchStart >= segmentRange.start) {
+        return (
+          command.slice(0, matchStart) +
+          replacement +
+          command.slice(matchStart + fullMatch.length)
+        );
+      }
+    }
+
+    // If no -m flag found, the command might open an editor
+    // In this case, we can't easily modify it, so return as-is
+    return command;
+  }
+
+  /**
+   * Detect `gh pr create` commands and append AI attribution text to the
+   * PR body. Format: "Generated with Qwen Code (N-shotted by Qwen-Coder)"
+   * when at least one user prompt has been recorded since the last commit;
+   * otherwise just "Generated with Qwen Code".
+   *
+   * Skipped on Windows: the appended text relies on bash quote-escape
+   * conventions (`\$`, `'\''`) that cmd.exe and PowerShell don't honor,
+   * so on those shells our injection could either break the user-approved
+   * `gh pr create` command or be evaluated as command substitution.
+   * Losing PR attribution on Windows is an acceptable trade for safety.
+   */
+  private addAttributionToPR(command: string): string {
+    // Shell-aware detection — a raw regex would falsely match quoted
+    // text such as `echo "gh pr create --body \"x\""` and rewrite a
+    // command that wasn't actually creating a PR.
+    const ghSegment = findGhPrCreateSegment(command);
+    if (!ghSegment) {
+      return command;
+    }
+
+    // Gate on shell type rather than OS platform: bash escaping is
+    // invalid under cmd/PowerShell but works fine under Windows +
+    // Git Bash, which `getShellConfiguration()` reports as `'bash'`.
+    if (getShellConfiguration().shell !== 'bash') {
+      return command;
+    }
+
+    const gitCoAuthorSettings = this.config.getGitCoAuthor();
+    if (!gitCoAuthorSettings.pr) {
+      return command;
+    }
+
+    const attributionService = CommitAttributionService.getInstance();
+    const shots = attributionService.getPromptsSinceLastCommit();
+    const generator = gitCoAuthorSettings.name ?? 'Qwen-Coder';
+
+    const attribution =
+      shots > 0
+        ? `\n\nGenerated with Qwen Code (${shots}-shotted by ${generator})`
+        : `\n\nGenerated with Qwen Code`;
+
+    // Match both the long form `--body` and the short alias `-b`
+    // (documented in `gh pr create --help`), with either space or
+    // `=` separator: `--body "..."`, `--body="..."`, `-b "..."`,
+    // `-b="..."`. Inner alternation is non-capturing so the existing
+    // `[full, prefix, body]` destructure stays intact.
+    //
+    // Run the regex against just the gh segment, NOT the full
+    // command. Otherwise a compound like
+    // `curl -b "session=abc" && gh pr create --body "summary"` would
+    // have the body regex match `curl`'s `-b` cookie flag and inject
+    // attribution into the cookie value, corrupting the curl call.
+    const BODY_FLAG = `(?:--body|-b)[\\s=]+`;
+    const bodyDoublePattern = new RegExp(
+      `(${BODY_FLAG})"((?:[^"\\\\]|\\\\.)*)"`,
+      'g',
+    );
+    // Bash apostrophes inside a single-quoted body use the
+    // close-escape-reopen form `'\''`. The inner alternation matches
+    // either a non-apostrophe character or that escape sequence as a
+    // whole, so the trailer lands at the true end of the body rather
+    // than after only the first quoted segment.
+    const bodySinglePattern = new RegExp(
+      `(${BODY_FLAG})'((?:[^']|'\\\\'')*)'`,
+      'g',
+    );
+    // Trim a trailing shell comment off the segment for the same
+    // reason as addCoAuthorToGitCommit — `gh pr create --body "real"
+    // # --body "fake"` would otherwise let `lastMatchOf` pick the
+    // comment's `--body "fake"` and inject attribution into a `--body`
+    // flag bash discards.
+    const fullSegment = command.slice(ghSegment.start, ghSegment.end);
+    const commentStart = findUnquotedCommentStart(fullSegment);
+    const segment =
+      commentStart >= 0 ? fullSegment.slice(0, commentStart) : fullSegment;
+    // gh ignores all but the last `--body`/`-b` flag, so the trailer
+    // has to land in the final occurrence to actually appear in the PR.
+    // matchAll → take the last match for each quote style, then pick
+    // whichever sits later in the segment (mirrors addCoAuthorToGitCommit;
+    // shares the `lastMatchOf` helper).
+    const bodyDoubleMatch = lastMatchOf(segment.matchAll(bodyDoublePattern));
+    const bodySingleMatch = lastMatchOf(segment.matchAll(bodySinglePattern));
+    // Pick whichever match appears LAST in the segment, regardless of
+    // quote style — but reject any candidate that's nested inside the
+    // other's range. For `gh pr create --body "docs mention -b 'flag'"`
+    // the inner `-b 'flag'` is INSIDE the outer `--body "..."`; without
+    // a nesting check the inner (later) `-b` would win and the trailer
+    // would be spliced into the body text rather than appended after it.
+    // Shared with addCoAuthorToGitCommit via `pickOuterLastMatch`.
+    const pickedBody = pickOuterLastMatch(bodyDoubleMatch, bodySingleMatch);
+    const bodyMatch = pickedBody.match;
+    const bodyQuote = pickedBody.isDouble ? '"' : "'";
+
+    if (bodyMatch) {
+      const [fullMatch, prefix, existingBody] = bodyMatch;
+      // Same `$(...)` bailout as addCoAuthorToGitCommit: a heredoc-
+      // style body (`gh pr create --body "$(cat <<'EOF' ... EOF)"`)
+      // contains nested `"` that our regex's `(?:[^"\\]|\\.)*` body
+      // group can't span — the match would terminate at the first
+      // interior quote and the splice would land mid-substitution,
+      // corrupting the user-approved command.
+      if (existingBody.includes('$(')) {
+        return command;
+      }
+      // Escape the appended text for the surrounding quote style.
+      // Without this, a configured generator name containing `"`, `$`, a
+      // backtick, or `'` would either break the user-approved `gh pr
+      // create` command or, worse, be interpreted as command substitution.
+      const escapedAttribution = pickedBody.isDouble
+        ? escapeForBashDoubleQuote(attribution)
+        : escapeForBashSingleQuote(attribution);
+      const newBody = existingBody + escapedAttribution;
+      // Splice the modified segment back into the original command,
+      // offsetting the in-segment match index by the segment start.
+      const idx = (bodyMatch.index ?? 0) + ghSegment.start;
+      if (idx >= ghSegment.start) {
+        const replacement = prefix + bodyQuote + newBody + bodyQuote;
+        return (
+          command.slice(0, idx) +
+          replacement +
+          command.slice(idx + fullMatch.length)
+        );
+      }
+    }
+
+    // Reached here means: `gh pr create`/`gh pr new` was detected,
+    // `gitCoAuthor.pr` is enabled, but the regex found no inline
+    // `--body`/`-b` to splice the attribution into. Common causes
+    // are `--body-file <path>`, `--fill` (uses commit messages as
+    // body), or just bare `gh pr create` (opens an editor). The
+    // command runs as the user typed it; we just don't add the
+    // attribution line. Surface this as a debug warning so a user
+    // wondering "why isn't my PR getting the trailer?" can see the
+    // skip in `QWEN_DEBUG_LOG_FILE`. Inline-body rewriting is the
+    // only safe automatic path — `--body-file` would require us to
+    // mutate the user's file on disk; `--fill` and editor flows
+    // have no body in argv at all.
+    debugLogger.warn(
+      'addAttributionToPR: gh pr create detected but no inline ' +
+        '`--body`/`-b` argument found to append attribution to ' +
+        '(--body-file / --fill / editor flows are unsupported); ' +
+        'PR will be created without the AI attribution line. ' +
+        'Pass `--body "..."` inline to enable automatic attribution.',
+    );
+    return command;
+  }
+}
+
+function getShellExecutionWrapper(
+  shellConfiguration = getShellConfiguration(),
+): string {
+  const executable = getShellDisplayName(shellConfiguration);
+  return `${executable} ${shellConfiguration.argsPrefix.join(' ')} <command>`;
+}
+
+function getShellQuotingGuidance(shell: ShellType): string {
+  switch (shell) {
+    case 'bash':
+      return `- **Shell argument quoting and special characters**: The active shell is Bash. When passing arguments that contain special characters (parentheses \`()\`, backticks \`\`\`\`, dollar signs \`$\`, backslashes \`\\\`, semicolons \`;\`, pipes \`|\`, angle brackets \`<>\`, ampersands \`&\`, exclamation marks \`!\`, etc.), you MUST ensure they are properly quoted to prevent Bash from misinterpreting them as shell syntax:
+  - **Single quotes** \`'...'\` pass everything literally, but cannot contain a literal single quote.
+  - **ANSI-C quoting** \`$'...'\` supports escape sequences (e.g. \`\\n\` for newline, \`\\'\` for single quote) and is the safest approach for multi-line strings or strings with single quotes.
+  - **Heredoc** is the most robust approach for large, multi-line text with mixed quotes:
+    \`\`\`bash
+    gh pr create --title "My Title" --body "$(cat <<'HEREDOC'
+    Multi-line body with (parentheses), \`backticks\`, and 'single-quotes'.
+    HEREDOC
+    )"
+    \`\`\`
+  - NEVER use unescaped single quotes inside single-quoted strings (e.g. \`'it\\'s'\` is wrong; use \`$'it\\'s'\` or \`"it's"\` instead).
+  - If unsure, prefer double-quoting arguments and escape inner double-quotes as \`\\"\`.`;
+    case 'powershell':
+      return `- **Shell argument quoting and special characters**: The active shell is PowerShell. When passing arguments that contain special characters (parentheses \`()\`, backticks \`\`\`\`, dollar signs \`$\`, backslashes \`\\\`, semicolons \`;\`, pipes \`|\`, angle brackets \`<>\`, ampersands \`&\`, exclamation marks \`!\`, etc.), you MUST ensure they are properly quoted to prevent PowerShell from misinterpreting them as shell syntax:
+  - **Single quotes** \`'...'\` pass everything literally. To include a literal single quote, double it (e.g. \`'it''s'\`).
+  - **Double quotes** \`"..."\` expand variables and subexpressions; use them only when that expansion is intended.
+  - Escape PowerShell metacharacters with the backtick escape character when they must be literal.
+  - For large, multi-line text, prefer a single-quoted here-string (\`@' ... '@\`) so content is not interpolated.
+  - Do NOT use Bash-only forms such as ANSI-C quoting (\`$'...'\`) or Bash heredocs.`;
+    case 'cmd':
+      return `- **Shell argument quoting and special characters**: The active shell is cmd.exe. When passing arguments that contain special characters (parentheses \`()\`, backticks \`\`\`\`, dollar signs \`$\`, backslashes \`\\\`, semicolons \`;\`, pipes \`|\`, angle brackets \`<>\`, ampersands \`&\`, exclamation marks \`!\`, etc.), you MUST ensure they are properly quoted to prevent cmd.exe from misinterpreting them as shell syntax:
+  - Use double quotes around arguments that contain spaces or metacharacters.
+  - Escape literal cmd.exe metacharacters such as \`&\`, \`|\`, \`<\`, \`>\`, and \`^\` with caret (\`^\`).
+  - Single quotes do not quote arguments in cmd.exe.
+  - Be careful with \`%VAR%\` environment-variable expansion; avoid literal \`%...%\` unless expansion is intended.
+  - Do NOT use Bash-only forms such as ANSI-C quoting (\`$'...'\`) or Bash heredocs.`;
+    default: {
+      const _exhaustive: never = shell;
+      return _exhaustive;
+    }
+  }
+}
+
+function getShellCommandSequencingGuidance({
+  executable,
+  shell,
+}: ShellConfiguration): string {
+  const independentGuidance =
+    '- If the commands are independent and can run in parallel, make multiple run_shell_command tool calls in a single message.';
+
+  switch (shell) {
+    case 'bash':
+      return `- When issuing multiple commands:
+  ${independentGuidance}
+  - If the commands depend on each other and must run sequentially, use a single run_shell_command call with '&&' to chain them together (e.g., \`git add . && git commit -m "message" && git push\`).
+  - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
+  - DO NOT use newlines to separate commands (newlines are ok in quoted strings).`;
+    case 'cmd':
+      return `- When issuing multiple commands:
+  ${independentGuidance}
+  - If the commands depend on each other and must run sequentially, use a single run_shell_command call with '&&' to chain them together (e.g., \`git add . && git commit -m "message" && git push\`).
+  - Use '&' only when you need to run commands sequentially but don't care if earlier commands fail.
+  - DO NOT use ';' or newlines to separate commands in cmd.exe.`;
+    case 'powershell': {
+      if (
+        getShellDisplayName({ executable, argsPrefix: [], shell }) ===
+        'pwsh.exe'
+      ) {
+        return `- When issuing multiple commands:
+  ${independentGuidance}
+  - If the commands depend on each other and must run sequentially, use a single run_shell_command call with '&&' to chain them together (e.g., \`git add . && git commit -m "message" && git push\`).
+  - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
+  - DO NOT use newlines to separate commands (newlines are ok in quoted strings).`;
+      }
+
+      return `- When issuing multiple commands:
+  ${independentGuidance}
+  - Windows PowerShell does not support '&&'. If commands must run sequentially and stop on failure, use explicit PowerShell control flow (for example, check \`$LASTEXITCODE\` before running the next external command) or run the next command only after seeing the previous run_shell_command result.
+  - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
+  - DO NOT use newlines to separate commands (newlines are ok in quoted strings).`;
+    }
+    default: {
+      const _exhaustive: never = shell;
+      return _exhaustive;
+    }
+  }
+}
+
+function getShellToolDescription(
+  shellConfiguration: ShellConfiguration,
+): string {
+  const executionWrapper = getShellExecutionWrapper(shellConfiguration);
+  const isWindows = os.platform() === 'win32';
+  const processGroupNote = isWindows
+    ? ''
+    : '\n  - Command is executed as a subprocess that leads its own process group. Command process group can be terminated as `kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`.';
+  const processStopNote =
+    '\n  - To stop a background command started by this tool, use `task_stop` when a task id is available. Do not use broad process-name kills such as `kill $(pgrep node)`, `pkill node`, or `killall node`; use a specific PID or process group id where supported.';
+
+  return `Executes a given shell command (as \`${executionWrapper}\`) in a subprocess with optional timeout, ensuring proper handling and security measures.
+
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+
+**Usage notes**:
+- You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes). For longer commands, use \`is_background: true\` and observe the managed task instead of passing a larger timeout.
+
+- Avoid using run_shell_command with the \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`, or \`echo\` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
+  - File search: Use ${ToolNames.GLOB} (NOT find or ls)
+  - Content search: Use ${ToolNames.GREP} (NOT grep or rg)
+  - Read files: Use ${ToolNames.READ_FILE} (NOT cat/head/tail)
+  - Edit files: Use ${ToolNames.EDIT} (NOT sed/awk)
+  - Write files: Use ${ToolNames.WRITE_FILE} (NOT echo >/cat <<EOF)
+  - Communication: Output text directly (NOT echo/printf)
+${getShellQuotingGuidance(shellConfiguration.shell)}
+${getShellCommandSequencingGuidance(shellConfiguration)}
+- Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of \`cd\`. You may use \`cd\` if the User explicitly requests it.
+  <good-example>
+  pytest /foo/bar/tests
+  </good-example>
+  <bad-example>
+  cd /foo/bar && pytest tests
+  </bad-example>
+
+**Background vs Foreground Execution:**
+- You should decide whether commands should run in background or foreground based on their nature:
+- Use background execution (is_background: true) for:
+  - Long-running development servers: \`npm run start\`, \`npm run dev\`, \`yarn dev\`, \`bun run start\`
+  - Build watchers: \`npm run watch\`, \`webpack --watch\`
+  - Database servers: \`mongod\`, \`mysql\`, \`redis-server\`
+  - Web servers: \`python -m http.server\`, \`php -S localhost:8000\`
+  - Any command expected to run indefinitely until manually stopped
+${processGroupNote}${processStopNote}
+- Use foreground execution (the default) for commands that finish on their own, such as builds, installs, git operations, and test runs.
+`;
+}
+
+function getCommandDescription(shellConfiguration: ShellConfiguration): string {
+  const executionWrapper = getShellExecutionWrapper(shellConfiguration);
+  switch (shellConfiguration.shell) {
+    case 'cmd':
+      return `Exact cmd.exe command to execute as \`${executionWrapper}\``;
+    case 'powershell':
+      return `Exact PowerShell command to execute as \`${executionWrapper}\``;
+    case 'bash':
+      return `Exact bash command to execute as \`${executionWrapper}\``;
+    default: {
+      const _exhaustive: never = shellConfiguration.shell;
+      return _exhaustive;
+    }
+  }
+}
+
+export class ShellTool extends BaseDeclarativeTool<
+  ShellToolParams,
+  ToolResult
+> {
+  static Name: string = ToolNames.SHELL;
+
+  override get maxOutputChars(): number {
+    return getShellOutputThreshold(this.config);
+  }
+
+  constructor(private readonly config: Config) {
+    const shellConfiguration: ShellConfiguration =
+      config.getExecutionEnvironment?.() instanceof SshExecutionEnvironment
+        ? { executable: 'bash', argsPrefix: ['-c'], shell: 'bash' }
+        : getShellConfiguration();
+    super(
+      ShellTool.Name,
+      ToolDisplayNames.SHELL,
+      getShellToolDescription(shellConfiguration),
+      Kind.Execute,
+      {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: getCommandDescription(shellConfiguration),
+          },
+          is_background: {
+            type: 'boolean',
+            description:
+              'Optional: Whether to run the command in background. If not specified, defaults to false (foreground execution). Explicitly set to true for long-running processes like development servers, watchers, or daemons that should continue running without blocking further commands.',
+          },
+          timeout: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 600000,
+            description: 'Optional timeout in milliseconds (max 600000)',
+          },
+          description: {
+            type: 'string',
+            description:
+              'Brief description of the command for the user. Be specific and concise. Ideally a single sentence. Can be up to 3 sentences for clarity. No line breaks.',
+          },
+          directory: {
+            type: 'string',
+            description:
+              '(OPTIONAL) The absolute path of the directory to run the command in. If not provided, the project root directory is used. Must already exist. A directory outside the workspace requires approval.',
+          },
+        },
+        required: ['command'],
+      },
+      false, // output is not markdown
+      true, // output can be updated
+    );
+  }
+
+  protected override validateToolParamValues(
+    params: ShellToolParams,
+  ): string | null {
+    // NOTE: Permission checks (read-only detection, PM rules) are handled at
+    // L3 (getDefaultPermission) and L4 (PM override) in coreToolScheduler.
+    // This method handles parameter validation plus non-overridable shell
+    // safety gates that must run before auto/YOLO execution.
+    if (!params.command.trim()) {
+      return 'Command cannot be empty.';
+    }
+    const strippedCommand = stripShellWrapper(params.command);
+    if (detectSelfKillCommand(params.command)) {
+      return SHELL_SELF_KILL_REJECTION;
+    }
+    if (
+      params.is_background &&
+      hasTopLevelTrailingBackgroundOperator(strippedCommand)
+    ) {
+      return 'Background shell commands must not end with a bare "&". Remove the trailing "&" and rely on is_background: true instead.';
+    }
+    if (getCommandRoots(params.command).length === 0) {
+      return 'Could not identify command root to obtain permission from user.';
+    }
+    if (params.timeout !== undefined) {
+      if (
+        typeof params.timeout !== 'number' ||
+        !Number.isInteger(params.timeout)
+      ) {
+        return 'Timeout must be an integer number of milliseconds.';
+      }
+      if (params.timeout <= 0) {
+        return 'Timeout must be a positive number.';
+      }
+      if (params.timeout > 600000) {
+        return 'Timeout cannot exceed 600000ms (10 minutes).';
+      }
+    }
+    if (params.directory) {
+      if (!path.isAbsolute(params.directory)) {
+        return 'Directory must be an absolute path.';
+      }
+
+      const userSkillsDirs = this.config.storage.getUserSkillsDirs();
+      const resolvedDirectoryPath = path.resolve(params.directory);
+      const isWithinUserSkills = isSubpaths(
+        userSkillsDirs,
+        resolvedDirectoryPath,
+      );
+      if (isWithinUserSkills) {
+        return `Explicitly running shell commands from within the user skills directory is not allowed. Please use absolute paths for command parameter instead.`;
+      }
+
+      // The sandbox refuses any other cwd at run time, so reject now rather
+      // than ask for approval of a command that cannot start.
+      const sandbox = this.config.getShellExecutionSandbox?.();
+      if (sandbox) {
+        try {
+          assertShellSandboxCwd(sandbox, params.directory);
+        } catch {
+          return `Directory '${params.directory}' must be an existing directory inside the execution sandbox workspace.`;
+        }
+      }
+    }
+    // Sleep interception: block sleep >= 2s in foreground, suggest Monitor.
+    // Strip shell wrappers first so `bash -c 'sleep 5'` / `sh -c '...'` etc.
+    // cannot route around the check by hiding the foreground sleep inside a
+    // `-c` script. This matches every other sensitive check in this file
+    // (directory, read-only, command-root extraction, etc.).
+    if (!params.is_background) {
+      const sleepPattern = detectBlockedSleepPatternDetails(strippedCommand);
+      if (sleepPattern !== null) {
+        const intentionalSleepGuidance =
+          sleepPattern.intentionalSleepRejection ??
+          (sleepPattern.isStandalone
+            ? 'If you genuinely need a standalone delay (rate limiting, deliberate pacing), ' +
+              'add a trailing comment like `# intentional-sleep: wait for MCP rate limit reset` (up to 10 minutes).'
+            : 'Split into two calls: first `sleep N # intentional-sleep: <reason>` (standalone), then the follow-up command.');
+        return (
+          `Blocked: ${sleepPattern.description}. ` +
+          'Run blocking commands in the background with is_background: true. ' +
+          'For streaming events (watching logs, polling APIs), use the Monitor tool. ' +
+          intentionalSleepGuidance
+        );
+      }
+    }
+    return null;
+  }
+
+  protected createInvocation(
+    params: ShellToolParams,
+  ): ToolInvocation<ShellToolParams, ToolResult> {
+    return new ShellToolInvocation(this.config, params);
+  }
+
+  override toAutoClassifierInput(
+    params: ShellToolParams,
+  ): Record<string, unknown> {
+    // The full command is required for safety classification — do not redact.
+    return {
+      command: params.command,
+      cwd: params.directory ?? this.config.getTargetDir(),
+    };
+  }
+}

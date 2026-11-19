@@ -1,0 +1,97 @@
+# pg-forward: the sandbox hosts' way to Cluster pg (their JuiceFS metadata; hermit's juicefs CLI uses the same URL).
+# The sandbox gateway only passes packets (README "Sandboxes"): reaching the database is not one of its jobs, and a
+# second load balancer was refused by Hetzner (the project's primary IP limit, 2026-11-17; Deyao chose this instead).
+# So the existing balancer yyc-ai-egress carries a second port, 10.0.0.50:5432 (egress/egress.yaml, Service
+# egress-lb: its ports are told apart by their target port's name), and these pods pass that port's connections on
+# to db/pg-shared, byte for byte (HAProxy in TCP mode, pg-forward.cfg). No secret, no state, no database protocol.
+#
+# Stopping: preStop sleeps while the balancer's health check (5 s, 2 retries) takes the node out, then HAProxy's stop
+# signal (the image's SIGUSR1) closes the listener and lets open connections finish for hard-stop-after (30 s). A
+# JuiceFS client whose connection ends opens a new one through the balancer, to the other pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-forward
+  namespace: yyc-ai
+  labels: {app: pg-forward}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: pg-forward}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: pg-forward, sandbox-lb: "true"}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 60
+      affinity:
+        nodeAffinity:
+          # pool apps: the balancer's targets (egress-lb's node-selector)
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: pg-forward}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 99
+        runAsGroup: 99
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: haproxy
+          image: haproxy:3.4.7-alpine
+          args: [haproxy, -f, /etc/pg-forward/pg-forward.cfg]
+          ports:
+            - {name: pg, containerPort: 5432}
+          readinessProbe:
+            tcpSocket: {port: pg}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            tcpSocket: {port: pg}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 15}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi, ephemeral-storage: 16Mi}
+            limits: {cpu: "1", memory: 128Mi, ephemeral-storage: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/pg-forward, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: pg-forward-config}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: pg-forward, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: pg-forward}
+---
+# in: only the balancer (its address in network yyc; the same rule as egress-in's). Out: db/pg-shared's pods
+# (network.yaml postgres-shared) and DNS (network.yaml dns).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pg-forward-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: pg-forward}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ipBlock: {cidr: 10.0.0.50/32}}]
+      ports: [{port: 5432, protocol: TCP}]

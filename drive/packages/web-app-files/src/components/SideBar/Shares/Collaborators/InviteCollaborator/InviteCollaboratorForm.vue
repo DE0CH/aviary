@@ -1,0 +1,576 @@
+<template>
+  <div
+    id="new-collaborators-form"
+    data-testid="new-collaborators-form"
+    class="[&_.vs\_\_actions]:!flex-nowrap [&_.vs\_\_search]:min-w-40 mb-4"
+  >
+    <div @keydown.enter.capture="onInviteInputEnter">
+      <div class="flex justify-between mb-1">
+        <div class="flex items-center">
+          <label :aria-hidden="true" for="files-share-invite-input" class="inline-block">
+            {{ label }}
+          </label>
+          <oc-contextual-helper
+            v-if="contextualHelper?.isEnabled"
+            v-bind="contextualHelper?.data"
+            class="pl-1"
+          />
+        </div>
+        <copy-private-link :resource="resource" />
+      </div>
+      <oc-select
+        id="files-share-invite-input"
+        ref="ocSharingAutocomplete"
+        class="w-full"
+        :placeholder="selectedCollaboratorsPlaceholder"
+        :model-value="selectedCollaborators"
+        :options="autocompleteResults"
+        :loading="searchInProgress"
+        :multiple="true"
+        :filterable="false"
+        :dropdown-should-open="
+          ({ open, search }: DropDownShouldOpenOptions) =>
+            open && search.trim().length >= minSearchLength && !searchInProgress
+        "
+        :label="label"
+        :label-hidden="true"
+        @search:input="onSearchInput"
+        @update:model-value="resetFocusOnInvite"
+        @open="onOpen"
+        @close="onClose"
+      >
+        <template #option="option">
+          <autocomplete-item :item="option" :term="searchQuery" />
+        </template>
+        <template #no-options>
+          <span v-text="noOptionsLabel" />
+        </template>
+        <template #selected-option-container="{ option, deselect }">
+          <recipient-container :key="option.id" :recipient="option" :deselect="deselect" />
+        </template>
+        <template #open-indicator>
+          <!-- Empty to hide the caret -->
+          <span />
+        </template>
+        <template #spinner="{ loading }">
+          <oc-spinner
+            v-if="loading"
+            :aria-label="$gettext('Loading users and groups')"
+            size="small"
+          />
+          <oc-filter-chip
+            v-if="showShareTypeFilter"
+            :filter-label="$gettext('Share type')"
+            class="invite-form-share-role-type [&_.oc-filter-chip-button]:py-0 [&_.oc-filter-chip-button]:h-6 [&_.oc-filter-chip-button]:pr-0 [&_.oc-drop]:w-3xs"
+            raw
+            close-on-click
+            size="small"
+            :has-active-state="false"
+            :selected-item-names="[currentShareRoleType.label]"
+          >
+            <template #default>
+              <oc-list>
+                <li v-for="(option, index) in shareRoleTypes" :key="index">
+                  <oc-button
+                    appearance="raw"
+                    size="medium"
+                    justify-content="space-between"
+                    class="invite-form-share-role-type-item flex justify-between items-center w-full py-1 px-2"
+                    :class="{
+                      'bg-role-secondary-container': option.id === currentShareRoleType.id
+                    }"
+                    @click="selectShareRoleType(option)"
+                  >
+                    <span>{{ option.longLabel }}</span>
+                    <div v-if="option.id === currentShareRoleType.id" class="flex">
+                      <oc-icon name="check" />
+                    </div>
+                  </oc-button>
+                </li>
+              </oc-list>
+            </template>
+          </oc-filter-chip>
+        </template>
+      </oc-select>
+    </div>
+    <div class="flex justify-between flex-wrap mt-2">
+      <role-dropdown
+        mode="create"
+        class="max-w-40"
+        :is-external="isExternalShareRoleType"
+        @option-change="collaboratorRoleChanged"
+      />
+      <div class="flex items-center">
+        <expiration-date-indicator
+          v-if="expirationDate"
+          :expiration-date="DateTime.fromISO(expirationDate)"
+          class="ml-1 p-1"
+          data-testid="recipient-info-expiration-date"
+        />
+        <oc-button
+          id="show-more-share-options-btn"
+          class="ml-1 p-1"
+          :aria-label="$gettext('Show more actions')"
+          appearance="raw"
+        >
+          <oc-icon name="more-2" />
+        </oc-button>
+        <oc-drop
+          ref="showMoreShareOptionsDropRef"
+          :title="$gettext('Share options')"
+          :drop-id="'show-more-share-options-drop'"
+          :toggle="'#show-more-share-options-btn'"
+          close-on-click
+          mode="click"
+          padding-size="small"
+        >
+          <oc-list
+            class="collaborator-edit-dropdown-options-list"
+            :aria-label="$gettext('Share options')"
+          >
+            <li>
+              <expiration-datepicker
+                v-if="!saving"
+                :current-expiration-date="expirationDate"
+                :on-option-change="collaboratorExpiryChanged"
+              />
+            </li>
+          </oc-list>
+        </oc-drop>
+        <oc-button
+          id="new-collaborators-form-create-button"
+          key="new-collaborator-save-button"
+          class="ml-2 px-7"
+          data-testid="new-collaborators-form-create-button"
+          :disabled="!isValid || saving"
+          :appearance="saving ? 'outline' : 'filled'"
+          submit="submit"
+          :show-spinner="savingDelayed"
+          @click="share"
+        >
+          <span v-text="$gettext(saveLabel)" />
+        </oc-button>
+      </div>
+    </div>
+    <oc-hidden-announcer ref="announcer" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import PQueue from 'p-queue'
+import { storeToRefs } from 'pinia'
+import AutocompleteItem from './AutocompleteItem.vue'
+import RoleDropdown from '../RoleDropdown.vue'
+import RecipientContainer from './RecipientContainer.vue'
+import ExpirationDatepicker from './ExpirationDatepicker.vue'
+import {
+  CollaboratorAutoCompleteItem,
+  CollaboratorShare,
+  ShareRole,
+  ShareTypes,
+  isSpaceResource
+} from '@opencloud-eu/web-client'
+import {
+  useClientService,
+  useMessages,
+  useSpacesStore,
+  useConfigStore,
+  useSharesStore,
+  useUserStore
+} from '@opencloud-eu/web-pkg'
+import {
+  useCollaboratorAutocomplete,
+  useCollaboratorSearch
+} from '../../../../../composables/shares'
+
+import { computed, inject, ref, unref, watch, onMounted, nextTick, Ref, useTemplateRef } from 'vue'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { DateTime } from 'luxon'
+import { OcDrop, OcHiddenAnnouncer } from '@opencloud-eu/design-system/components'
+import { useGettext } from 'vue3-gettext'
+import { isProjectSpaceResource } from '@opencloud-eu/web-client'
+import { DriveRecipient } from '@opencloud-eu/web-client/graph/generated'
+import ExpirationDateIndicator from '../../ExpirationDateIndicator.vue'
+import { ContextualHelper, isComposingEvent } from '@opencloud-eu/design-system/helpers'
+import CopyPrivateLink from '../../../../Shares/CopyPrivateLink.vue'
+import {
+  useInviteContactViaEmail,
+  useOpenXchangeContacts
+} from '../../../../../composables/openXchange'
+
+type DropDownShouldOpenOptions = { open: boolean; search: string }
+
+export type ShareRoleType = { id: string; label: string; longLabel: string }
+
+const {
+  saveButtonLabel = '',
+  label = '',
+  inviteLabel = '',
+  contextualHelper = undefined
+} = defineProps<{
+  saveButtonLabel?: string
+  label?: string
+  inviteLabel?: string
+  contextualHelper?: ContextualHelper
+}>()
+
+const { $gettext, $ngettext } = useGettext()
+const clientService = useClientService()
+const { showMessage, showErrorMessage } = useMessages()
+const spacesStore = useSpacesStore()
+const { upsertSpace } = spacesStore
+const configStore = useConfigStore()
+const userStore = useUserStore()
+
+const sharesStore = useSharesStore()
+const { addShare } = sharesStore
+const { collaboratorShares } = storeToRefs(sharesStore)
+
+const { searchCollaborators, getGuestCandidates } = useCollaboratorSearch()
+const { searchContacts: searchOpenXchangeContacts } = useOpenXchangeContacts()
+const { inviteContact } = useInviteContactViaEmail()
+
+const showMoreShareOptionsDropRef = useTemplateRef<typeof OcDrop>('showMoreShareOptionsDropRef')
+const announcer = useTemplateRef<typeof OcHiddenAnnouncer>('announcer')
+
+const saving = ref(false)
+const savingDelayed = ref(false)
+const expirationDate = ref<string | null>(null)
+const selectedCollaborators = ref<CollaboratorAutoCompleteItem[]>([])
+const selectedRole = ref<ShareRole>()
+
+const resource = inject<Resource>('resource')
+const space = inject<SpaceResource>('space')
+const availableInternalRoles = inject<Ref<ShareRole[]>>('availableInternalShareRoles')
+const availableExternalRoles = inject<Ref<ShareRole[]>>('availableExternalShareRoles')
+
+const isOpen = ref(false)
+
+const externalShareRolesEnabled = computed(() => unref(availableExternalRoles).length)
+
+const internalShareRoleType = '1'
+const externalShareRoleType = '2'
+const shareRoleTypes = computed<ShareRoleType[]>(() => [
+  {
+    id: internalShareRoleType,
+    label: $gettext('Internal'),
+    longLabel: $gettext('Internal users')
+  },
+  ...((unref(externalShareRolesEnabled) && [
+    {
+      id: externalShareRoleType,
+      label: $gettext('External'),
+      longLabel: $gettext('External users')
+    }
+  ]) ||
+    [])
+])
+const currentShareRoleType = ref<ShareRoleType>(unref(shareRoleTypes)[0])
+const isExternalShareRoleType = computed(
+  () => unref(currentShareRoleType).id === externalShareRoleType
+)
+
+const saveLabel = computed(() => saveButtonLabel || $gettext('Share'))
+
+const onOpen = () => {
+  isOpen.value = true
+}
+
+const onClose = () => {
+  isOpen.value = false
+}
+
+watch(saving, (newValue) => {
+  if (!newValue) {
+    savingDelayed.value = false
+    return
+  }
+  setTimeout(() => {
+    if (!unref(saving)) {
+      savingDelayed.value = false
+      return
+    }
+    savingDelayed.value = true
+  }, 700)
+})
+
+const setInitialSelectedRole = () => {
+  selectedRole.value = unref(isExternalShareRoleType)
+    ? unref(availableExternalRoles)[0]
+    : unref(availableInternalRoles)[0]
+}
+
+onMounted(() => {
+  setInitialSelectedRole()
+})
+
+const createSharesConcurrentRequests = computed(() => {
+  return configStore.options.concurrentRequests.shares.create
+})
+
+const { autocompleteResults, minSearchLength, onSearch, searchInProgress, searchQuery } =
+  useCollaboratorAutocomplete(async (query, signal) => {
+    const collaborators = await searchCollaborators(query, {
+      signal,
+      external: unref(isExternalShareRoleType)
+    }).catch((error) => {
+      // the list shows its no results label after a failed search, too
+      if (!signal.aborted) {
+        announceResults(query, [])
+      }
+      throw error
+    })
+
+    const isSpace = !unref(resource) || isSpaceResource(unref(resource))
+    const contacts = isSpace ? [] : await searchOpenXchangeContacts(query.trim(), signal)
+
+    // guests can't be invited to spaces yet
+    const guests =
+      isSpace || unref(isExternalShareRoleType) ? [] : getGuestCandidates(query, collaborators)
+
+    const results = [...collaborators, ...contacts, ...guests].filter(
+      (collaborator: CollaboratorAutoCompleteItem) => {
+        if (collaborator.id === userStore.user.id) {
+          return false
+        }
+
+        const selected = unref(selectedCollaborators).some(({ id }) => collaborator.id === id)
+        const existingShares = unref(collaboratorShares).filter((c) => !c.indirect)
+        const exists = existingShares.some((s) => s.sharedWith.id === collaborator.id)
+
+        return !selected && !exists
+      }
+    )
+    // a newer search replaced this one, even if a source swallowed the abort
+    if (!signal.aborted) {
+      announceResults(query, results)
+    }
+    return results
+  })
+
+function onSearchInput(query: string) {
+  // a pending announcement belongs to a search that is outdated now
+  unref(announcer)?.announce('')
+  onSearch(query)
+}
+
+const share = async () => {
+  saving.value = true
+
+  const saveQueue = new PQueue({ concurrency: unref(createSharesConcurrentRequests) })
+  const savePromises: Promise<void>[] = []
+  const errors: { displayName: string; error: Error }[] = []
+  const contactErrors: { displayName: string; error: Error }[] = []
+  const addedShares: CollaboratorShare[] = []
+  const failedCollaborators: CollaboratorAutoCompleteItem[] = []
+  let invitedContactCount = 0
+
+  unref(selectedCollaborators).forEach((collaborator) => {
+    const { id, shareType, displayName } = collaborator
+
+    if (shareType === ShareTypes.contact.value) {
+      // address book contacts are not OpenCloud users: create a public link
+      // and email it to them, never a collaborator share
+      savePromises.push(
+        saveQueue.add(async () => {
+          try {
+            await inviteContact({
+              space: unref(space),
+              resource: unref(resource),
+              contact: collaborator
+            })
+            invitedContactCount++
+          } catch (error) {
+            console.error(error)
+            contactErrors.push({ displayName, error })
+            failedCollaborators.push(collaborator)
+            throw error
+          }
+        })
+      )
+      return
+    }
+
+    const isGuest = shareType === ShareTypes.guest.value
+
+    // the backend rejects the invite when a recipient carries both a mail address and an object with
+    // objectId and recipient type, so guests are addressed by mail alone
+    const recipient: DriveRecipient = isGuest
+      ? { email: id }
+      : {
+          objectId: id,
+          '@libre.graph.recipient.type':
+            shareType === ShareTypes.group.value ? ShareTypes.group.key : ShareTypes.user.key
+        }
+
+    savePromises.push(
+      saveQueue.add(async () => {
+        try {
+          const share = await addShare({
+            clientService,
+            space: unref(space),
+            resource: unref(resource),
+            options: {
+              roles: [unref(selectedRole).id],
+              expirationDateTime: unref(expirationDate),
+              recipients: [recipient]
+            }
+          })
+
+          addedShares.push(share)
+        } catch (error) {
+          console.error(error)
+          errors.push({ displayName, error })
+          failedCollaborators.push(collaborator)
+          throw error
+        }
+      })
+    )
+  })
+
+  await Promise.allSettled(savePromises)
+
+  if (isProjectSpaceResource(unref(resource))) {
+    try {
+      const updatedSpace = await clientService.graphAuthenticated.drives.getDrive(
+        unref(resource).id
+      )
+      upsertSpace({ ...updatedSpace, graphPermissions: unref(space).graphPermissions })
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  if (addedShares.length > 0) {
+    showMessage({ title: $gettext('Share was added successfully') })
+  }
+
+  if (invitedContactCount > 0) {
+    showMessage({
+      title: $ngettext(
+        'Sent a read-only link to %{count} contact',
+        'Sent read-only links to %{count} contacts',
+        invitedContactCount,
+        { count: invitedContactCount.toString() }
+      )
+    })
+  }
+
+  errors.forEach((e) => {
+    showErrorMessage({
+      title: $gettext('Failed to add share for "%{displayName}"', {
+        displayName: e.displayName
+      }),
+      errors: [e.error]
+    })
+  })
+  contactErrors.forEach((e) => {
+    showErrorMessage({
+      title: $gettext('Failed to send invite link for "%{displayName}"', {
+        displayName: e.displayName
+      }),
+      errors: [e.error]
+    })
+  })
+
+  // keep the recipients whose share failed, so they can be retried
+  selectedCollaborators.value = unref(selectedCollaborators).filter((collaborator) =>
+    failedCollaborators.includes(collaborator)
+  )
+  if (!failedCollaborators.length) {
+    expirationDate.value = null
+  }
+  saving.value = false
+}
+
+const selectShareRoleType = (shareRoleType: ShareRoleType) => {
+  if (unref(currentShareRoleType).id !== shareRoleType.id) {
+    currentShareRoleType.value = shareRoleType
+    selectedCollaborators.value = []
+
+    if (unref(searchQuery)) {
+      onSearch(unref(searchQuery))
+    }
+  }
+  focusShareInput()
+  setInitialSelectedRole()
+}
+
+const focusShareInput = () => {
+  const inviteInput = document.getElementById('files-share-invite-input')
+  if (inviteInput) {
+    inviteInput.focus()
+  }
+}
+
+const noOptionsLabel = computed(() => {
+  if (unref(isExternalShareRoleType)) {
+    return $gettext('No external users found.')
+  }
+  return $gettext('No users or groups found.')
+})
+
+function announceResults(query: string, results: CollaboratorAutoCompleteItem[]) {
+  // only announce what the list shows: not after the input got cleared, changed or left
+  const input = document.getElementById('files-share-invite-input') as HTMLInputElement
+  if (
+    document.activeElement !== input ||
+    input.value.trim() !== query.trim() ||
+    query.trim().length < unref(minSearchLength)
+  ) {
+    return
+  }
+  const count = results.length
+  unref(announcer)?.announce(
+    count
+      ? $ngettext('%{count} result', '%{count} results', count, { count: count.toString() })
+      : unref(noOptionsLabel)
+  )
+}
+
+const showShareTypeFilter = computed(
+  () => unref(shareRoleTypes).length > 1 && !isProjectSpaceResource(unref(resource))
+)
+
+const isValid = computed(() => {
+  return unref(selectedCollaborators).length > 0
+})
+
+// captured before the select handles Enter, so an Enter that picks a typed recipient doesn't share
+function onInviteInputEnter(event: KeyboardEvent) {
+  if (
+    (event.target as HTMLElement).id !== 'files-share-invite-input' ||
+    isComposingEvent(event) ||
+    (event.target as HTMLInputElement).value.trim() ||
+    !unref(isValid) ||
+    unref(saving)
+  ) {
+    return
+  }
+  event.preventDefault()
+  share()
+}
+const selectedCollaboratorsPlaceholder = computed(() => {
+  return inviteLabel || $gettext('Search')
+})
+const collaboratorRoleChanged = (role: ShareRole) => {
+  selectedRole.value = role
+}
+
+const collaboratorExpiryChanged = (date: string | null) => {
+  expirationDate.value = date
+  unref(showMoreShareOptionsDropRef).hide()
+}
+
+const resetFocusOnInvite = (event: CollaboratorAutoCompleteItem[]) => {
+  if (event.length > unref(selectedCollaborators).length) {
+    unref(announcer)?.announce($gettext('Person was added'))
+  }
+  selectedCollaborators.value = event
+  autocompleteResults.value = []
+  searchQuery.value = ''
+  nextTick(() => {
+    focusShareInput()
+  })
+}
+</script>

@@ -1,0 +1,307 @@
+import { ActionExtension } from '@opencloud-eu/web-pkg'
+import {
+  batchActionsExtensionPoint,
+  contextActionsExtensionPoint,
+  defaultActionFallbackExtensionPoint,
+  fileSideBarActionsExtensionPoint,
+  quickActionsExtensionPoint,
+  resourceTableActionsExtensionPoint
+} from '../../extensionPoints'
+import {
+  useFileActionsCopy,
+  useFileActionsCopyPermanentLink,
+  useFileActionsCreateSpaceFromResource,
+  useFileActionsDisableSync,
+  useFileActionsDownloadArchive,
+  useFileActionsFavorite,
+  useFileActionsEnableSync,
+  useFileActionsNavigate,
+  useFileActionsMove,
+  useFileActionsOpenShortcut,
+  useSpaceActionsSetImage,
+  useFileActionsRename,
+  useFileActionsShowDetails,
+  useFileActionsShowShares,
+  useFileActionsToggleHideShare,
+  useFileActionsLockVault,
+  useFileActionsDelete,
+  useFileActionsRestore,
+  useFileActionsDownloadFile,
+  useFileActionFallbackToDownload
+} from '../actions'
+import { unref } from 'vue'
+
+const previewToolBarActionsExtensionPointId = 'app.preview.toolbar-actions'
+const adminSettingsSpacesContextActionsExtensionPointId =
+  'app.admin-settings.spaces.context-actions'
+
+export const useFileActions = (): ActionExtension[] => {
+  const { actions: copyActions } = useFileActionsCopy()
+  const { actions: downloadArchiveActions } = useFileActionsDownloadArchive()
+  const { actions: openShortcutActions } = useFileActionsOpenShortcut()
+  const { actions: showSharesActions } = useFileActionsShowShares()
+  const { actions: permanentLinkActions } = useFileActionsCopyPermanentLink()
+  const { actions: createSpaceFromResourceActions } = useFileActionsCreateSpaceFromResource()
+  const { actions: disableSyncActions } = useFileActionsDisableSync()
+  const { actions: enableSyncActions } = useFileActionsEnableSync()
+  const { actions: moveActions } = useFileActionsMove()
+  const { actions: renameActions } = useFileActionsRename()
+  const { actions: favoriteActions } = useFileActionsFavorite()
+  const { actions: setSpaceImageActions } = useSpaceActionsSetImage()
+  const { actions: showDetailsActions } = useFileActionsShowDetails()
+  const { actions: toggleHideShareActions } = useFileActionsToggleHideShare()
+  const { actions: lockVaultActions } = useFileActionsLockVault()
+  const { actions: navigateActions } = useFileActionsNavigate()
+  const { actions: restoreActions } = useFileActionsRestore()
+  const { actions: downloadFileActions } = useFileActionsDownloadFile()
+  const { actions: fallbackToDownloadActions } = useFileActionFallbackToDownload()
+
+  const { actions: deleteActions } = useFileActionsDelete()
+  const deleteAction = unref(deleteActions).find(({ name }) => name === 'delete')
+  const deletePermanentAction = unref(deleteActions).find(({ name }) => name === 'delete-permanent')
+
+  return [
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.download-file',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(downloadFileActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.download-archive',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(downloadArchiveActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.rename',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        resourceTableActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(renameActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.delete-file',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id,
+        previewToolBarActionsExtensionPointId
+      ],
+      type: 'action',
+      action: {
+        ...deleteAction,
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.delete-file-permanent',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...deletePermanentAction,
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.restore-file',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(restoreActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.copy',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(copyActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.move',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(moveActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.open-shortcut',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(openShortcutActions)[0],
+        category: 'primary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.quick-action.collaborator',
+      extensionPointIds: [quickActionsExtensionPoint.id, contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(showSharesActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.quick-action.quicklink',
+      extensionPointIds: [quickActionsExtensionPoint.id, contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(permanentLinkActions)[0],
+        category: 'secondary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.create-space-from-resource',
+      extensionPointIds: [contextActionsExtensionPoint.id, fileSideBarActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(createSpaceFromResourceActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.enable-sync',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(enableSyncActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.disable-sync',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(disableSyncActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.favorite',
+      extensionPointIds: [
+        previewToolBarActionsExtensionPointId,
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(favoriteActions)[0],
+        category: 'quaternary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.set-space-image',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(setSpaceImageActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.sidebar-action.details',
+      extensionPointIds: [
+        adminSettingsSpacesContextActionsExtensionPointId,
+        contextActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(showDetailsActions)[0],
+        category: 'quaternary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.toggle-hide-share',
+      extensionPointIds: [
+        contextActionsExtensionPoint.id,
+        batchActionsExtensionPoint.id,
+        fileSideBarActionsExtensionPoint.id
+      ],
+      type: 'action',
+      action: {
+        ...unref(toggleHideShareActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.lock-vault',
+      extensionPointIds: [contextActionsExtensionPoint.id, fileSideBarActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(lockVaultActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.download-file-fallback',
+      extensionPointIds: [defaultActionFallbackExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(fallbackToDownloadActions)[0],
+        category: 'tertiary'
+      }
+    },
+    {
+      id: 'com.github.opencloud-eu.web.files.context-action.navigate',
+      extensionPointIds: [contextActionsExtensionPoint.id],
+      type: 'action',
+      action: {
+        ...unref(navigateActions)[0],
+        category: 'primary'
+      }
+    }
+  ]
+}

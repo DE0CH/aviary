@@ -1,0 +1,115 @@
+import { computed, markRaw, onBeforeUnmount, unref } from 'vue'
+import { isProjectSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
+import {
+  SpaceAction,
+  SpaceActionOptions,
+  isDecodableImage,
+  SpaceImageModal,
+  useMessages,
+  useModals,
+  useUserStore
+} from '@opencloud-eu/web-pkg'
+import { useSpaceImage } from '../../spaces'
+import { useGettext } from 'vue3-gettext'
+
+export const useSpaceActionsUploadImage = () => {
+  const userStore = useUserStore()
+  const { $gettext } = useGettext()
+  const { dispatchModal } = useModals()
+  const { showErrorMessage } = useMessages()
+  const { saveSpaceImage } = useSpaceImage()
+
+  let selectedSpace: SpaceResource = null
+  let fileInput: HTMLInputElement = null
+
+  const removeFileInput = () => {
+    if (!fileInput) {
+      return
+    }
+
+    fileInput.remove()
+    fileInput = null
+  }
+
+  const onFileSelected = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    removeFileInput()
+
+    if (!file || !selectedSpace) {
+      return
+    }
+
+    if (!(await isDecodableImage(file))) {
+      showErrorMessage({ title: $gettext('The selected image is not supported or damaged') })
+      return
+    }
+
+    dispatchModal({
+      title: $gettext('Crop image for »%{space}«', { space: selectedSpace.name }),
+      confirmText: $gettext('Confirm'),
+      customComponent: markRaw(SpaceImageModal),
+      focusTrapInitial: '#image-cropper-selection',
+      customComponentAttrs: () => ({
+        file,
+        save: (content: ArrayBuffer) => saveSpaceImage(unref(selectedSpace), content)
+      })
+    })
+  }
+
+  const openFilePicker = () => {
+    removeFileInput()
+
+    fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.name = 'file'
+    fileInput.accept = 'image/jpeg, image/png'
+    fileInput.tabIndex = -1
+    fileInput.hidden = true
+    fileInput.style.position = 'absolute'
+    fileInput.style.left = '-99999px'
+    fileInput.addEventListener('change', onFileSelected, { once: true })
+    document.body.append(fileInput)
+    fileInput.click()
+  }
+
+  onBeforeUnmount(() => {
+    removeFileInput()
+  })
+
+  const handler = ({ resources }: SpaceActionOptions) => {
+    if (resources.length !== 1) {
+      return
+    }
+
+    selectedSpace = resources[0] as SpaceResource
+    openFilePicker()
+  }
+
+  const actions = computed((): SpaceAction[] => [
+    {
+      name: 'upload-space-image',
+      icon: 'image-add',
+      handler,
+      label: () => {
+        return $gettext('Set image')
+      },
+      isVisible: ({ resources }) => {
+        if (resources.length !== 1) {
+          return false
+        }
+
+        if (!isProjectSpaceResource(resources[0])) {
+          return false
+        }
+
+        return resources[0].canEditImage({ user: userStore.user })
+      },
+      class: 'oc-files-actions-upload-space-image-trigger'
+    }
+  ])
+
+  return {
+    actions
+  }
+}

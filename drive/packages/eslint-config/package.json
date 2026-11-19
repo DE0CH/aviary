@@ -1,0 +1,29 @@
+{
+  "name": "@opencloud-eu/eslint-config",
+  "main": "index.js",
+  "private": false,
+  "version": "8.2.2",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/eslint-config",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencloud-eu/web",
+    "directory": "packages/eslint-config"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "dependencies": {
+    "@typescript-eslint/parser": "^8.57.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "eslint-plugin-vue": "^10.8.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.57.2"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0 || ^10.0.0"
+  }
+}

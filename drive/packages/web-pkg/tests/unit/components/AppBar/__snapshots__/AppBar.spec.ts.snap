@@ -1,0 +1,62 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AppBar component > renders > by default no breadcrumbs, no bulkactions, no sharesnavigation but viewoptions and sidebartoggle 1`] = `
+"<div id="files-app-bar" class="px-4 bg-role-surface rounded-t-xl [display:inherit] top-0 z-20 sticky">
+  <div class="files-topbar py-1 w-full">
+    <h1 class="sr-only">ExampleTitle</h1>
+    <oc-hidden-announcer-stub announcement="No items selected." level="polite"></oc-hidden-announcer-stub>
+    <div class="flex items-center files-app-bar-controls min-h-12 justify-end">
+      <!--v-if-->
+      <div id="files-app-bar-controls-right" class="flex">
+        <view-options-stub perpagestorageprefix="files" hashiddenfiles="true" hasfileextensions="true" hasfoldersfirst="true" haspagination="true" paginationoptions="20,50,100,250,500" perpagequeryname="items-per-page" perpagedefault="100" viewmodedefault="resource-tiles" viewmodes=""></view-options-stub>
+      </div>
+    </div>
+    <!--v-if-->
+    <div class="files-app-bar-actions relative flex items-start justify-end min-h-10">
+      <div class="peer flex [&amp;:not(:empty)]:w-full"></div>
+      <!--v-if-->
+    </div>
+  </div>
+</div>"
+`;
+
+exports[`AppBar component > renders > if given, with content in the actions slot 1`] = `
+"<div id="files-app-bar" class="px-4 bg-role-surface rounded-t-xl [display:inherit] top-0 z-20 sticky">
+  <div class="files-topbar py-1 w-full">
+    <h1 class="sr-only">ExampleTitle</h1>
+    <oc-hidden-announcer-stub announcement="No items selected." level="polite"></oc-hidden-announcer-stub>
+    <div class="flex items-center files-app-bar-controls min-h-12 justify-end">
+      <!--v-if-->
+      <div id="files-app-bar-controls-right" class="flex">
+        <view-options-stub perpagestorageprefix="files" hashiddenfiles="true" hasfileextensions="true" hasfoldersfirst="true" haspagination="true" paginationoptions="20,50,100,250,500" perpagequeryname="items-per-page" perpagedefault="100" viewmodedefault="resource-tiles" viewmodes=""></view-options-stub>
+      </div>
+    </div>
+    <!--v-if-->
+    <div class="files-app-bar-actions relative flex items-start justify-end min-h-10">
+      <div class="peer flex [&amp;:not(:empty)]:w-full"><button class="action-slot">Click</button></div>
+      <!--v-if-->
+    </div>
+  </div>
+</div>"
+`;
+
+exports[`AppBar component > renders > if given, with content in the content slot 1`] = `
+"<div id="files-app-bar" class="px-4 bg-role-surface rounded-t-xl [display:inherit] top-0 z-20 sticky">
+  <div class="files-topbar py-1 w-full">
+    <h1 class="sr-only">ExampleTitle</h1>
+    <oc-hidden-announcer-stub announcement="No items selected." level="polite"></oc-hidden-announcer-stub>
+    <div class="flex items-center files-app-bar-controls min-h-12 justify-end">
+      <!--v-if-->
+      <div id="files-app-bar-controls-right" class="flex">
+        <view-options-stub perpagestorageprefix="files" hashiddenfiles="true" hasfileextensions="true" hasfoldersfirst="true" haspagination="true" paginationoptions="20,50,100,250,500" perpagequeryname="items-per-page" perpagedefault="100" viewmodedefault="resource-tiles" viewmodes=""></view-options-stub>
+      </div>
+    </div>
+    <!--v-if-->
+    <div class="files-app-bar-actions relative flex items-start justify-end min-h-10">
+      <div class="peer flex [&amp;:not(:empty)]:w-full"></div>
+      <!--v-if-->
+    </div>
+    <div class="content-slot">Foo</div>
+  </div>
+</div>"
+`;

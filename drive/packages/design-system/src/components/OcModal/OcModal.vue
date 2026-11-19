@@ -1,0 +1,451 @@
+<template>
+  <div
+    class="oc-modal-background fixed left-0 top-0 z-[var(--z-index-modal)] flex items-center justify-center flex-row flex-wrap size-full"
+    :class="{ 'bg-black/40': active }"
+  >
+    <focus-trap
+      :active="active"
+      :initial-focus="initialFocusRef"
+      :tabbable-options="tabbableOptions"
+    >
+      <div
+        :id="elementId"
+        :class="classes"
+        class="z-[calc(var(--z-index-modal)+1)] rounded-xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-role-surface-container-highest"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        @keydown.esc.stop="cancelModalAction"
+      >
+        <div
+          class="oc-modal-title shrink-0 flex items-center flex-row justify-between py-3 px-4 rounded-t-xl"
+        >
+          <h2 :id="titleId" class="truncate m-0 text-base" :title="title" v-text="title" />
+          <div class="flex items-center gap-1">
+            <slot name="headerActions"></slot>
+            <oc-button
+              v-if="!hideCancelButton"
+              appearance="raw"
+              class="oc-modal-title-actions-cancel"
+              :disabled="isLoading"
+              :aria-label="cancelLabel"
+              @click="cancelModalAction"
+            >
+              <oc-icon name="close" />
+            </oc-button>
+          </div>
+        </div>
+        <!-- focusable so that the keyboard can scroll the content -->
+        <div
+          ref="ocModalBody"
+          class="oc-modal-body min-h-0 flex-auto overflow-auto px-4 pt-4 focus:outline-0"
+          tabindex="0"
+        >
+          <div
+            v-if="$slots.content"
+            key="modal-slot-content"
+            class="oc-modal-body-message mt-2 mb-4 wrap-anywhere"
+          >
+            <slot name="content" />
+          </div>
+          <template v-else>
+            <p
+              v-if="message"
+              key="modal-message"
+              class="oc-modal-body-message mt-0 wrap-anywhere"
+              :class="{ 'mb-0': !hasInput || contextualHelperData }"
+              v-text="message"
+            />
+            <div
+              v-if="contextualHelperData"
+              class="oc-modal-body-contextual-helper mb-4"
+              :class="{ 'mb-0': !hasInput }"
+            >
+              <span class="text" v-text="contextualHelperLabel" />
+              <oc-contextual-helper class="pl-1" v-bind="contextualHelperData" />
+            </div>
+            <oc-text-input
+              v-if="hasInput"
+              key="modal-input"
+              ref="ocModalInput"
+              v-model="userInputValue"
+              class="oc-modal-body-input"
+              :error-message="inputError"
+              :label="inputLabel"
+              :type="inputType"
+              :description-message="inputDescription"
+              :required-mark="inputRequiredMark"
+              :fix-message-line="true"
+              preselect
+              :selection-range="inputSelectionRange"
+              @update:model-value="inputOnInput"
+              @keydown.enter.prevent="onInputKeydownEnter"
+            />
+          </template>
+        </div>
+
+        <div
+          v-if="!hideActions"
+          class="oc-modal-body-actions shrink-0 flex justify-end p-4 text-right"
+        >
+          <div class="oc-modal-body-actions-grid grid grid-flow-col auto-cols-1fr">
+            <oc-button
+              v-if="showCancelAction"
+              class="oc-modal-body-actions-cancel"
+              :disabled="isLoading"
+              @click="cancelModalAction"
+              >{{ cancelLabel }}
+            </oc-button>
+            <div v-if="actionsId" :id="actionsId" class="contents" />
+            <oc-button
+              v-if="!hideConfirmButton"
+              class="oc-modal-body-actions-confirm ml-2"
+              :appearance="buttonConfirmAppearance"
+              :disabled="
+                isLoading ||
+                buttonConfirmDisabled ||
+                !!inputError ||
+                (hasInput && inputRequiredMark && !userInputValue)
+              "
+              :show-spinner="showSpinner"
+              @click="confirm"
+              >{{ $gettext(confirmLabel) }}
+            </oc-button>
+          </div>
+        </div>
+      </div>
+    </focus-trap>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onUnmounted, ref, unref, useId, useTemplateRef, watch } from 'vue'
+import { FocusTrap } from 'focus-trap-vue'
+import OcButton, { Props as ButtonProps } from '../OcButton/OcButton.vue'
+import OcTextInput from '../OcTextInput/OcTextInput.vue'
+import { FocusTargetOrFalse, FocusTrapTabbableOptions } from 'focus-trap'
+import { ContextualHelperData, isComposingEvent } from '../../helpers'
+import { useGettext } from 'vue3-gettext'
+import { useEventListener } from '@vueuse/core'
+import { getOutermostDropAnchor, isInOpenDrop } from '../OcDrop/dropRegistry'
+
+export interface Props {
+  /**
+   * @docs Title of the modal.
+   */
+  title: string
+  /**
+   * @docs Determines if the modal is the topmost one. Modals below stay mounted and visible,
+   * but only the topmost one dims the background - and `focus-trap` pauses the ones below.
+   * @default true
+   */
+  active?: boolean
+  /**
+   * @docs Disables the confirm button.
+   * @default false
+   */
+  buttonConfirmDisabled?: boolean
+  /**
+   * @docs Text for the confirm button.
+   * @default Confirm
+   */
+  buttonConfirmText?: string
+  /**
+   * @docs Contextual helper data. Please refer to the component source for the `ContextualHelperData` type definition.
+   */
+  contextualHelperData?: ContextualHelperData
+  /**
+   * @docs Label of the contextual helper.
+   */
+  contextualHelperLabel?: string
+  /**
+   * @docs Additional class(es) to be added to the modal.
+   */
+  /**
+   * @docs Id of the actions container. A custom component teleports its own buttons in
+   * here, so they sit in the footer instead of scrolling away inside the body. They are
+   * placed between the cancel action and the confirm button.
+   */
+  actionsId?: string
+  elementClass?: string
+  /**
+   * @docs Element ID of the modal.
+   */
+  elementId?: string
+  /**
+   * @docs Selector of the element that is supposed to receive the initial focus inside the modal.
+   */
+  focusTrapInitial?: string | boolean
+  /**
+   * @docs Determines if the modal has an input field.
+   * @default false
+   */
+  hasInput?: boolean
+  /**
+   * @docs Hide the action buttons.
+   * @default false
+   */
+  hideActions?: boolean
+  /**
+   * @docs Hide the cancel button.
+   * @default false
+   */
+  hideCancelButton?: boolean
+  /**
+   * @docs Hide the confirm button.
+   * @default false
+   */
+  hideConfirmButton?: boolean
+  /**
+   * @docs Description to be displayed below the input field.
+   */
+  inputDescription?: string
+  /**
+   * @docs Determines if a required mark should be displayed next to the input label.
+   */
+  inputRequiredMark?: boolean
+  /**
+   * @docs Error message to be displayed below the input field.
+   */
+  inputError?: string
+  /**
+   * @docs Label of the input field.
+   */
+  inputLabel?: string
+  /**
+   * @docs Selection range of the input field in case parts of the input content should be selected on first render.
+   */
+  inputSelectionRange?: [number, number]
+  /**
+   * @docs Type of the input field.
+   * @default text
+   */
+  inputType?: 'text' | 'number' | 'email' | 'password' | 'date'
+  /**
+   * @docs Value of the input field.
+   */
+  inputValue?: string
+  /**
+   * @docs Determines if the modal is in a loading state.
+   * @default false
+   */
+  isLoading?: boolean
+  /**
+   * @docs Message of the modal.
+   */
+  message?: string
+  /**
+   * @docs Show a "Cancel" button in front of the confirm button, in addition to the close icon
+   * in the title bar. Meant for confirmations of destructive actions.
+   * @default false
+   */
+  showCancelAction?: boolean
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the cancel button has been clicked.
+   */
+  (e: 'cancel'): void
+
+  /**
+   * @docs Emitted when the confirm button has been clicked.
+   */
+  (e: 'confirm', value: string): void
+
+  /**
+   * @docs Emitted when the user has typed something in the input field.
+   */
+  (e: 'input', value: string): void
+}
+
+export interface Slots {
+  /**
+   * @docs Custom content of the modal.
+   */
+  content?: () => unknown
+
+  /**
+   * @docs Custom actions in the modal header.
+   */
+  headerActions?: () => unknown
+}
+
+const {
+  title,
+  actionsId = undefined,
+  active = true,
+  buttonConfirmDisabled = false,
+  buttonConfirmText = 'Confirm',
+  contextualHelperData,
+  contextualHelperLabel = '',
+  elementClass,
+  elementId,
+  focusTrapInitial = null,
+  hasInput = false,
+  hideActions = false,
+  hideConfirmButton = false,
+  hideCancelButton = false,
+  inputDescription,
+  inputRequiredMark = false,
+  inputError,
+  inputLabel,
+  inputSelectionRange,
+  inputType = 'text',
+  inputValue,
+  isLoading = false,
+  message,
+  showCancelAction = false
+} = defineProps<Props>()
+
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
+
+const { $gettext } = useGettext()
+
+// Modals stack: the ones below the topmost one stay mounted, so a shared id
+// would make every dialog's `aria-labelledby` resolve to the first title in the
+// document instead of its own.
+const titleId = `oc-modal-title-${useId()}`
+
+const showSpinner = ref(false)
+const userInputValue = ref<string>()
+const buttonConfirmAppearance = ref<ButtonProps['appearance']>('filled')
+const ocModalBody = useTemplateRef<HTMLElement>('ocModalBody')
+const ocModalInput = useTemplateRef<typeof OcTextInput>('ocModalInput')
+
+const tabbableOptions = computed((): FocusTrapTabbableOptions => {
+  return {
+    getShadowRoot: true
+  }
+})
+
+const resetLoadingState = () => {
+  showSpinner.value = false
+  buttonConfirmAppearance.value = 'filled'
+}
+
+const setLoadingState = () => {
+  showSpinner.value = true
+  buttonConfirmAppearance.value = 'outline'
+}
+
+const confirmLabel = computed(() => {
+  return buttonConfirmText || $gettext('Confirm')
+})
+
+const cancelLabel = computed(() => {
+  return $gettext('Cancel')
+})
+
+watch(
+  () => isLoading,
+  () => {
+    if (!isLoading) {
+      return resetLoadingState()
+    }
+    setTimeout(() => {
+      if (!isLoading) {
+        return resetLoadingState()
+      }
+      setLoadingState()
+    }, 700)
+  },
+  { immediate: true }
+)
+
+// focus-trap returns the focus to the element that opened the modal. A menu item loses it once its
+// drop closed, so return the focus to the element that opened the menu instead
+const opener = document.activeElement
+const dropAnchor = opener && getOutermostDropAnchor(opener)
+
+function isFocusLost() {
+  const active = document.activeElement
+  if (!active || active === document.body) {
+    return true
+  }
+  return active === opener && !isInOpenDrop(opener)
+}
+
+onUnmounted(() => {
+  if (!dropAnchor) {
+    return
+  }
+  // runs after focus-trap's own (delayed) attempt to return the focus
+  setTimeout(() => {
+    if (!dropAnchor.isConnected || !isFocusLost()) {
+      return
+    }
+    dropAnchor.focus()
+  })
+})
+
+let initialFocusPlaced = false
+const initialFocusRef = computed<FocusTargetOrFalse>(() => {
+  if (focusTrapInitial === false) {
+    return false
+  }
+  return () => {
+    // the trap asks again when a nested trap (e.g. an info drop) closes, then the focus stays put
+    const focused = document.activeElement as HTMLElement
+    const modal = unref(ocModalBody)?.closest<HTMLElement>('.oc-modal')
+    if (initialFocusPlaced && modal?.contains(focused)) {
+      return focused
+    }
+    initialFocusPlaced = true
+    const initialElement =
+      typeof focusTrapInitial === 'string'
+        ? modal?.querySelector<HTMLElement>(focusTrapInitial)
+        : unref(ocModalInput)?.$el?.querySelector('input')
+    // needs to be one of those elements or undefined. null will throw errors
+    return initialElement || unref(ocModalBody) || undefined
+  }
+})
+
+const classes = computed(() => {
+  return ['oc-modal', 'bg-role-surface', elementClass]
+})
+
+watch(
+  () => inputValue,
+  (value) => {
+    userInputValue.value = value
+  },
+  { immediate: true }
+)
+
+const cancelModalAction = () => {
+  if (isLoading) {
+    return
+  }
+  emit('cancel')
+}
+
+const onDocumentKeydown = (event: KeyboardEvent) => {
+  if (!active || event.key !== 'Escape') {
+    return
+  }
+  event.stopPropagation()
+  cancelModalAction()
+}
+
+useEventListener(document, 'keydown', onDocumentKeydown)
+
+const confirm = () => {
+  if (buttonConfirmDisabled || inputError) {
+    return
+  }
+  emit('confirm', unref(userInputValue))
+}
+
+const onInputKeydownEnter = (event: KeyboardEvent) => {
+  if (isComposingEvent(event)) {
+    return
+  }
+  confirm()
+}
+
+const inputOnInput = (value: string) => {
+  emit('input', value)
+}
+</script>

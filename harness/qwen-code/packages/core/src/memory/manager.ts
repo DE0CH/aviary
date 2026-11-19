@@ -1,0 +1,3190 @@
+/**
+ * @license
+ * Copyright 2026 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * MemoryManager — the single entry-point for all memory module operations.
+ *
+ * # Design
+ * All background-task state (in-flight promises, per-project extraction queues,
+ * per-project dream-scan timestamps, task records) is owned directly by
+ * MemoryManager using plain Maps and sets. There are no separate
+ * BackgroundTaskRegistry / BackgroundTaskDrainer / BackgroundTaskScheduler
+ * helper classes; those abstractions are replaced by straightforward inline
+ * state management inside this class.
+ *
+ * Public API — everything external callers need:
+ *   config.getMemoryManager().scheduleExtract(params)
+ *   config.getMemoryManager().scheduleDream(params)
+ *   config.getMemoryManager().recall(projectRoot, query, options)
+ *   config.getMemoryManager().forget(projectRoot, query, options)
+ *   config.getMemoryManager().getStatus(projectRoot)
+ *   config.getMemoryManager().drain(options?)
+ *
+ * # Task records
+ * Each scheduled operation is tracked as a lightweight MemoryTaskRecord.
+ * These are queryable by type and projectRoot for status display.
+ *
+ * # Injection for tests
+ * Production code uses `config.getMemoryManager()`. Tests that need isolation
+ * construct `new MemoryManager()` directly.
+ */
+
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type { Content, Part } from '@google/genai';
+import type { Config } from '../config/config.js';
+import { Storage } from '../config/storage.js';
+import { atomicWriteFile } from '../utils/atomicFileWrite.js';
+import { createDebugLogger } from '../utils/debugLogger.js';
+import { canonicalToolName, ToolNames } from '../tools/tool-names.js';
+import {
+  logMemoryDream,
+  logMemoryExtract,
+  logMemoryMigration,
+  MemoryDreamEvent,
+  MemoryExtractEvent,
+  MemoryMigrationEvent,
+} from '../telemetry/index.js';
+import {
+  getUserAutoMemoryConsolidationLockPath,
+  getAutoMemoryRoot,
+  getTeamAutoMemoryRoot,
+  getUserAutoMemoryRoot,
+  isAnyAutoMemPath,
+  isTeamAutoMemPath,
+  isUserAutoMemPath,
+} from './paths.js';
+import {
+  getAutoMemoryConsolidationLockPath,
+  getAutoMemoryMetadataPath,
+} from './paths.js';
+import { ensureAutoMemoryScaffold } from './store.js';
+import { runAutoMemoryExtract } from './extract.js';
+import {
+  EXTRACT_CADENCE_MAX_PENDING_ENTRIES,
+  EXTRACT_TAIL_ENTRIES,
+  getExtractNoopSkipTurns,
+} from './extract-cadence.js';
+import {
+  runManagedAutoMemoryDream,
+  type AutoMemoryDreamResult,
+} from './dream.js';
+import {
+  forgetManagedAutoMemoryEntries,
+  forgetManagedAutoMemoryMatches,
+  selectManagedAutoMemoryForgetCandidates,
+  type AutoMemoryForgetMatch,
+  type AutoMemoryForgetResult,
+  type AutoMemoryForgetSelectionResult,
+  type AutoMemoryStorageScope,
+} from './forget.js';
+import {
+  resolveRelevantAutoMemoryPromptForQuery,
+  type RelevantAutoMemoryPromptResult,
+  type ResolveRelevantAutoMemoryPromptOptions,
+} from './recall.js';
+import { getManagedAutoMemoryStatus } from './status.js';
+import { writeDreamManualRunToMetadata } from './dream.js';
+import { buildConsolidationTaskPrompt } from './dreamAgentPlanner.js';
+import {
+  runSkillReviewByAgent,
+  listExistingSkillDirNames,
+} from './skillReviewAgentPlanner.js';
+import {
+  stageSkillDirs,
+  acceptPendingSkill,
+  rejectPendingSkill,
+  type PendingSkill,
+} from './pending-skills.js';
+import type { AutoMemoryMetadata } from './types.js';
+import type { AutoMemoryDocumentCache } from './scan.js';
+import type { MemoryBodyCoverage } from './search-memory.js';
+import {
+  runMemoryMetadataMigration,
+  getProjectMetadataMigrationRoots,
+  scanMemoryMetadataMigrationCandidates,
+  type MetadataMigrationScope,
+} from './metadata-migration.js';
+import {
+  completeUserAutoMemoryDream,
+  DEFAULT_USER_DREAM_FAILURE_BACKOFF_HOURS,
+  DEFAULT_USER_DREAM_MIN_HOURS,
+  failUserAutoMemoryDream,
+  markUserAutoMemoryDreamRunning,
+  readUserAutoMemoryMetadata,
+  recordUserAutoMemoryMutation,
+  runManagedUserAutoMemoryDream,
+} from './user-dream.js';
+
+const debugLogger = createDebugLogger('AUTO_MEMORY_MANAGER');
+
+// ─── Re-export public types consumed by callers ───────────────────────────────
+
+export type {
+  AutoMemoryForgetResult,
+  AutoMemoryForgetMatch,
+  AutoMemoryForgetSelectionResult,
+};
+export type {
+  RelevantAutoMemoryPromptResult,
+  ResolveRelevantAutoMemoryPromptOptions,
+};
+export type { ManagedAutoMemoryStatus } from './status.js';
+
+// ─── Task record ──────────────────────────────────────────────────────────────
+
+export type MemoryTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'skipped';
+
+export interface MemoryTaskRecord {
+  id: string;
+  taskType: 'extract' | 'dream' | 'skill-review' | 'migration';
+  projectRoot: string;
+  sessionId?: string;
+  status: MemoryTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  progressText?: string;
+  error?: string;
+  metadata?: Record<string, unknown>;
+}
+
+// ─── Extract params / result ──────────────────────────────────────────────────
+
+export interface ScheduleExtractParams {
+  projectRoot: string;
+  sessionId: string;
+  history: Content[];
+  now?: Date;
+  config?: Config;
+  skippedHistory?: Content[];
+  /**
+   * Internal, #13004 only: raw-history index where `skippedHistory` was cut
+   * from the live history (the cursor base at skip time). Carried separately
+   * because a later carried settle moves the cadence entry's
+   * `lastExtractedLength` forward while the parked slice keeps the base it
+   * was cut at, and eviction of the slice from the captured tail is measured
+   * from the slice's own base.
+   */
+  skippedFrom?: number;
+  /**
+   * Internal, #13004 only: the parked snapshot a spliced `skippedHistory` was
+   * cut from. A request that waits in `extractQueued` re-checks this before
+   * running, because a concurrent run can consume that snapshot while it
+   * waits and replaying the orphaned slice would re-feed turns already
+   * extracted. Never set on a parked snapshot itself, so a flush replay is
+   * exempt by construction.
+   */
+  supplementedFrom?: ScheduleExtractParams;
+  /**
+   * Whether the turn's prompt stayed below the compaction warning threshold.
+   * Cadence skips (#13004) need `true`; near compaction every turn extracts.
+   */
+  belowCompactionWarn?: boolean;
+  /**
+   * Internal, #13004 flush only: threading the flush deadline into the fork
+   * so an abandoned run is cancelled instead of detaching past its boundary.
+   * Callers scheduling per-turn extractions never set this.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Internal, #13004 flush only: this run replays a parked snapshot, whose
+   * history can be shorter than the cursor a later run already persisted, so
+   * its cursor write must not move that project cursor backwards.
+   */
+  flushReplay?: boolean;
+}
+
+export interface ScheduleSkillReviewParams {
+  projectRoot: string;
+  sessionId: string;
+  history: Content[];
+  toolCallCount: number;
+  skillsModified: boolean;
+  now?: Date;
+  config?: Config;
+  enabled?: boolean;
+  threshold?: number;
+  maxTurns?: number;
+  timeoutMs?: number;
+  /** When true, stage created skills for user confirmation instead of
+   * leaving them live in the skills root. Sourced from
+   * Config.getAutoSkillConfirmEnabled(). */
+  confirmBeforePersist?: boolean;
+}
+
+export interface SkillReviewScheduleResult {
+  status: 'scheduled' | 'skipped';
+  taskId?: string;
+  skippedReason?:
+    | 'below_threshold'
+    | 'skills_modified_in_session'
+    | 'disabled'
+    | 'already_running'
+    | 'memory_pressure';
+  promise?: Promise<MemoryTaskRecord>;
+}
+
+// AutoMemoryExtractResult is re-used as the return type
+export type { AutoMemoryExtractResult as ExtractResult } from './extract.js';
+
+// ─── Dream params / result ────────────────────────────────────────────────────
+
+export interface ScheduleDreamParams {
+  projectRoot: string;
+  sessionId: string;
+  config?: Config;
+  now?: Date;
+  minHoursBetweenDreams?: number;
+  minSessionsBetweenDreams?: number;
+}
+
+export interface DreamScheduleResult {
+  status: 'scheduled' | 'skipped';
+  taskId?: string;
+  skippedReason?:
+    | 'disabled'
+    | 'same_session'
+    | 'min_hours'
+    | 'min_sessions'
+    | 'scan_throttled'
+    | 'locked'
+    | 'running'
+    | 'memory_pressure'
+    | 'migration_pending';
+  promise?: Promise<MemoryTaskRecord>;
+}
+
+export interface ScheduleUserDreamParams {
+  projectRoot: string;
+  config?: Config;
+  now?: Date;
+}
+
+export interface UserDreamScheduleResult {
+  status: 'scheduled' | 'skipped';
+  taskId?: string;
+  skippedReason?:
+    | 'disabled'
+    | 'not_pending'
+    | 'min_hours'
+    | 'failure_backoff'
+    | 'locked'
+    | 'running'
+    | 'memory_pressure'
+    | 'migration_pending';
+  promise?: Promise<MemoryTaskRecord>;
+}
+
+export interface ScheduleMetadataMigrationParams {
+  projectRoot: string;
+  scope: MetadataMigrationScope;
+  config: Config;
+}
+
+export interface MetadataMigrationScheduleResult {
+  status: 'scheduled' | 'skipped';
+  taskId?: string;
+  skippedReason?:
+    | 'disabled'
+    | 'complete'
+    | 'running'
+    | 'memory_pressure'
+    | 'cancelled'
+    | 'stalled';
+  promise?: Promise<MemoryTaskRecord>;
+}
+
+/** Function type for scanning session files by mtime. Injected for testing. */
+export type SessionScannerFn = (
+  projectRoot: string,
+  sinceMs: number,
+  excludeSessionId: string,
+) => Promise<string[]>;
+
+// ─── Drain options ────────────────────────────────────────────────────────────
+
+export interface DrainOptions {
+  timeoutMs?: number;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+export const EXTRACT_TASK_TYPE = 'managed-auto-memory-extraction' as const;
+export const DREAM_TASK_TYPE = 'managed-auto-memory-dream' as const;
+export const USER_DREAM_TASK_TYPE = 'managed-user-auto-memory-dream' as const;
+export const SKILL_REVIEW_TASK_TYPE = 'managed-skill-extractor' as const;
+export const AUTO_SKILL_THRESHOLD = 20;
+
+export const DEFAULT_AUTO_DREAM_MIN_HOURS = 24;
+export const DEFAULT_AUTO_DREAM_MIN_SESSIONS = 5;
+
+const DREAM_LOCK_STALE_MS = 60 * 60 * 1000; // 1 hour
+
+// Consecutive non-progressing migration runs (committed nothing while legacy
+// candidates remain) after which a domain stops being rescheduled for the
+// rest of this session: a file the migration agent can never enrich would
+// otherwise spawn a forked agent on every user turn, forever. Progress of a
+// single file resets the count, so a large corpus draining in
+// MAX_FILES_PER_RUN-sized batches never trips the limit.
+const MIGRATION_STALL_LIMIT = 3;
+const SESSION_SCAN_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const activeMigrationDomains = new Set<string>();
+
+const WRITE_TOOL_NAMES = new Set([
+  'write_file',
+  'edit',
+  'replace',
+  'create_file',
+]);
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function makeTaskRecord(
+  type: MemoryTaskRecord['taskType'],
+  projectRoot: string,
+  sessionId?: string,
+): MemoryTaskRecord {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    taskType: type,
+    projectRoot,
+    sessionId,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// INVARIANT: mutates `record` in place. `resolvePendingSkill`'s concurrency
+// safety (concurrent Keep-all/Discard-all each removing only their own entry)
+// relies on this — it re-reads `record.metadata.pendingSkills` after its await
+// and expects to see writes from sibling calls. A refactor to immutable
+// record updates would reintroduce the "all-but-one left behind" race.
+function updateRecord(
+  record: MemoryTaskRecord,
+  patch: Partial<
+    Pick<MemoryTaskRecord, 'status' | 'progressText' | 'error' | 'metadata'>
+  >,
+): void {
+  if (patch.status !== undefined) record.status = patch.status;
+  if (patch.progressText !== undefined)
+    record.progressText = patch.progressText;
+  if (patch.error !== undefined) record.error = patch.error;
+  if (patch.metadata !== undefined) {
+    record.metadata = { ...(record.metadata ?? {}), ...patch.metadata };
+  }
+  record.updatedAt = new Date().toISOString();
+}
+
+function resolvedFunctionCall(part: Part): {
+  name?: string;
+  args?: Record<string, unknown>;
+} {
+  let name = part.functionCall?.name
+    ? canonicalToolName(part.functionCall.name)
+    : undefined;
+  let args = part.functionCall?.args as Record<string, unknown> | undefined;
+  if (name === ToolNames.TOOL_CALL) {
+    const targetName = args?.['name'];
+    const targetArgs = args?.['arguments'];
+    if (typeof targetName === 'string') {
+      name = canonicalToolName(targetName);
+      if (
+        typeof targetArgs === 'object' &&
+        targetArgs !== null &&
+        !Array.isArray(targetArgs)
+      ) {
+        args = targetArgs as Record<string, unknown>;
+      } else {
+        args = undefined;
+        if (typeof targetArgs === 'string') {
+          const trimmedArgs = targetArgs.trim();
+          if (trimmedArgs.startsWith('{') && trimmedArgs.endsWith('}')) {
+            try {
+              const parsedArgs: unknown = JSON.parse(trimmedArgs);
+              if (
+                typeof parsedArgs === 'object' &&
+                parsedArgs !== null &&
+                !Array.isArray(parsedArgs)
+              ) {
+                args = parsedArgs as Record<string, unknown>;
+              }
+            } catch {
+              // Invalid JSON cannot describe a memory-writing target.
+            }
+          }
+        }
+      }
+    }
+  }
+  return { name, args };
+}
+
+function memoryWritePath(part: Part): string | undefined {
+  const { name, args } = resolvedFunctionCall(part);
+  if (name && WRITE_TOOL_NAMES.has(name)) {
+    const filePath =
+      args?.['file_path'] ?? args?.['path'] ?? args?.['target_file'];
+    if (typeof filePath === 'string') return filePath;
+  }
+  return undefined;
+}
+
+function historyWritesToMemory(
+  history: Content[],
+  projectRoot: string,
+): boolean {
+  const successfulCallIds = successfulFunctionCallIds(history);
+  return history.some((msg) =>
+    (msg.parts ?? []).some((part) => {
+      const { name, args } = resolvedFunctionCall(part);
+      if (
+        part.functionCall?.id &&
+        successfulCallIds.has(part.functionCall.id) &&
+        name === ToolNames.MANAGE_MEMORY &&
+        // Only `remember` implies a write: runManagedRememberByAgent throws
+        // `remember_no_update` when nothing was persisted, whereas `forget`
+        // returns `{ removed: 0 }` with no error key when nothing matched.
+        // Skipping on a no-op `forget` would suppress extraction of a turn
+        // that wrote nothing to memory.
+        args?.['action'] === 'remember'
+      ) {
+        return true;
+      }
+      const filePath = memoryWritePath(part);
+      if (
+        filePath !== undefined &&
+        part.functionCall?.id &&
+        !successfulCallIds.has(part.functionCall.id)
+      ) {
+        // A *rejected* direct write — prior-read enforcement, a
+        // `permissions.deny` rule on a memory path, EISDIR/ENOSPC — wrote
+        // nothing to memory, so it must not suppress this turn's extraction.
+        // Same invariant as the `manage_memory` arm above. The gate is
+        // absence-of-failure rather than require-success: a call with no `id`
+        // has no response to check, and those keep the prior behaviour.
+        return false;
+      }
+      return (
+        filePath !== undefined &&
+        (isAnyAutoMemPath(filePath, projectRoot) ||
+          isTeamAutoMemPath(filePath, projectRoot))
+      );
+    }),
+  );
+}
+
+function successfulFunctionCallIds(history: Content[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of history) {
+    for (const part of message.parts ?? []) {
+      const response = part.functionResponse as
+        | { id?: string; response?: Record<string, unknown> }
+        | undefined;
+      if (
+        response?.id &&
+        response.response &&
+        !('error' in response.response)
+      ) {
+        ids.add(response.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function latestTurnHistory(history: Content[]): Content[] | undefined {
+  const queryIndex = history.findLastIndex(
+    (message) =>
+      message.role === 'user' &&
+      (message.parts ?? []).some(
+        (part) => typeof part.text === 'string' && part.text.trim().length > 0,
+      ) &&
+      !(message.parts ?? []).some((part) => part.functionResponse),
+  );
+  return queryIndex < 0 ? undefined : history.slice(queryIndex + 1);
+}
+
+function latestHistoryWritesToUserMemory(history: Content[]): boolean {
+  const recentHistory = latestTurnHistory(history);
+  if (!recentHistory) return false;
+  const successfulCallIds = successfulFunctionCallIds(recentHistory);
+
+  return recentHistory.some((message) =>
+    (message.parts ?? []).some((part) => {
+      if (
+        !part.functionCall?.id ||
+        !successfulCallIds.has(part.functionCall.id)
+      ) {
+        return false;
+      }
+      const filePath = memoryWritePath(part);
+      return typeof filePath === 'string' && isUserAutoMemPath(filePath);
+    }),
+  );
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readDreamMetadata(
+  projectRoot: string,
+): Promise<AutoMemoryMetadata> {
+  const content = await fs.readFile(
+    getAutoMemoryMetadataPath(projectRoot),
+    'utf-8',
+  );
+  return JSON.parse(content) as AutoMemoryMetadata;
+}
+
+async function writeDreamMetadata(
+  projectRoot: string,
+  metadata: AutoMemoryMetadata,
+): Promise<void> {
+  await atomicWriteFile(
+    getAutoMemoryMetadataPath(projectRoot),
+    `${JSON.stringify(metadata, null, 2)}\n`,
+    { encoding: 'utf-8' },
+  );
+}
+
+function hoursSince(lastDreamAt: string | undefined, now: Date): number | null {
+  if (!lastDreamAt) return null;
+  const timestamp = Date.parse(lastDreamAt);
+  if (Number.isNaN(timestamp)) return null;
+  return (now.getTime() - timestamp) / (1000 * 60 * 60);
+}
+
+const SESSION_FILE_PATTERN = /^[0-9a-fA-F-]{32,36}\.jsonl$/;
+
+async function defaultSessionScanner(
+  projectRoot: string,
+  sinceMs: number,
+  excludeSessionId: string,
+): Promise<string[]> {
+  const chatsDir = path.join(new Storage(projectRoot).getProjectDir(), 'chats');
+  let names: string[];
+  try {
+    names = await fs.readdir(chatsDir);
+  } catch {
+    return [];
+  }
+  const results: string[] = [];
+  await Promise.all(
+    names.map(async (name) => {
+      if (!SESSION_FILE_PATTERN.test(name)) return;
+      const sessionId = name.slice(0, -'.jsonl'.length);
+      if (sessionId === excludeSessionId) return;
+      try {
+        const stats = await fs.stat(path.join(chatsDir, name));
+        if (stats.mtimeMs > sinceMs) results.push(sessionId);
+      } catch {
+        // skip unreadable files
+      }
+    }),
+  );
+  return results;
+}
+
+async function dreamLockExistsAt(lockPath: string): Promise<boolean> {
+  let mtimeMs: number;
+  let holderPid: number | undefined;
+  try {
+    const [stats, content] = await Promise.all([
+      fs.stat(lockPath),
+      fs.readFile(lockPath, 'utf-8').catch(() => ''),
+    ]);
+    mtimeMs = stats.mtimeMs;
+    const parsed = parseInt(content.trim(), 10);
+    holderPid = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  } catch {
+    return false; // ENOENT — no lock
+  }
+  const ageMs = Date.now() - mtimeMs;
+  if (ageMs <= DREAM_LOCK_STALE_MS) {
+    if (holderPid !== undefined && isProcessRunning(holderPid)) return true;
+    await fs.rm(lockPath, { force: true });
+    return false;
+  }
+  await fs.rm(lockPath, { force: true });
+  return false;
+}
+
+async function dreamLockExists(projectRoot: string): Promise<boolean> {
+  return dreamLockExistsAt(getAutoMemoryConsolidationLockPath(projectRoot));
+}
+
+async function acquireDreamLock(projectRoot: string): Promise<void> {
+  await fs.writeFile(
+    getAutoMemoryConsolidationLockPath(projectRoot),
+    String(process.pid),
+    { flag: 'wx' },
+  );
+}
+
+async function releaseDreamLock(projectRoot: string): Promise<void> {
+  await fs.rm(getAutoMemoryConsolidationLockPath(projectRoot), {
+    force: true,
+  });
+}
+
+async function acquireUserDreamLock(): Promise<void> {
+  await fs.writeFile(
+    getUserAutoMemoryConsolidationLockPath(),
+    String(process.pid),
+    { flag: 'wx' },
+  );
+}
+
+async function releaseUserDreamLock(): Promise<void> {
+  await fs.rm(getUserAutoMemoryConsolidationLockPath(), { force: true });
+}
+
+// ─── MemoryManager ────────────────────────────────────────────────────────────
+
+/**
+ * MemoryManager owns all runtime state for the memory subsystem and exposes a
+ * clean, stable API. It is created once per Config instance and returned by
+ * `config.getMemoryManager()`. Tests pass a fresh `new MemoryManager()`.
+ */
+export class MemoryManager {
+  // ── Task records ────────────────────────────────────────────────────────────
+  private readonly tasks = new Map<string, MemoryTaskRecord>();
+  // ── Subscribers (useSyncExternalStore / custom listeners) ────────────────
+  // Subscribers without a taskType filter receive every notify; those
+  // with a filter receive only notifies whose changed record matches
+  // (extract OR dream). Filtered subscribers exist so high-frequency
+  // consumers (e.g. the bg-tasks UI hook, which only cares about
+  // dream) can skip the per-extract O(n) work that would otherwise
+  // run on every UserQuery.
+  private readonly subscribers = new Set<() => void>();
+  private readonly subscribersByType = new Map<
+    MemoryTaskRecord['taskType'],
+    Set<() => void>
+  >();
+  // ── In-flight promises (for drain) ──────────────────────────────────────────
+  private readonly inFlight = new Map<string, Promise<unknown>>();
+
+  // ── Extract scheduling state ─────────────────────────────────────────────────
+  private readonly extractRunning = new Set<string>();
+  private readonly extractCurrentTaskId = new Map<string, string>();
+  private readonly extractQueued = new Map<
+    string,
+    { taskId: string; params: ScheduleExtractParams; epoch: number }
+  >();
+  // #13004 cadence, per session and in memory only. A session switch drops
+  // both ids' entries (discardExtractCadence), so /clear, /resume and /branch
+  // never inherit another session's skips.
+  private readonly extractCadence = new Map<
+    string,
+    {
+      projectRoot: string;
+      armed: boolean;
+      skips: number;
+      lastExtractedLength: number;
+      /**
+       * Sequence of the last run that consumed its history and settled the
+       * entry. Compared against a parked snapshot's sequence, not its
+       * length: lengths from different index spaces (a compaction between
+       * schedule and settle) prove nothing, order does (#13004).
+       */
+      lastSettledSeq?: number;
+      pending?: ScheduleExtractParams;
+    }
+  >();
+  // #13004 ordering stamps, in memory only. Every accepted run and every
+  // parked skip snapshot carries a per-manager monotonic sequence, so
+  // recordCadenceOutcome and the flush can tell which came first without
+  // comparing history lengths across a compaction.
+  private extractParamSeq = new WeakMap<ScheduleExtractParams, number>();
+  private nextExtractSeq = 0;
+  private stampExtractSeq<T extends ScheduleExtractParams>(params: T): T {
+    if (!this.extractParamSeq.has(params)) {
+      this.extractParamSeq.set(params, ++this.nextExtractSeq);
+    }
+    return params;
+  }
+  private seqOfExtractParams(
+    params: ScheduleExtractParams | undefined,
+  ): number {
+    return (params && this.extractParamSeq.get(params)) ?? 0;
+  }
+  /** Clone preserving the sequence: the flush replays the parked snapshot. */
+  private cloneExtractParams(
+    params: ScheduleExtractParams,
+    extra: Partial<ScheduleExtractParams>,
+  ): ScheduleExtractParams {
+    const clone = { ...params, ...extra };
+    const seq = this.extractParamSeq.get(params);
+    if (seq !== undefined) this.extractParamSeq.set(clone, seq);
+    return clone;
+  }
+  // Bumped by every cadence discard. An extraction that was in flight, or a
+  // trailing request already queued, when the discard lands drops its outcome:
+  // the discarded id can come back (/resume, or a failed resume restoring the
+  // old id), and must not be re-armed by a run the switch already left.
+  // Dropping an outcome only costs one arm. The epoch is captured where the
+  // request is queued, not where it starts, or a bump landing while it waits
+  // would be invisible to it.
+  private cadenceDiscardEpoch = 0;
+  // One shared flush run per session and snapshot (#13004), so overlapping
+  // boundaries over the same pending turns wait for one extraction instead of
+  // each passing on an entry the first one is already flushing, while a skip
+  // that lands behind a parked run gets its own run rather than the older
+  // one's answer. Each caller still applies its own timeout.
+  private readonly extractFlushRuns = new Map<
+    string,
+    { pending: ScheduleExtractParams; run: Promise<boolean> }
+  >();
+
+  // ── Skill-review in-flight dedup ─────────────────────────────────────────────
+  private readonly skillReviewInFlightByProject = new Map<string, string>();
+
+  // ── Dream scheduling state ───────────────────────────────────────────────────
+  private readonly dreamInFlightByKey = new Map<string, string>();
+  private readonly dreamLastSessionScanAt = new Map<string, number>();
+  // AbortControllers for in-flight dream tasks, keyed by record id.
+  // cancelTask() looks up the controller, aborts it (the abort signal
+  // propagates into runForkedAgent), and marks the record cancelled.
+  // The runDream finally block clears the entry on settle.
+  private readonly dreamAbortControllers = new Map<string, AbortController>();
+  private readonly migrationInFlightByDomain = new Map<string, string>();
+  private readonly migrationStallCountByDomain = new Map<string, number>();
+  private readonly migrationAbortControllers = new Map<
+    string,
+    AbortController
+  >();
+  // Set to true when releaseDreamLock() throws (e.g., Windows EPERM,
+  // ENOENT race, disk full). The lock file is then left on disk and
+  // dreamLockExists() sees a fresh-mtime lock owned by a still-alive
+  // PID (us!), suppressing every subsequent scheduleDream() call as
+  // `{status: 'skipped', skippedReason: 'locked'}` — invisible to the
+  // user once the surfacing UI just shows "Lock release failed" without
+  // re-firing. Setting this flag tells the next scheduleDream() to
+  // force-clean the leaked lock file before the existence check, so
+  // scheduling resumes within the same session instead of waiting for
+  // next session start's staleness sweep.
+  private dreamLockReleaseFailed = false;
+  private userDreamLockReleaseFailed = false;
+  private readonly sessionScanner: SessionScannerFn;
+  private readonly bodyPresentVersionsInHistory = new Map<string, number>();
+  private readonly bodyCoverageInHistory = new Map<
+    string,
+    MemoryBodyCoverage
+  >();
+  private readonly exhaustedBodyRefsInCurrentTurn = new Set<string>();
+  private readonly searchMemoryRequestsInCurrentTurn = new Set<string>();
+  private readonly recallDocumentCache: AutoMemoryDocumentCache = new Map();
+
+  constructor(sessionScanner: SessionScannerFn = defaultSessionScanner) {
+    this.sessionScanner = sessionScanner;
+  }
+  // ─── Subscribe ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Register a listener that is called whenever any task record changes.
+   * Compatible with React’s `useSyncExternalStore`.
+   * Returns an unsubscribe function.
+   *
+   * Pass `{ taskType: 'dream' }` (or `'extract'`) to receive only
+   * notifies whose changed record matches that type. Filtered
+   * subscribers skip the wakeup entirely for unrelated transitions —
+   * the dream-only UI hook uses this to avoid doing O(n) signature
+   * work on every per-UserQuery extract notify.
+   */
+  subscribe(
+    listener: () => void,
+    opts?: { taskType?: MemoryTaskRecord['taskType'] },
+  ): () => void {
+    if (opts?.taskType) {
+      const type = opts.taskType;
+      let set = this.subscribersByType.get(type);
+      if (!set) {
+        set = new Set();
+        this.subscribersByType.set(type, set);
+      }
+      set.add(listener);
+      return () => {
+        set!.delete(listener);
+        // Drop the Map entry when the per-type bucket is empty so the
+        // long-lived MemoryManager doesn't accumulate empty Sets across
+        // repeated subscribe/unsubscribe cycles (e.g. React mount /
+        // unmount in the bg-tasks UI hook).
+        if (set!.size === 0) this.subscribersByType.delete(type);
+      };
+    }
+    this.subscribers.add(listener);
+    return () => this.subscribers.delete(listener);
+  }
+
+  /**
+   * Notify subscribers. Pass the changed task's type so type-filtered
+   * subscribers can be reached too; the unfiltered subscriber set
+   * always receives the wakeup either way.
+   */
+  private notify(taskType?: MemoryTaskRecord['taskType']): void {
+    for (const fn of this.subscribers) fn();
+    if (taskType) {
+      const typed = this.subscribersByType.get(taskType);
+      if (typed) for (const fn of typed) fn();
+    }
+  }
+
+  /** Update a record and notify subscribers. */
+  private update(
+    record: MemoryTaskRecord,
+    patch: Partial<
+      Pick<MemoryTaskRecord, 'status' | 'progressText' | 'error' | 'metadata'>
+    >,
+  ): void {
+    updateRecord(record, patch);
+    this.notify(record.taskType);
+  }
+
+  /**
+   * Register a brand-new record in the task map and notify once.
+   * Use this for records that start in 'pending' and need no immediate patch.
+   */
+  private store(record: MemoryTaskRecord): void {
+    this.tasks.set(record.id, record);
+    this.notify(record.taskType);
+  }
+
+  /**
+   * Register a brand-new record AND apply an initial status patch in a single
+   * notify. Avoids the double-render that separate store()+update() causes.
+   */
+  private storeWith(
+    record: MemoryTaskRecord,
+    patch: Partial<
+      Pick<MemoryTaskRecord, 'status' | 'progressText' | 'error' | 'metadata'>
+    >,
+  ): void {
+    updateRecord(record, patch);
+    this.tasks.set(record.id, record);
+    this.notify(record.taskType);
+  }
+  // ─── Task record query ────────────────────────────────────────────────────────
+
+  /** Return task records filtered by type and optionally by projectRoot. */
+  listTasksByType(
+    taskType: MemoryTaskRecord['taskType'],
+    projectRoot?: string,
+  ): MemoryTaskRecord[] {
+    return [...this.tasks.values()]
+      .filter(
+        (t) =>
+          t.taskType === taskType &&
+          (!projectRoot || t.projectRoot === projectRoot),
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  // ─── Drain ────────────────────────────────────────────────────────────────────
+
+  /** Wait for all in-flight tasks to settle, with optional timeout. */
+  async drain(options: DrainOptions = {}): Promise<boolean> {
+    const promises = [...this.inFlight.values()];
+    if (promises.length === 0) return true;
+    const waitAll = Promise.allSettled(promises).then(() => true);
+    if (!options.timeoutMs || options.timeoutMs <= 0) return waitAll;
+    return Promise.race<boolean>([
+      waitAll,
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(false), options.timeoutMs),
+      ),
+    ]);
+  }
+
+  private track<T>(taskId: string, promise: Promise<T>): Promise<T> {
+    this.inFlight.set(taskId, promise);
+    void promise.then(
+      () => this.inFlight.delete(taskId),
+      () => this.inFlight.delete(taskId),
+    );
+    return promise;
+  }
+
+  async scheduleMetadataMigration(
+    params: ScheduleMetadataMigrationParams,
+  ): Promise<MetadataMigrationScheduleResult> {
+    // The migration's only consumer is the structured recall protocol, so an
+    // opted-out corpus must not pay for forked agents that enrich metadata
+    // nothing will ever read. Checked before the pressure probe so a disabled
+    // feature reports why it is off rather than an incidental skip reason.
+    if (!params.config.getStructuredMemoryRecallEnabled()) {
+      return { status: 'skipped', skippedReason: 'disabled' };
+    }
+    if (this.isUnderMemoryPressure(params.config)) {
+      return { status: 'skipped', skippedReason: 'memory_pressure' };
+    }
+    const root =
+      params.scope === 'project'
+        ? getAutoMemoryRoot(params.projectRoot)
+        : params.scope === 'user'
+          ? getUserAutoMemoryRoot()
+          : getTeamAutoMemoryRoot(params.projectRoot);
+    const roots =
+      params.scope === 'project'
+        ? getProjectMetadataMigrationRoots(
+            params.projectRoot,
+            params.config.isTrustedFolder(),
+          )
+        : [root];
+    const domain = `${params.scope}:${root}`;
+    const stalledAttempts = this.migrationStallCountByDomain.get(domain) ?? 0;
+    const existingId = this.migrationInFlightByDomain.get(domain);
+    if (existingId || activeMigrationDomains.has(domain)) {
+      return {
+        status: 'skipped',
+        skippedReason: 'running',
+        ...(existingId ? { taskId: existingId } : {}),
+      };
+    }
+    if (
+      params.scope !== 'team' &&
+      params.config.getMemoryRecallMode() === 'structured' &&
+      stalledAttempts === 0
+    ) {
+      return { status: 'skipped', skippedReason: 'complete' };
+    }
+    if (stalledAttempts >= MIGRATION_STALL_LIMIT) {
+      return { status: 'skipped', skippedReason: 'stalled' };
+    }
+    // Register the abort controller (under a reserved id) together with the
+    // domain reservation, BEFORE the candidate scan: the scan reads every
+    // memory file in the corpus and must be covered by cancelMigrations() /
+    // requestShutdown(), or a forked migration agent can still be spawned
+    // after shutdown was requested. The scan is also tracked so drain()
+    // covers it; the controller is re-keyed to the record id once the
+    // record exists.
+    const scanTaskId = `migration-scan:${domain}`;
+    const abortController = new AbortController();
+    this.migrationAbortControllers.set(scanTaskId, abortController);
+    activeMigrationDomains.add(domain);
+    let candidatesFound: boolean;
+    try {
+      candidatesFound = await this.track(
+        scanTaskId,
+        Promise.all(
+          roots.map((candidateRoot) =>
+            scanMemoryMetadataMigrationCandidates(
+              candidateRoot,
+              params.scope,
+              abortController.signal,
+            ),
+          ),
+        ).then((scans) => scans.some((candidates) => candidates.length > 0)),
+      );
+    } catch (error) {
+      activeMigrationDomains.delete(domain);
+      this.migrationAbortControllers.delete(scanTaskId);
+      if (abortController.signal.aborted) {
+        return { status: 'skipped', skippedReason: 'cancelled' };
+      }
+      throw error;
+    }
+    this.migrationAbortControllers.delete(scanTaskId);
+    if (abortController.signal.aborted) {
+      activeMigrationDomains.delete(domain);
+      return { status: 'skipped', skippedReason: 'cancelled' };
+    }
+    if (!candidatesFound && stalledAttempts === 0) {
+      activeMigrationDomains.delete(domain);
+      return { status: 'skipped', skippedReason: 'complete' };
+    }
+    const record = makeTaskRecord('migration', params.projectRoot);
+    this.migrationAbortControllers.set(record.id, abortController);
+    this.migrationInFlightByDomain.set(domain, record.id);
+    this.storeWith(record, {
+      status: 'running',
+      progressText: `Migrating ${params.scope} memory metadata.`,
+      metadata: { scope: params.scope },
+    });
+    const promise = this.track(
+      record.id,
+      this.runMetadataMigration(
+        record,
+        domain,
+        roots,
+        params,
+        abortController.signal,
+      ),
+    );
+    return { status: 'scheduled', taskId: record.id, promise };
+  }
+
+  private async runMetadataMigration(
+    record: MemoryTaskRecord,
+    domain: string,
+    roots: readonly string[],
+    params: ScheduleMetadataMigrationParams,
+    abortSignal: AbortSignal,
+  ): Promise<MemoryTaskRecord> {
+    const startedAt = Date.now();
+    try {
+      const result = await runMemoryMetadataMigration({
+        config: params.config,
+        projectRoot: params.projectRoot,
+        roots,
+        scope: params.scope,
+        abortSignal,
+      });
+      if (abortSignal.aborted || record.status === 'cancelled') {
+        logMemoryMigration(
+          params.config,
+          new MemoryMigrationEvent({
+            scope: params.scope,
+            status: 'cancelled',
+            files_scanned: result.filesScanned,
+            legacy_files: result.legacyFiles,
+            remaining_legacy_files: result.remainingLegacyFiles,
+            batch_files: result.attempted,
+            committed: result.committed,
+            conflicts: result.conflicts,
+            failed: result.failed,
+            agent_duration_ms: result.agentDurationMs,
+            input_tokens: result.inputTokens,
+            output_tokens: result.outputTokens,
+            total_tokens: result.totalTokens,
+            duration_ms: Date.now() - startedAt,
+          }),
+        );
+        return record;
+      }
+      const indexRebuildFailed = result.indexRebuildError !== undefined;
+      if (
+        indexRebuildFailed ||
+        (result.committed === 0 && result.remainingLegacyFiles > 0)
+      ) {
+        this.migrationStallCountByDomain.set(
+          domain,
+          (this.migrationStallCountByDomain.get(domain) ?? 0) + 1,
+        );
+      } else {
+        this.migrationStallCountByDomain.delete(domain);
+      }
+      const stalled =
+        (this.migrationStallCountByDomain.get(domain) ?? 0) >=
+        MIGRATION_STALL_LIMIT;
+      const failed = stalled || indexRebuildFailed;
+      this.update(record, {
+        status: failed ? 'failed' : 'completed',
+        ...(failed
+          ? {
+              error:
+                result.indexRebuildError ??
+                `Migration stalled: ${result.remainingLegacyFiles} legacy file(s) could not be migrated in ${MIGRATION_STALL_LIMIT} consecutive runs; giving up for this session.`,
+            }
+          : {}),
+        progressText: `Migrated ${result.committed} memory file(s).`,
+        metadata: { scope: params.scope, ...result },
+      });
+      logMemoryMigration(
+        params.config,
+        new MemoryMigrationEvent({
+          scope: params.scope,
+          status: failed ? 'failed' : 'completed',
+          failure_reason:
+            result.indexRebuildError ?? (stalled ? 'stalled' : undefined),
+          files_scanned: result.filesScanned,
+          legacy_files: result.legacyFiles,
+          remaining_legacy_files: result.remainingLegacyFiles,
+          batch_files: result.attempted,
+          committed: result.committed,
+          conflicts: result.conflicts,
+          failed: result.failed,
+          agent_duration_ms: result.agentDurationMs,
+          input_tokens: result.inputTokens,
+          output_tokens: result.outputTokens,
+          total_tokens: result.totalTokens,
+          duration_ms: Date.now() - startedAt,
+        }),
+      );
+    } catch (error) {
+      if (abortSignal.aborted && record.status === 'cancelled') {
+        logMemoryMigration(
+          params.config,
+          new MemoryMigrationEvent({
+            scope: params.scope,
+            status: 'cancelled',
+            files_scanned: 0,
+            legacy_files: 0,
+            remaining_legacy_files: 0,
+            batch_files: 0,
+            committed: 0,
+            conflicts: 0,
+            failed: 0,
+            agent_duration_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            duration_ms: Date.now() - startedAt,
+          }),
+        );
+        return record;
+      }
+      this.migrationStallCountByDomain.set(
+        domain,
+        (this.migrationStallCountByDomain.get(domain) ?? 0) + 1,
+      );
+      this.update(record, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      logMemoryMigration(
+        params.config,
+        new MemoryMigrationEvent({
+          scope: params.scope,
+          status: 'failed',
+          files_scanned: 0,
+          legacy_files: 0,
+          remaining_legacy_files: 0,
+          batch_files: 0,
+          committed: 0,
+          conflicts: 0,
+          failed: 1,
+          agent_duration_ms: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          duration_ms: Date.now() - startedAt,
+        }),
+      );
+    } finally {
+      this.migrationAbortControllers.delete(record.id);
+      this.migrationInFlightByDomain.delete(domain);
+      activeMigrationDomains.delete(domain);
+    }
+    return record;
+  }
+
+  // ─── Extract ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Schedule a managed auto-memory extraction for the given session turn.
+   *
+   * Returns immediately with a skipped result if:
+   *   - The last history turn wrote to a memory file (memory_tool)
+   *   - Extraction is already running for this project (queues trailing request)
+   *
+   * The trailing request starts automatically when the active extraction
+   * completes.
+   */
+  async scheduleExtract(
+    params: ScheduleExtractParams,
+    options: { bypassCadence?: boolean } = {},
+  ): Promise<
+    ReturnType<typeof runAutoMemoryExtract> extends Promise<infer T> ? T : never
+  > {
+    const wroteUserMemory = latestHistoryWritesToUserMemory(params.history);
+    if (
+      historyWritesToMemory(
+        latestTurnHistory(params.history) ?? params.history,
+        params.projectRoot,
+      )
+    ) {
+      const record = makeTaskRecord(
+        'extract',
+        params.projectRoot,
+        params.sessionId,
+      );
+      this.storeWith(record, {
+        status: 'skipped',
+        progressText: 'Skipped: main agent wrote to memory files this turn.',
+        metadata: {
+          skippedReason: 'memory_tool',
+          historyLength: params.history.length,
+        },
+      });
+      // The main agent's write disarms cadence but does not cover earlier
+      // skipped turns. Keep that debt for the next extraction or close flush.
+      this.cadenceDiscardEpoch += 1;
+      const cadence = this.extractCadence.get(params.sessionId);
+      if (cadence) {
+        cadence.armed = false;
+        cadence.skips = 0;
+      }
+      if (wroteUserMemory && params.config) {
+        await this.recordUserMutation(
+          params.projectRoot,
+          params.config,
+          params.now ?? new Date(),
+        );
+      }
+      return {
+        touchedTopics: [],
+        skippedReason: 'memory_tool' as const,
+        cursor: {
+          sessionId: params.sessionId,
+          updatedAt: (params.now ?? new Date()).toISOString(),
+        },
+      } as never;
+    }
+
+    if (!options.bypassCadence && this.shouldSkipForCadence(params)) {
+      const record = makeTaskRecord(
+        'extract',
+        params.projectRoot,
+        params.sessionId,
+      );
+      this.storeWith(record, {
+        status: 'skipped',
+        progressText:
+          'Skipped: the last extraction saved nothing and recent turns still fit its window.',
+        metadata: {
+          skippedReason: 'cadence',
+          historyLength: params.history.length,
+        },
+      });
+      if (params.config) {
+        logMemoryExtract(
+          params.config,
+          new MemoryExtractEvent({
+            trigger: 'auto',
+            status: 'skipped',
+            skipped_reason: 'cadence',
+            patches_count: 0,
+            touched_topics: [],
+            duration_ms: 0,
+          }),
+        );
+      }
+      return {
+        touchedTopics: [],
+        skippedReason: 'cadence' as const,
+        cursor: {
+          sessionId: params.sessionId,
+          updatedAt: (params.now ?? new Date()).toISOString(),
+        },
+      } as never;
+    }
+
+    // Compaction and rewind shrink history without a session switch, so no
+    // discard fires. History only grows between this session's own requests,
+    // so a shorter one proves the parked snapshot predates the shrink. A flush
+    // replay is exempt: it runs a snapshot a newer skip replaced.
+    const cadenceNow = this.extractCadence.get(params.sessionId);
+    if (
+      !options.bypassCadence &&
+      cadenceNow?.pending !== undefined &&
+      params.history.length < cadenceNow.pending.history.length
+    ) {
+      delete cadenceNow.pending;
+    }
+
+    if (
+      cadenceNow?.pending &&
+      cadenceNow.projectRoot === params.projectRoot &&
+      params.history.length -
+        (cadenceNow.pending.skippedFrom ?? cadenceNow.lastExtractedLength) >
+        EXTRACT_TAIL_ENTRIES
+    ) {
+      // A long following turn can evict skipped turns from the captured tail.
+      // Measured from the snapshot's own base: a carried settle moves the
+      // entry's `lastExtractedLength` forward while the slice keeps the base
+      // it was cut at, so the entry's base both over-reports and
+      // under-reports what the tail still holds. Passing the whole slice is
+      // deliberate — the fork join drops the part the tail still holds, and
+      // only the captured tail itself can prove that coverage.
+      params = {
+        ...params,
+        skippedHistory: cadenceNow.pending.skippedHistory,
+        supplementedFrom: cadenceNow.pending,
+      };
+    }
+
+    // Stamp the accepted request before it can be queued or run: every
+    // completion below is ordered against parked snapshots by this sequence,
+    // never by history length (#13004).
+    params = this.stampExtractSeq(params);
+
+    if (this.extractRunning.has(params.projectRoot)) {
+      const currentTaskId = this.extractCurrentTaskId.get(params.projectRoot);
+      if (!currentTaskId) {
+        return {
+          touchedTopics: [],
+          skippedReason: 'already_running' as const,
+          cursor: {
+            sessionId: params.sessionId,
+            updatedAt: (params.now ?? new Date()).toISOString(),
+          },
+        } as never;
+      }
+
+      const queued = this.extractQueued.get(params.projectRoot);
+      if (queued) {
+        // Supersede the existing queued request with newer params, and refresh
+        // the epoch: a turn arriving after a switch must not be judged by one
+        // captured before it.
+        queued.params = params;
+        queued.epoch = this.cadenceDiscardEpoch;
+        const queuedRecord = this.tasks.get(queued.taskId);
+        if (queuedRecord) {
+          this.update(queuedRecord, {
+            status: 'pending',
+            progressText:
+              'Updated trailing managed auto-memory extraction request while another extraction is running.',
+            metadata: {
+              queuedBehindTaskId: currentTaskId,
+              historyLength: params.history.length,
+              supersededAt: new Date().toISOString(),
+            },
+          });
+        }
+      } else {
+        const record = makeTaskRecord(
+          'extract',
+          params.projectRoot,
+          params.sessionId,
+        );
+        this.storeWith(record, {
+          status: 'pending',
+          progressText:
+            'Queued trailing managed auto-memory extraction until the active extraction completes.',
+          metadata: {
+            trailing: true,
+            queuedBehindTaskId: currentTaskId,
+            historyLength: params.history.length,
+          },
+        });
+        this.extractQueued.set(params.projectRoot, {
+          taskId: record.id,
+          params,
+          epoch: this.cadenceDiscardEpoch,
+        });
+      }
+
+      return {
+        touchedTopics: [],
+        skippedReason: 'queued' as const,
+        cursor: {
+          sessionId: params.sessionId,
+          updatedAt: (params.now ?? new Date()).toISOString(),
+        },
+      } as never;
+    }
+
+    const record = makeTaskRecord(
+      'extract',
+      params.projectRoot,
+      params.sessionId,
+    );
+    this.store(record);
+    return this.track(record.id, this.runExtract(record.id, params)) as never;
+  }
+
+  /**
+   * #13004: skip this turn's extraction only when the previous run for the
+   * session engaged with memory and saved nothing, the skip budget is not
+   * spent, every unprocessed entry still fits the next run's history tail as
+   * measured at skip time, and the prompt is
+   * below the compaction warning. A skip records the turn as pending for
+   * {@link flushPendingExtract} and leaves the cursor untouched.
+   * Arming requires a completed run, so a skip can overlap this session's own
+   * extraction when that run is a trailing request with older history, and also
+   * when it is a direct run whose own gate returned false (see
+   * {@link recordCadenceOutcome}).
+   */
+  private shouldSkipForCadence(params: ScheduleExtractParams): boolean {
+    const budget = getExtractNoopSkipTurns();
+    const state = this.extractCadence.get(params.sessionId);
+    if (budget === 0 || !state?.armed || state.skips >= budget) return false;
+    // The pressure gate lives in `runExtract`, so a pressured turn can never
+    // fork. Recording it as a cadence skip would spend the experiment's budget
+    // and park a snapshot on a turn that was never eligible to extract; let the
+    // request through so `runExtract` records `memory_pressure` instead.
+    if (this.isUnderMemoryPressure(params.config)) return false;
+    // `/cd` and the daemon's `session/cd` relocate the project root without a
+    // session switch, so no discard fires and this entry outlives the project
+    // that earned it. An arm measured against one project's memory says
+    // nothing about the next one's, so it must not suppress a turn there.
+    if (state.projectRoot !== params.projectRoot) return false;
+    if (params.belowCompactionWarn !== true) return false;
+    // A second skip replaces the parked snapshot, so the span that must fit
+    // the next run's tail starts at the snapshot's own base when one is
+    // parked, not at the base a carried settle may have moved forward. The
+    // park is cut and stamped from that same base: a carried settle can leave
+    // `lastExtractedLength` past the live history, and slicing there would
+    // park an empty snapshot and drop the turns the entry still owes.
+    const pendingFrom = state.pending?.skippedFrom ?? state.lastExtractedLength;
+    const pendingEntries = params.history.length - pendingFrom;
+    if (
+      pendingEntries < 0 ||
+      pendingEntries > EXTRACT_CADENCE_MAX_PENDING_ENTRIES
+    ) {
+      return false;
+    }
+    state.skips += 1;
+    state.pending = this.stampExtractSeq({
+      ...params,
+      skippedHistory: params.history.slice(pendingFrom),
+      skippedFrom: pendingFrom,
+    });
+    return true;
+  }
+
+  private recordCadenceOutcome(
+    params: ScheduleExtractParams,
+    result: Awaited<ReturnType<typeof runAutoMemoryExtract>> | undefined,
+    startEpoch: number,
+  ): void {
+    // Both early returns below drop this run's outcome, but a completed run
+    // already persisted its own project's extract cursor by the time it lands
+    // here — `runAutoMemoryExtract` writes it before returning. Record what
+    // that write covers before either exit can leave the entry behind it, or a
+    // later flush replays a snapshot this run extracted and persists the
+    // cursor backwards, which the next run then reads as a reason to re-scan
+    // everything after it. Only the snapshot this run's own root parked is
+    // covered: after a `/cd` the entry belongs to the live root, whose newer
+    // snapshot this run never extracted (see the guard below).
+    // Coverage is an ordering test, not a length test: a run scheduled before
+    // the snapshot was parked cannot have seen its turns, and its
+    // `processedOffset` counts entries in its own (possibly pre-compaction)
+    // index space, so it must never delete that snapshot.
+    const runSeq = this.seqOfExtractParams(params);
+    // A replay can preserve a cursor ahead of its snapshot without consuming
+    // any turns. Only actual extraction progress establishes coverage.
+    const madeProgress = result?.madeGenuineProgress === true;
+    if (madeProgress && result && !result.skippedReason) {
+      const covered = this.extractCadence.get(params.sessionId);
+      if (
+        covered?.pending !== undefined &&
+        covered.pending.projectRoot === params.projectRoot &&
+        runSeq > this.seqOfExtractParams(covered.pending) &&
+        (result.cursor.processedOffset ?? 0) >= covered.pending.history.length
+      ) {
+        delete covered.pending;
+      }
+    }
+    if (startEpoch !== this.cadenceDiscardEpoch) return;
+    if (getExtractNoopSkipTurns() === 0) {
+      this.extractCadence.delete(params.sessionId);
+      return;
+    }
+    // A run that never forked because the runtime was under memory pressure
+    // says nothing about the cadence: keep the arm and its remaining budget for
+    // the next unpressured turn instead of taking the failed/unconsumed branch
+    // below, which would disarm it.
+    if (result?.skippedReason === 'memory_pressure') return;
+    // `/cd` relocates the live Config in place and fires no discard, so a run
+    // still in flight for the old root lands here afterwards. It describes
+    // another project's memory and must not re-key the entry or drop the
+    // snapshot the new root parked. Compare the live root, not the carried
+    // entry's, or the first run after a `/cd` could never re-arm the cadence.
+    const liveProjectRoot = params.config?.getProjectRoot?.();
+    if (
+      liveProjectRoot !== undefined &&
+      liveProjectRoot !== params.projectRoot
+    ) {
+      return;
+    }
+    // A failed, unconsumed, or never-forked run retries without dropping
+    // skipped history.
+    if (
+      !result ||
+      !madeProgress ||
+      (!result.skippedReason &&
+        (result.cursor.processedOffset ?? 0) < params.history.length)
+    ) {
+      const state = this.extractCadence.get(params.sessionId);
+      if (state) {
+        state.armed = false;
+        state.skips = 0;
+      }
+      return;
+    }
+    if (result.skippedReason) return;
+    // A snapshot parked after this run was scheduled cannot have been covered
+    // by it — whether the run is a trailing request with older history or a
+    // direct run a compaction made shorter than the parked snapshot. Keep
+    // that skipped turn pending rather than treating it as extracted, and
+    // keep its spent skip budget: the carried turn is still un-extracted, so
+    // refunding here would let a streak reach twice the documented N.
+    // Conversely, a snapshot parked before this run was scheduled is owed
+    // across this settle only when the coverage delete above did not already
+    // consume it.
+    const carried = this.extractCadence.get(params.sessionId);
+    const previous = carried?.pending;
+    // Root agreement is part of the debt test, not implied by the ordering:
+    // this settle re-keys the entry to `params.projectRoot`, and a snapshot
+    // parked under another root (`/cd` away and back while this run was in
+    // flight) must not follow the re-key — the supplement gate compares the
+    // entry's root alone and would splice foreign turns into this root's
+    // extraction, skip budget included.
+    const carry =
+      previous !== undefined &&
+      previous.projectRoot === params.projectRoot &&
+      runSeq < this.seqOfExtractParams(previous);
+    this.extractCadence.set(params.sessionId, {
+      projectRoot: params.projectRoot,
+      armed:
+        result.extractorEngaged === true && result.touchedTopics.length === 0,
+      skips: carry ? (carried?.skips ?? 0) : 0,
+      lastExtractedLength: params.history.length,
+      lastSettledSeq: runSeq,
+      ...(carry && { pending: previous }),
+    });
+  }
+
+  /**
+   * Turns a parked #13004 skip still owes the next extraction, in raw history
+   * entries; 0 when nothing is parked. Callers use it to report a boundary that
+   * is about to drop those turns rather than flush them.
+   */
+  pendingExtractTurns(sessionId: string): number {
+    return (
+      this.extractCadence.get(sessionId)?.pending?.skippedHistory?.length ?? 0
+    );
+  }
+
+  /**
+   * Runs one extraction for turns the cadence skipped, before an ACP session
+   * close discards them. Other boundaries (compaction, `/clear`, `/resume`,
+   * `/branch`, process exit) do not flush: the experiment accepts losing up to
+   * N skipped turns there. The extraction reads the session's cache-safe
+   * params and checks the live session id, so the caller awaits it while the
+   * session is still current.
+   *
+   * Resolves `true` only when the pending turns were extracted. Resolves
+   * `false` when this call did not settle within `timeoutMs`, when the run
+   * extracted nothing (skipped or threw — the turns stay recorded so a later
+   * boundary can retry them), when the snapshot went stale before it ran, and
+   * when the budget expired while the shared run was parked or mid-fork: the
+   * run is then abandoned — its scheduled extraction is aborted — rather
+   * than left to run after the caller has moved on, and the pending turns
+   * stay recorded for a later boundary.
+   * Overlapping calls for one session share a single run while keeping their
+   * own timeout. That shared run is tracked here, not in `inFlight`, so
+   * `drain()` does not wait for the flush wrapper itself — but the extraction
+   * it schedules goes through `scheduleExtract` and `track`, so `drain()` does
+   * wait for that extraction while it runs.
+   */
+  async flushPendingExtract(
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const pending = this.extractCadence.get(sessionId)?.pending;
+    if (!pending) return true;
+    // Join a run only when it was started for this same snapshot: a skip that
+    // landed while an older run was parked replaced `pending`, and that run's
+    // answer describes turns this caller did not ask about.
+    let entry = this.extractFlushRuns.get(sessionId);
+    if (!entry || entry.pending !== pending) {
+      const deadline = Date.now() + timeoutMs;
+      const run = this.runPendingExtractFlush(sessionId, pending, deadline);
+      entry = { pending, run };
+      this.extractFlushRuns.set(sessionId, entry);
+      const started = entry;
+      void run.then(() => {
+        if (this.extractFlushRuns.get(sessionId) === started) {
+          this.extractFlushRuns.delete(sessionId);
+        }
+      });
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        entry.run,
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => {
+            debugLogger.warn(
+              'Pending auto-memory extraction did not settle in time.',
+              sessionId,
+              timeoutMs,
+            );
+            resolve(false);
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Drops the #13004 cadence state of the sessions a switch leaves and enters.
+   * Skipped turns are not flushed there, and a resumed id must not inherit an
+   * earlier skip.
+   */
+  discardExtractCadence(...sessionIds: string[]): void {
+    this.cadenceDiscardEpoch += 1;
+    for (const sessionId of sessionIds) this.extractCadence.delete(sessionId);
+  }
+
+  /**
+   * #13004: drops only the parked skipped-turn snapshot of one session, where
+   * a history shrink no `scheduleExtract` gets to observe (compaction, then a
+   * turn ending cancelled) would otherwise leave it parked above the live
+   * history — and the flush's `bypassCadence` exempts its replay from the
+   * shrink guard that deletes observed shrinks. Unlike
+   * {@link discardExtractCadence} this does not bump the discard epoch, so
+   * other sessions' in-flight cadence outcomes in this manager survive it.
+   */
+  invalidatePendingExtract(sessionId: string, owner?: Config): void {
+    const state = this.extractCadence.get(sessionId);
+    if (!state) return;
+    // Ownership: the snapshot was cut from the history of the Config that
+    // scheduled it. A subagent's derived Config shares this manager and the
+    // base Config's session id while compacting a chat of its own, so its
+    // shrink says nothing about that history and must not drop the snapshot.
+    if (
+      owner !== undefined &&
+      state.pending?.config !== undefined &&
+      state.pending.config !== owner
+    ) {
+      return;
+    }
+    delete state.pending;
+  }
+
+  /**
+   * The shared body behind {@link flushPendingExtract}: waits for the project
+   * slot, then extracts the pending snapshot unless it went stale or the run
+   * outlived `deadline` (the creating caller's budget, which bounds the run
+   * itself, not only that caller's wait), and settles the cadence entry exactly
+   * once whenever it does run. A run abandoned for its deadline leaves the
+   * entry pending instead. Never rejects, so a boundary always gets a boolean.
+   */
+  private async runPendingExtractFlush(
+    sessionId: string,
+    pending: ScheduleExtractParams,
+    deadline: number,
+  ): Promise<boolean> {
+    // The deadline cancels the run, not only the wait: a budget that expires
+    // mid-fork aborts the extraction instead of letting it run against a
+    // Config the close path has since torn down. Abandoned outcomes resolve
+    // false below and leave the entry pending for a later boundary.
+    const controller = new AbortController();
+    const killer = setTimeout(
+      () => {
+        controller.abort();
+      },
+      Math.max(0, deadline - Date.now()),
+    );
+    try {
+      // This session's own in-flight or trailing extraction may hold the
+      // slot, and so can a run recorded for a session this Config has since
+      // left: `startNewSession()` mutates one canonical Config in place, so
+      // this manager outlives the session id, and both maps are keyed by
+      // projectRoot/taskId rather than by session. Wait for it and for any
+      // trailing request it starts.
+      for (;;) {
+        const taskId = this.extractCurrentTaskId.get(pending.projectRoot);
+        const active = taskId ? this.inFlight.get(taskId) : undefined;
+        if (!active) break;
+        await active.catch(() => undefined);
+      }
+      // `pending.config` is the live Config, which `startNewSession()` mutates
+      // in place, so a flush that outlived its boundary would otherwise fork
+      // against the *incoming* session: both sides of the cache-safe mismatch
+      // guard move together and it never fires. The session this snapshot
+      // describes is gone, so drop it rather than keep its history alive for a
+      // retry no boundary will ever ask for.
+      const liveSessionId = pending.config?.getSessionId();
+      if (liveSessionId !== undefined && liveSessionId !== pending.sessionId) {
+        this.extractCadence.delete(sessionId);
+        return false;
+      }
+      // `/cd` mutates that same live Config in place too
+      // (`relocateWorkingDirectory`), and the fork's conversation comes from
+      // the session's cache-safe capture, not from this snapshot's history:
+      // running a snapshot earned in project A after the session moved to B
+      // would read B's turns against A's memory and write A's memory from
+      // them. The session-id guard above cannot see a relocation, so check
+      // the root the same way. Only refuse this snapshot: the session lives on
+      // across a `/cd`, so a skip in the new root can have parked a newer one
+      // behind this flush, and that one is still owed the run.
+      const liveProjectRoot = pending.config?.getProjectRoot?.();
+      if (
+        liveProjectRoot !== undefined &&
+        liveProjectRoot !== pending.projectRoot
+      ) {
+        if (this.extractCadence.get(sessionId)?.pending === pending) {
+          this.extractCadence.delete(sessionId);
+        }
+        return false;
+      }
+      // The deadline bounds the run, not only the wait: a flush that outlived
+      // its boundary must not fork an extraction the close path has already
+      // torn the Config down under. Leave the snapshot pending so a later
+      // boundary can retry the turns.
+      if (Date.now() >= deadline) {
+        // The loss is real at a close, where no later boundary comes: say so
+        // rather than returning false silently.
+        const owedTurns = pending.skippedHistory?.length ?? 0;
+        debugLogger.warn(
+          `#13004: the auto-memory flush expired before it could run; ${owedTurns} skipped turn(s) stay owed.`,
+          {
+            sessionId,
+            reason: 'flush_deadline_expired',
+            owedTurns,
+          },
+        );
+        return false;
+      }
+      // The entry no longer holds this snapshot: a newer run for the session
+      // completed while the slot was held (leaving its own coverage, or a
+      // dropped snapshot behind) or a newer skip replaced it. Either way the
+      // state it carries describes turns this run never extracted, and
+      // replaying it forks over content that was already covered and persists
+      // the cursor backwards, which the next run then reads as a reason to
+      // re-scan everything after it. A replacement that *shrank* under the
+      // snapshot (compaction, then another skip) is the same case: the length
+      // test below cannot see it, because a shrink rewrites the cursor
+      // downward while the parked snapshot keeps a length no live history has.
+      // Leave the newer entry alone; only clear one this snapshot still owns.
+      const state = this.extractCadence.get(sessionId);
+      // A deleted entry owns nothing: the snapshot was discarded while this
+      // run was parked (a session switch, compaction, or another flush's
+      // coverage), so replaying it would fork turns no live state claims and
+      // persist their cursor over the live one.
+      if (state === undefined || state.pending !== pending) return false;
+      // Staleness is an ordering test plus a length test: only a run
+      // scheduled AFTER this snapshot was parked can have covered it, and a
+      // bare length comparison mis-dates post-compaction settles (a run can
+      // carry a longer length from a different index space).
+      if (
+        state !== undefined &&
+        state.lastSettledSeq !== undefined &&
+        state.lastSettledSeq > this.seqOfExtractParams(pending) &&
+        state.lastExtractedLength >= pending.history.length
+      ) {
+        this.extractCadence.delete(sessionId);
+        return false;
+      }
+      const result = await this.scheduleExtract(
+        this.cloneExtractParams(pending, {
+          abortSignal: controller.signal,
+          flushReplay: true,
+        }),
+        {
+          bypassCadence: true,
+        },
+      );
+      // Nothing was extracted (session mismatch, memory pressure, a queued
+      // slot, or the throw below): keep the entry so the next boundary retries
+      // the same turns instead of a no-op consuming them.
+      if (
+        !result ||
+        result.madeGenuineProgress !== true ||
+        result.skippedReason ||
+        (result.cursor.processedOffset ?? 0) < pending.history.length
+      ) {
+        return false;
+      }
+      // The run re-armed the cadence under the session this boundary is
+      // leaving behind, and `/resume` restores that id — drop the entry so a
+      // resumed session inherits no skip. The next completed run re-arms from
+      // scratch, including on the compaction boundary, where the session
+      // lives on. Only when this snapshot still owns the entry: a skip that
+      // landed while this run was parked left a newer snapshot pending, and
+      // that one describes turns this run never extracted.
+      const settled = this.extractCadence.get(sessionId);
+      if (!settled?.pending || settled.pending === pending) {
+        this.extractCadence.delete(sessionId);
+      }
+      return true;
+    } catch (error) {
+      debugLogger.warn(
+        'Failed to flush pending auto-memory extraction.',
+        error,
+      );
+      return false;
+    } finally {
+      clearTimeout(killer);
+    }
+  }
+
+  /**
+   * True when the runtime is under hard or critical memory pressure, as
+   * reported by the shared MemoryPressureMonitor (#5147). The monitor is
+   * cgroup-aware and compares RSS/heap against their actual limits as a
+   * ratio, so this adapts to `--max-old-space-size`, containers, and large
+   * hosts alike — unlike an absolute megabyte threshold. Returns false when
+   * no monitor is wired (e.g. unit tests, headless), so extraction proceeds
+   * normally in those contexts.
+   */
+  private isUnderMemoryPressure(config?: Config): boolean {
+    const level = config?.getMemoryPressureMonitor?.()?.getPressureLevel?.();
+    return level === 'hard' || level === 'critical';
+  }
+
+  /**
+   * Whether the project-scope metadata migration has given up for this
+   * process. Every gate that pauses consolidation on a pending migration has
+   * to consult this — a stalled migration never drains its candidates, so a
+   * gate that ignores the stall would suppress consolidation forever. Shared
+   * so the scheduled and manual paths cannot disagree on the key or the limit.
+   */
+  private isProjectMigrationStalled(projectRoot: string): boolean {
+    return (
+      (this.migrationStallCountByDomain.get(
+        `project:${getAutoMemoryRoot(projectRoot)}`,
+      ) ?? 0) >= MIGRATION_STALL_LIMIT
+    );
+  }
+
+  private async runExtract(
+    taskId: string,
+    params: ScheduleExtractParams,
+    // Captured when the request was queued: a bump landing while it waited must
+    // discard its outcome too, and `finally` starts it after that bump.
+    queuedEpoch?: number,
+  ): Promise<Awaited<ReturnType<typeof runAutoMemoryExtract>>> {
+    const record = this.tasks.get(taskId)!;
+
+    // A request that waited in `extractQueued` can outlive the parked snapshot
+    // its supplement was cut from: `recordCadenceOutcome` deletes that snapshot
+    // once a concurrent run covers it, and `startQueuedExtract` re-enters here
+    // without re-deriving anything. Replaying the orphaned slice would re-feed
+    // turns the covering run already extracted. A flush replay carries no
+    // stamp, so the slice the flush exists to extract survives this check.
+    const supplementedFrom = params.supplementedFrom;
+    if (
+      supplementedFrom !== undefined &&
+      this.extractCadence.get(params.sessionId)?.pending !== supplementedFrom
+    ) {
+      params = this.cloneExtractParams(params, {
+        skippedHistory: undefined,
+        supplementedFrom: undefined,
+      });
+    }
+
+    this.extractCurrentTaskId.set(params.projectRoot, taskId);
+    this.extractRunning.add(params.projectRoot);
+    this.update(record, {
+      status: 'running',
+      progressText: 'Running managed auto-memory extraction.',
+      metadata: { historyLength: params.history.length },
+    });
+
+    const t0 = Date.now();
+    const cadenceEpoch = queuedEpoch ?? this.cadenceDiscardEpoch;
+    try {
+      // Memory-pressure gate. Checked inside try so the finally block
+      // always runs — extractRunning/extractCurrentTaskId are cleaned up
+      // and startQueuedExtract is called regardless of the gate outcome.
+      if (this.isUnderMemoryPressure(params.config)) {
+        debugLogger.warn('Skipping extract: memory pressure too high.');
+        this.update(record, {
+          status: 'skipped',
+          progressText: 'Skipped: memory pressure too high for extraction.',
+          metadata: { skippedReason: 'memory_pressure' },
+        });
+        if (params.config) {
+          logMemoryExtract(
+            params.config,
+            new MemoryExtractEvent({
+              trigger: 'auto',
+              status: 'skipped',
+              skipped_reason: 'memory_pressure',
+              patches_count: 0,
+              touched_topics: [],
+              duration_ms: 0,
+            }),
+          );
+        }
+        return {
+          touchedTopics: [],
+          skippedReason: 'memory_pressure' as const,
+          cursor: {
+            sessionId: params.sessionId,
+            updatedAt: (params.now ?? new Date()).toISOString(),
+          },
+        };
+      }
+
+      const result = await runAutoMemoryExtract(params);
+      this.recordCadenceOutcome(params, result, cadenceEpoch);
+      if (result.touchedUserScope && params.config) {
+        await this.recordUserMutation(
+          params.projectRoot,
+          params.config,
+          params.now ?? new Date(),
+        );
+      }
+      const durationMs = Date.now() - t0;
+      const skippedReason = result.skippedReason;
+      const status = skippedReason ? 'skipped' : 'completed';
+      this.update(record, {
+        status,
+        progressText:
+          result.systemMessage ??
+          (skippedReason
+            ? `Skipped: ${skippedReason.replaceAll('_', ' ')}.`
+            : result.touchedTopics.length > 0
+              ? `Managed auto-memory updated: ${result.touchedTopics.join(', ')}.`
+              : 'Managed auto-memory extraction completed without durable changes.'),
+        metadata: {
+          touchedTopics: result.touchedTopics,
+          processedOffset: result.cursor.processedOffset,
+          skippedReason,
+        },
+      });
+      if (params.config) {
+        logMemoryExtract(
+          params.config,
+          new MemoryExtractEvent({
+            trigger: 'auto',
+            status,
+            ...(skippedReason ? { skipped_reason: skippedReason } : {}),
+            patches_count: result.touchedTopics.length,
+            touched_topics: result.touchedTopics,
+            duration_ms: durationMs,
+          }),
+        );
+      }
+      return result;
+    } catch (error) {
+      const durationMs = Date.now() - t0;
+      this.recordCadenceOutcome(params, undefined, cadenceEpoch);
+      this.update(record, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (params.config) {
+        logMemoryExtract(
+          params.config,
+          new MemoryExtractEvent({
+            trigger: 'auto',
+            status: 'failed',
+            patches_count: 0,
+            touched_topics: [],
+            duration_ms: durationMs,
+          }),
+        );
+      }
+      throw error;
+    } finally {
+      this.extractCurrentTaskId.delete(params.projectRoot);
+      this.extractRunning.delete(params.projectRoot);
+      // A queued extraction has no caller left to inform: scheduleExtract
+      // already returned a 'queued' result, and the task record plus the
+      // telemetry event carry the failure. Without this handler the rejection
+      // reaches the process-wide unhandledRejection handler.
+      void this.startQueuedExtract(params.projectRoot).catch(
+        (error: unknown) => {
+          debugLogger.warn(
+            'Failed to run queued managed auto-memory extraction.',
+            error,
+          );
+        },
+      );
+    }
+  }
+
+  private async startQueuedExtract(projectRoot: string): Promise<void> {
+    if (this.extractRunning.has(projectRoot)) return;
+    const queued = this.extractQueued.get(projectRoot);
+    if (!queued) return;
+    this.extractQueued.delete(projectRoot);
+    await this.track(
+      queued.taskId,
+      this.runExtract(queued.taskId, queued.params, queued.epoch),
+    );
+  }
+
+  // ─── Skill review ─────────────────────────────────────────────────────────────
+
+  scheduleSkillReview(
+    params: ScheduleSkillReviewParams,
+  ): SkillReviewScheduleResult {
+    if (params.enabled === false) {
+      return { status: 'skipped', skippedReason: 'disabled' };
+    }
+
+    if (params.skillsModified) {
+      return { status: 'skipped', skippedReason: 'skills_modified_in_session' };
+    }
+
+    const threshold = params.threshold ?? AUTO_SKILL_THRESHOLD;
+    if (params.toolCallCount < threshold) {
+      return { status: 'skipped', skippedReason: 'below_threshold' };
+    }
+
+    if (!params.config) {
+      return { status: 'skipped', skippedReason: 'disabled' };
+    }
+
+    const existingTaskId = this.skillReviewInFlightByProject.get(
+      params.projectRoot,
+    );
+    if (existingTaskId) {
+      return {
+        status: 'skipped',
+        skippedReason: 'already_running',
+        taskId: existingTaskId,
+      };
+    }
+
+    const record = makeTaskRecord(
+      'skill-review',
+      params.projectRoot,
+      params.sessionId,
+    );
+    this.storeWith(record, {
+      status: 'running',
+      progressText: 'Running managed skill review.',
+      metadata: {
+        historyLength: params.history.length,
+        toolCallCount: params.toolCallCount,
+        threshold,
+      },
+    });
+
+    const promise = this.track(record.id, this.runSkillReview(record, params));
+    return { status: 'scheduled', taskId: record.id, promise };
+  }
+
+  private async runSkillReview(
+    record: MemoryTaskRecord,
+    params: ScheduleSkillReviewParams,
+  ): Promise<MemoryTaskRecord> {
+    this.skillReviewInFlightByProject.set(params.projectRoot, record.id);
+
+    try {
+      // Memory-pressure gate — inside try so finally always cleans up
+      // the skillReviewInFlightByProject entry.
+      if (this.isUnderMemoryPressure(params.config)) {
+        this.update(record, {
+          status: 'skipped',
+          progressText: 'Skipped: memory pressure too high.',
+          metadata: { skippedReason: 'memory_pressure' },
+        });
+        debugLogger.warn('Skipping skill review: memory pressure too high.');
+        return record;
+      }
+
+      // Snapshot existing skill dirs BEFORE the agent runs so staging can tell
+      // newly-created skills from in-place edits of already-confirmed ones
+      // (only new skills should enter the confirmation flow).
+      const preExistingSkillDirs = params.confirmBeforePersist
+        ? new Set(await listExistingSkillDirNames(params.projectRoot))
+        : undefined;
+
+      const result = await runSkillReviewByAgent({
+        config: params.config!,
+        projectRoot: params.projectRoot,
+        history: params.history,
+        maxTurns: params.maxTurns,
+        timeoutMs: params.timeoutMs,
+      });
+
+      if (params.confirmBeforePersist && result.touchedSkillFiles.length > 0) {
+        const pending = await stageSkillDirs(
+          result.touchedSkillFiles,
+          params.projectRoot,
+          preExistingSkillDirs,
+          record.id,
+        );
+        this.update(record, {
+          status: 'completed',
+          progressText:
+            pending.length > 0
+              ? `${pending.length} skill(s) awaiting review.`
+              : (result.systemMessage ??
+                'Managed skill review completed without durable changes.'),
+          metadata: {
+            touchedSkillFiles: result.touchedSkillFiles,
+            ...(pending.length > 0 ? { pendingSkills: pending } : {}),
+          },
+        });
+      } else {
+        this.update(record, {
+          status: 'completed',
+          progressText:
+            result.systemMessage ??
+            'Managed skill review completed without durable changes.',
+          metadata: { touchedSkillFiles: result.touchedSkillFiles },
+        });
+      }
+    } catch (error) {
+      this.update(record, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      this.skillReviewInFlightByProject.delete(params.projectRoot);
+    }
+    return record;
+  }
+
+  // ─── Dream ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Maybe schedule a managed auto-memory dream (consolidation).
+   * Returns immediately if preconditions aren't met (time gate, session count,
+   * lock, or duplicate).
+   */
+  async scheduleDream(
+    params: ScheduleDreamParams,
+  ): Promise<DreamScheduleResult> {
+    // `params.config` is optional only because some test paths omit it;
+    // production callers always pass it. Without a config the
+    // fork-agent execution can't start (`runManagedAutoMemoryDream`
+    // throws). Skip early so a missing-config call doesn't surface a
+    // failed dream entry in the bg-tasks dialog.
+    if (!params.config || !params.config.getManagedAutoDreamEnabled()) {
+      return { status: 'skipped', skippedReason: 'disabled' };
+    }
+
+    // Also skip dream under memory pressure — dream does its own
+    // structuredClone of full history, and shouldn't add extra pressure
+    // when the heap is already under hard/critical load.
+    if (this.isUnderMemoryPressure(params.config)) {
+      debugLogger.warn('Skipping dream: memory pressure too high.');
+      return { status: 'skipped', skippedReason: 'memory_pressure' };
+    }
+    // A stalled migration (see MIGRATION_STALL_LIMIT) never drains its
+    // candidates; do not let it suppress consolidation forever. The same holds
+    // when the structured protocol is opted out — the migration is never
+    // scheduled, so its candidates never drain and the stall counter never
+    // advances. The enabled check comes first so a disabled feature does not
+    // even pay for the candidate scan.
+    const projectMigrationStalled = this.isProjectMigrationStalled(
+      params.projectRoot,
+    );
+    if (
+      params.config.getStructuredMemoryRecallEnabled() &&
+      !projectMigrationStalled &&
+      params.config.getMemoryRecallMode() !== 'structured' &&
+      (
+        await Promise.all(
+          getProjectMetadataMigrationRoots(
+            params.projectRoot,
+            params.config.isTrustedFolder(),
+          ).map((root) =>
+            scanMemoryMetadataMigrationCandidates(root, 'project'),
+          ),
+        ).catch((error: unknown) => {
+          // A root that cannot be scanned (a symlinked or unreadable
+          // .qwen/memory, for instance) cannot be migrated either, so fail
+          // open. Rejecting here would propagate before the task record and
+          // telemetry exist, and because the stall counter only advances on a
+          // completed run the gate would re-fire — and re-reject — on every
+          // user turn for the life of the process.
+          debugLogger.warn(
+            'Skipping dream migration gate: candidate scan failed.',
+            error,
+          );
+          return [];
+        })
+      ).some((candidates) => candidates.length > 0)
+    ) {
+      return { status: 'skipped', skippedReason: 'migration_pending' };
+    }
+
+    const now = params.now ?? new Date();
+    const minHours =
+      params.minHoursBetweenDreams ?? DEFAULT_AUTO_DREAM_MIN_HOURS;
+    const minSessions =
+      params.minSessionsBetweenDreams ?? DEFAULT_AUTO_DREAM_MIN_SESSIONS;
+
+    await ensureAutoMemoryScaffold(params.projectRoot, now);
+    const metadata = await readDreamMetadata(params.projectRoot);
+
+    if (metadata.lastDreamSessionId === params.sessionId) {
+      return { status: 'skipped', skippedReason: 'same_session' };
+    }
+
+    const elapsedHours = hoursSince(metadata.lastDreamAt, now);
+    if (elapsedHours !== null && elapsedHours < minHours) {
+      return { status: 'skipped', skippedReason: 'min_hours' };
+    }
+
+    // Throttle the expensive session-count filesystem scan.
+    // Return a distinct reason so callers can tell the difference between
+    // "we know there aren't enough sessions" and "we haven't checked yet".
+    const lastScan = this.dreamLastSessionScanAt.get(params.projectRoot) ?? 0;
+    if (now.getTime() - lastScan < SESSION_SCAN_INTERVAL_MS) {
+      return { status: 'skipped', skippedReason: 'scan_throttled' };
+    }
+
+    const lastDreamMs = metadata.lastDreamAt
+      ? Date.parse(metadata.lastDreamAt)
+      : 0;
+    const sessionIds = await this.sessionScanner(
+      params.projectRoot,
+      lastDreamMs,
+      params.sessionId,
+    );
+    // Record scan time only after we actually performed the filesystem scan.
+    this.dreamLastSessionScanAt.set(params.projectRoot, now.getTime());
+    if (sessionIds.length < minSessions) {
+      return { status: 'skipped', skippedReason: 'min_sessions' };
+    }
+
+    // If the previous dream's release failed (lockReleaseError surfaced
+    // on the dialog), the lock file is still on disk and dreamLockExists()
+    // would silently suppress every subsequent dream until next process
+    // start. Force-clean it here so the same session recovers.
+    if (this.dreamLockReleaseFailed) {
+      await fs
+        .rm(getAutoMemoryConsolidationLockPath(params.projectRoot), {
+          force: true,
+        })
+        .catch(() => {
+          // Best-effort recovery — if even the forced rm fails (truly
+          // unrecoverable filesystem state), fall through and let the
+          // existence check below report 'locked' as before.
+        });
+      this.dreamLockReleaseFailed = false;
+    }
+    if (await dreamLockExists(params.projectRoot)) {
+      return { status: 'skipped', skippedReason: 'locked' };
+    }
+
+    // Deduplication — only one dream per projectRoot at a time
+    const dedupeKey = `${DREAM_TASK_TYPE}:${params.projectRoot}`;
+    const existingId = this.dreamInFlightByKey.get(dedupeKey);
+    if (existingId) {
+      return {
+        status: 'skipped',
+        skippedReason: 'running',
+        taskId: existingId,
+      };
+    }
+
+    const record = makeTaskRecord(
+      'dream',
+      params.projectRoot,
+      params.sessionId,
+    );
+    // Register the AbortController BEFORE storeWith. storeWith fires
+    // a notify which can synchronously call cancelTask via subscribers
+    // (e.g. a UI listener). If the controller isn't in
+    // `dreamAbortControllers` by then, cancelTask falls into the
+    // missing-controller defensive warn-and-return-false path and the
+    // model gets a phantom failure on a brand-new dream. Registering
+    // first means any reentrant cancel sees a complete state.
+    const abortController = new AbortController();
+    this.dreamAbortControllers.set(record.id, abortController);
+    this.dreamInFlightByKey.set(dedupeKey, record.id);
+    this.storeWith(record, {
+      status: 'running',
+      // Set the initial progressText so the dialog's Progress section
+      // has something to show during the in-flight window — fork-agent
+      // execution exposes no per-turn callback today, so without this
+      // the section stays empty until completion.
+      progressText: 'Scheduled managed auto-memory dream.',
+      metadata: { sessionCount: sessionIds.length },
+    });
+
+    const promise = this.track(
+      record.id,
+      this.runDream(record, dedupeKey, params, now, abortController.signal),
+    );
+
+    return { status: 'scheduled', taskId: record.id, promise };
+  }
+
+  async scheduleUserDream(
+    params: ScheduleUserDreamParams,
+  ): Promise<UserDreamScheduleResult> {
+    if (!params.config || !params.config.getManagedAutoDreamEnabled()) {
+      return { status: 'skipped', skippedReason: 'disabled' };
+    }
+    if (this.isUnderMemoryPressure(params.config)) {
+      return { status: 'skipped', skippedReason: 'memory_pressure' };
+    }
+    const userMigrationStalled =
+      (this.migrationStallCountByDomain.get(
+        `user:${getUserAutoMemoryRoot()}`,
+      ) ?? 0) >= MIGRATION_STALL_LIMIT;
+    if (
+      // See the project gate above: an opted-out protocol never drains its
+      // migration candidates, so it must not suppress consolidation either.
+      params.config.getStructuredMemoryRecallEnabled() &&
+      !userMigrationStalled &&
+      params.config.getMemoryRecallMode() !== 'structured' &&
+      (
+        await scanMemoryMetadataMigrationCandidates(
+          getUserAutoMemoryRoot(),
+          'user',
+        )
+      ).length > 0
+    ) {
+      return { status: 'skipped', skippedReason: 'migration_pending' };
+    }
+
+    const now = params.now ?? new Date();
+    const metadata = await readUserAutoMemoryMetadata(now);
+    if (!metadata.pendingReason) {
+      return { status: 'skipped', skippedReason: 'not_pending' };
+    }
+    const elapsed = hoursSince(metadata.lastDreamAt, now);
+    if (elapsed !== null && elapsed < DEFAULT_USER_DREAM_MIN_HOURS) {
+      return { status: 'skipped', skippedReason: 'min_hours' };
+    }
+    const attemptElapsed = hoursSince(metadata.lastAttemptAt, now);
+    if (
+      attemptElapsed !== null &&
+      attemptElapsed < DEFAULT_USER_DREAM_FAILURE_BACKOFF_HOURS
+    ) {
+      return { status: 'skipped', skippedReason: 'failure_backoff' };
+    }
+
+    const lockPath = getUserAutoMemoryConsolidationLockPath();
+    if (this.userDreamLockReleaseFailed) {
+      await fs.rm(lockPath, { force: true }).catch(() => {});
+      this.userDreamLockReleaseFailed = false;
+    }
+    if (await dreamLockExistsAt(lockPath)) {
+      return { status: 'skipped', skippedReason: 'locked' };
+    }
+
+    const dedupeKey = USER_DREAM_TASK_TYPE;
+    const existingId = this.dreamInFlightByKey.get(dedupeKey);
+    if (existingId) {
+      return {
+        status: 'skipped',
+        skippedReason: 'running',
+        taskId: existingId,
+      };
+    }
+
+    const record = makeTaskRecord('dream', getUserAutoMemoryRoot());
+    const abortController = new AbortController();
+    this.dreamAbortControllers.set(record.id, abortController);
+    this.dreamInFlightByKey.set(dedupeKey, record.id);
+    this.storeWith(record, {
+      status: 'running',
+      progressText: 'Scheduled global User Memory dream.',
+      metadata: {
+        scope: 'user',
+        dirtyMutations: metadata.dirtyMutations,
+        schedulingReason: metadata.pendingReason,
+      },
+    });
+
+    const promise = this.track(
+      record.id,
+      this.runUserDream(record, dedupeKey, params, now, abortController.signal),
+    );
+    return { status: 'scheduled', taskId: record.id, promise };
+  }
+
+  /**
+   * Look up a single task record by id. Used by `task_stop` and other
+   * cross-cutting consumers that have a task id but no project root.
+   */
+  getTask(taskId: string): MemoryTaskRecord | undefined {
+    return this.tasks.get(taskId);
+  }
+
+  /** Promote one staged skill (by dir name) for the given skill-review task. */
+  async acceptPendingSkillFromTask(
+    taskId: string,
+    skillName: string,
+  ): Promise<void> {
+    await this.resolvePendingSkill(taskId, skillName, 'accept');
+  }
+
+  /** Discard one staged skill (by dir name) for the given skill-review task. */
+  async rejectPendingSkillFromTask(
+    taskId: string,
+    skillName: string,
+  ): Promise<void> {
+    await this.resolvePendingSkill(taskId, skillName, 'reject');
+  }
+
+  private async resolvePendingSkill(
+    taskId: string,
+    skillName: string,
+    action: 'accept' | 'reject',
+  ): Promise<void> {
+    const record = this.tasks.get(taskId);
+    if (!record) {
+      debugLogger.warn(`Cannot resolve pending skill: no task ${taskId}.`);
+      return;
+    }
+    const target = (
+      (record.metadata?.['pendingSkills'] as PendingSkill[]) ?? []
+    ).find((p) => p.name === skillName);
+    if (!target) {
+      debugLogger.warn(
+        `Cannot resolve pending skill "${skillName}": not pending on task ${taskId}.`,
+      );
+      return;
+    }
+    try {
+      if (action === 'accept') {
+        await acceptPendingSkill(target);
+      } else {
+        await rejectPendingSkill(target);
+      }
+    } catch (error) {
+      // Leave the skill in pendingSkills so the user can retry, and surface the
+      // failure instead of silently dropping it.
+      debugLogger.warn(
+        `Failed to ${action} pending skill "${skillName}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
+    }
+    // Re-read pendingSkills AFTER the await: concurrent Keep-all/Discard-all
+    // calls each remove only their own entry. read+filter+update runs with no
+    // intervening await, so it is atomic under the single-threaded event loop.
+    const remaining = (
+      (record.metadata?.['pendingSkills'] as PendingSkill[]) ?? []
+    ).filter((p) => p.name !== skillName);
+    this.update(record, { metadata: { pendingSkills: remaining } });
+  }
+
+  /**
+   * Cancel a running dream or migration task. Aborts the fork agent (the
+   * abort signal threads through `runForkedAgent`), marks the record
+   * cancelled immediately so the UI reflects user intent, and lets the
+   * existing `runDream` finally block release the consolidation lock
+   * via the natural error propagation path.
+   *
+   * Returns true if a running task was aborted, false if the task is
+   * unknown / already terminal / unsupported. Extract is short-lived and runs
+   * synchronously through the request loop; cancelling it would
+   * interfere with the user's own turn.
+   */
+  cancelTask(taskId: string): boolean {
+    const record = this.tasks.get(taskId);
+    if (!record) return false;
+    if (record.taskType !== 'dream' && record.taskType !== 'migration') {
+      return false;
+    }
+    if (record.status !== 'running') return false;
+
+    // The AbortController is registered synchronously alongside the
+    // status='running' transition in scheduleDream and only cleared in
+    // runDream's finally block (which only runs after a terminal
+    // status transition has already happened). So under normal flow
+    // an entry that is `running` MUST have a controller. Treat the
+    // missing-controller case as a contract violation: don't flip
+    // status (a cancelled record without an aborted fork would leak
+    // the consolidation lock until the agent finishes naturally) and
+    // return false so the caller knows the abort didn't take. Log at
+    // warn level so the inconsistency is observable in debug bundles
+    // — silent failure here would leave a runaway dream burning tokens
+    // with no signal to the user or to telemetry.
+    const ac =
+      record.taskType === 'dream'
+        ? this.dreamAbortControllers.get(taskId)
+        : this.migrationAbortControllers.get(taskId);
+    if (!ac) {
+      debugLogger.warn(
+        `cancelTask: AbortController missing for running ${record.taskType} task ${taskId}; ` +
+          `not flipping status. This indicates a logic bug — the controller ` +
+          `should have been registered in scheduleDream and only cleared ` +
+          `after a terminal status transition.`,
+      );
+      return false;
+    }
+
+    // Mark cancelled BEFORE aborting so the runDream catch path can
+    // detect the user-cancel intent (signal.aborted + status already
+    // 'cancelled') and avoid overwriting with a generic 'failed'.
+    this.update(record, {
+      status: 'cancelled',
+      progressText: 'Cancelled by user.',
+    });
+    ac.abort();
+    return true;
+  }
+
+  cancelMigrations(): void {
+    for (const [taskId, controller] of [...this.migrationAbortControllers]) {
+      // A scan-phase reservation (registered before its task record exists)
+      // makes cancelTask return false; abort its controller directly.
+      if (!this.cancelTask(taskId)) {
+        controller.abort();
+      }
+    }
+  }
+
+  private async runDream(
+    record: MemoryTaskRecord,
+    dedupeKey: string,
+    params: ScheduleDreamParams,
+    now: Date,
+    abortSignal: AbortSignal,
+  ): Promise<MemoryTaskRecord> {
+    const dreamStartMs = Date.now();
+    try {
+      try {
+        await acquireDreamLock(params.projectRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          this.update(record, {
+            status: 'skipped',
+            progressText:
+              'Skipped managed auto-memory dream: consolidation lock already exists.',
+            metadata: { skippedReason: 'locked' },
+          });
+          return record;
+        }
+        throw error;
+      }
+
+      try {
+        const result = await runManagedAutoMemoryDream(
+          params.projectRoot,
+          now,
+          params.config,
+          abortSignal,
+        );
+        // Defense-in-depth: runForkedAgent maps cancelled fork-agents
+        // to a resolved `{status: 'cancelled'}` rather than a rejection.
+        // dreamAgentPlanner now rethrows that case so the catch path
+        // below handles it, but if anything in the call chain ever
+        // forgets to propagate, this guard prevents the success path
+        // from clobbering the user-cancelled record with 'completed'
+        // and bumping dream metadata for an aborted run.
+        if (abortSignal.aborted) {
+          return record;
+        }
+
+        // Atomic-from-cancel sequence: flip status='completed' BEFORE
+        // any scheduler-gating metadata write. Once status is no
+        // longer 'running', cancelTask refuses, so the writeFile that
+        // follows can't race a flip-to-cancelled. The cancel-raced-
+        // status-update branch below covers the remaining window
+        // (cancel landed between the pre-update check and the
+        // synchronous update).
+        this.update(record, {
+          status: 'completed',
+          progressText:
+            result.systemMessage ?? 'Managed auto-memory dream completed.',
+          metadata: {
+            touchedTopics: result.touchedTopics,
+            createdEntries: result.createdEntries,
+            updatedEntries: result.updatedEntries,
+            deletedEntries: result.deletedEntries,
+            dedupedEntries: result.dedupedEntries,
+            splitEntries: result.splitEntries,
+            keywordBackfilled: result.keywordBackfilled,
+            lastDreamAt: now.toISOString(),
+          },
+        });
+        if (abortSignal.aborted) {
+          // Defense-in-depth: unreachable today (no `await` between
+          // the pre-update check and the synchronous update above,
+          // so JS's single-threaded execution prevents
+          // `signal.aborted` from transitioning between them — a
+          // cancelTask landing inside the storeWith notify would
+          // already have flipped status, and our update would have
+          // raced ahead of it to 'completed'). Kept against a future
+          // refactor that introduces an `await` between the two
+          // checks. Preserves the touched-topic metadata on the
+          // restored cancelled record so the user can still tell
+          // memory files were modified before the abort took.
+          this.update(record, {
+            status: 'cancelled',
+            progressText: 'Cancelled after memory changes.',
+            metadata: {
+              touchedTopics: result.touchedTopics,
+              createdEntries: result.createdEntries,
+              updatedEntries: result.updatedEntries,
+              deletedEntries: result.deletedEntries,
+              dedupedEntries: result.dedupedEntries,
+              splitEntries: result.splitEntries,
+              keywordBackfilled: result.keywordBackfilled,
+            },
+          });
+          return record;
+        }
+        // Status is now 'completed'; cancelTask will refuse from
+        // here on out. Safe to write scheduler-gating metadata
+        // without a race window.
+        //
+        // Wrap the read/write in a try/catch — pre-PR `bumpMetadata`
+        // in dream.ts swallowed errors as best-effort; without this
+        // wrap a transient ENOENT / EPERM on the metadata file would
+        // propagate to the outer catch and overwrite a
+        // legitimately-completed dream with `'failed'`. The dream
+        // already did its work (touched files are on disk and
+        // visible). Trade-off: the next dream cycle won't see a
+        // bumped lastDreamAt and may re-fire — same trade as the
+        // original best-effort behavior.
+        try {
+          const nextMetadata = await readDreamMetadata(params.projectRoot);
+          nextMetadata.lastDreamAt = now.toISOString();
+          nextMetadata.lastDreamSessionId = params.sessionId;
+          nextMetadata.updatedAt = now.toISOString();
+          nextMetadata.lastDreamTouchedTopics = result.touchedTopics;
+          nextMetadata.lastDreamStatus =
+            result.touchedTopics.length > 0 ? 'updated' : 'noop';
+          // Mirror the manual /dream path's reset so the two write
+          // sites don't drift. The field is currently dead code on
+          // main (only ever written, never read) but keeping the two
+          // paths in sync avoids surprises if a future change starts
+          // reading it.
+          nextMetadata.recentSessionIdsSinceDream = [];
+          await writeDreamMetadata(params.projectRoot, nextMetadata);
+        } catch (metaError) {
+          const message =
+            metaError instanceof Error ? metaError.message : String(metaError);
+          debugLogger.warn(
+            `Failed to persist dream gating metadata for ${record.id}: ${message}`,
+          );
+          this.update(record, {
+            metadata: { metadataWriteError: message },
+          });
+        }
+      } finally {
+        // Lock release errors are logged AND surfaced on the record's
+        // metadata so the user can see why subsequent dreams may be
+        // skipped as 'locked'. If releasing throws (e.g., EPERM on
+        // Windows, ENOENT race), letting it propagate to the outer
+        // catch would overwrite a successfully-completed dream with
+        // 'failed'. The on-disk lock will be cleaned up on the next
+        // session start via the staleness sweep, so swallowing the
+        // error here doesn't risk a permanently-stuck lock.
+        try {
+          await releaseDreamLock(params.projectRoot);
+        } catch (lockError) {
+          const message =
+            lockError instanceof Error ? lockError.message : String(lockError);
+          debugLogger.warn(
+            `Failed to release dream lock for task ${record.id}: ${message}. ` +
+              `Next scheduleDream() will force-clean the leaked lock.`,
+          );
+          this.dreamLockReleaseFailed = true;
+          this.update(record, {
+            metadata: { lockReleaseError: message },
+          });
+        }
+      }
+    } catch (error) {
+      // User-cancel path: cancelTask already aborted the signal AND
+      // marked the record cancelled. The fork agent throws an abort
+      // error which lands here; don't overwrite with 'failed'.
+      if (abortSignal.aborted && record.status === 'cancelled') {
+        if (params.config) {
+          logMemoryDream(
+            params.config,
+            new MemoryDreamEvent({
+              trigger: 'auto',
+              status: 'cancelled',
+              deduped_entries: 0,
+              touched_topics: [],
+              // Real elapsed time the cancelled dream consumed before
+              // the user stopped it — without this, latency histograms
+              // / p95 metrics would silently treat cancelled dreams as
+              // 0ms and skew toward the success path.
+              duration_ms: Date.now() - dreamStartMs,
+            }),
+          );
+        }
+        return record;
+      }
+      this.update(record, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (params.config) {
+        logMemoryDream(
+          params.config,
+          new MemoryDreamEvent({
+            trigger: 'auto',
+            status: 'failed',
+            deduped_entries: 0,
+            touched_topics: [],
+            duration_ms: Date.now() - dreamStartMs,
+          }),
+        );
+      }
+    } finally {
+      this.dreamInFlightByKey.delete(dedupeKey);
+      this.dreamAbortControllers.delete(record.id);
+    }
+    return record;
+  }
+
+  async recordUserMutation(
+    projectRoot: string,
+    config: Config,
+    now = new Date(),
+  ): Promise<void> {
+    try {
+      const state = await recordUserAutoMemoryMutation(now);
+      if (state.metadata.pendingReason) {
+        await this.scheduleUserDream({ projectRoot, config, now });
+      }
+    } catch (error) {
+      debugLogger.warn('Failed to update User Dream state:', error);
+    }
+  }
+
+  private async runUserDream(
+    record: MemoryTaskRecord,
+    dedupeKey: string,
+    params: ScheduleUserDreamParams,
+    now: Date,
+    abortSignal: AbortSignal,
+  ): Promise<MemoryTaskRecord> {
+    const startedAt = Date.now();
+    let lockAcquired = false;
+    let dirtyAtStart = 0;
+    try {
+      try {
+        await acquireUserDreamLock();
+        lockAcquired = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          this.update(record, {
+            status: 'skipped',
+            progressText: 'Skipped User Memory dream: global lock exists.',
+            metadata: { skippedReason: 'locked' },
+          });
+          return record;
+        }
+        throw error;
+      }
+
+      const runningMetadata = await markUserAutoMemoryDreamRunning(now);
+      dirtyAtStart = runningMetadata.dirtyMutations;
+      const result = await runManagedUserAutoMemoryDream(
+        params.projectRoot,
+        params.config!,
+        abortSignal,
+      );
+      if (abortSignal.aborted) {
+        throw new Error('User Memory dream cancelled.');
+      }
+
+      this.update(record, {
+        status: 'completed',
+        progressText:
+          result.systemMessage ?? 'Global User Memory dream completed.',
+        metadata: {
+          scope: 'user',
+          touchedTopics: result.touchedTopics,
+          createdEntries: result.createdEntries,
+          updatedEntries: result.updatedEntries,
+          deletedEntries: result.deletedEntries,
+          dedupedEntries: result.dedupedEntries,
+          splitEntries: result.splitEntries,
+          keywordBackfilled: result.keywordBackfilled,
+        },
+      });
+      logMemoryDream(
+        params.config!,
+        new MemoryDreamEvent({
+          trigger: 'auto',
+          scope: 'user',
+          status: result.touchedTopics.length > 0 ? 'updated' : 'noop',
+          created_entries: result.createdEntries,
+          updated_entries: result.updatedEntries,
+          deleted_entries: result.deletedEntries,
+          deduped_entries: result.dedupedEntries,
+          split_entries: result.splitEntries,
+          keyword_backfilled: result.keywordBackfilled,
+          dirty_mutations: dirtyAtStart,
+          scheduling_reason: runningMetadata.pendingReason,
+          touched_topics: result.touchedTopics,
+          duration_ms: Date.now() - startedAt,
+        }),
+      );
+      try {
+        const metadata = await completeUserAutoMemoryDream(
+          dirtyAtStart,
+          result,
+          now,
+        );
+        this.update(record, {
+          metadata: {
+            dirtyMutations: metadata.dirtyMutations,
+            userDreamStatus: metadata.status,
+            pendingReason: metadata.pendingReason,
+            lastDreamAt: metadata.lastDreamAt,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn('Failed to persist User Dream metadata:', error);
+        this.update(record, { metadata: { metadataWriteError: message } });
+        await failUserAutoMemoryDream('failed', now).catch(
+          (metadataError: unknown) => {
+            debugLogger.warn(
+              'Failed to persist User Dream retry throttle:',
+              metadataError,
+            );
+          },
+        );
+      }
+    } catch (error) {
+      const cancelled = abortSignal.aborted && record.status === 'cancelled';
+      if (!cancelled) {
+        this.update(record, {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await failUserAutoMemoryDream(
+        cancelled ? 'cancelled' : 'failed',
+        now,
+      ).catch((metadataError: unknown) => {
+        debugLogger.warn(
+          'Failed to persist failed User Dream state:',
+          metadataError,
+        );
+      });
+      if (params.config) {
+        logMemoryDream(
+          params.config,
+          new MemoryDreamEvent({
+            trigger: 'auto',
+            scope: 'user',
+            dirty_mutations: dirtyAtStart,
+            scheduling_reason:
+              typeof record.metadata?.['schedulingReason'] === 'string'
+                ? record.metadata['schedulingReason']
+                : undefined,
+            status: cancelled ? 'cancelled' : 'failed',
+            deduped_entries: 0,
+            touched_topics: [],
+            duration_ms: Date.now() - startedAt,
+          }),
+        );
+      }
+    } finally {
+      if (lockAcquired) {
+        try {
+          await releaseUserDreamLock();
+        } catch (error) {
+          this.userDreamLockReleaseFailed = true;
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.update(record, { metadata: { lockReleaseError: message } });
+        }
+      }
+      this.dreamInFlightByKey.delete(dedupeKey);
+      this.dreamAbortControllers.delete(record.id);
+    }
+    return record;
+  }
+
+  // ─── Recall ───────────────────────────────────────────────────────────────────
+
+  /** Select and format relevant memory for the given query. */
+  recall(
+    projectRoot: string,
+    query: string,
+    options: ResolveRelevantAutoMemoryPromptOptions = {},
+  ): Promise<RelevantAutoMemoryPromptResult> {
+    return resolveRelevantAutoMemoryPromptForQuery(projectRoot, query, {
+      ...options,
+      documentCache: this.recallDocumentCache,
+    });
+  }
+
+  getBodyPresentVersionsInHistory(): Map<string, number> {
+    return this.bodyPresentVersionsInHistory;
+  }
+
+  getBodyCoverageInHistory(): Map<string, MemoryBodyCoverage> {
+    return this.bodyCoverageInHistory;
+  }
+
+  markMemoryBodiesEvictedFromHistory(
+    bodies: ReadonlyArray<{ memoryRef: string; mtimeMs: number }>,
+  ): void {
+    for (const { memoryRef, mtimeMs } of bodies) {
+      const coverage = this.bodyCoverageInHistory.get(memoryRef);
+      const evicted =
+        coverage?.version === mtimeMs ||
+        this.bodyPresentVersionsInHistory.get(memoryRef) === mtimeMs;
+      if (coverage?.version === mtimeMs) {
+        this.bodyCoverageInHistory.delete(memoryRef);
+      }
+      if (this.bodyPresentVersionsInHistory.get(memoryRef) === mtimeMs) {
+        this.bodyPresentVersionsInHistory.delete(memoryRef);
+      }
+      // The evicted body is no longer in history, so the per-turn
+      // exhaustion claim for it no longer holds either — a re-fetch must be
+      // allowed to load it again.
+      if (evicted) {
+        this.exhaustedBodyRefsInCurrentTurn.delete(memoryRef);
+      }
+    }
+  }
+
+  markAllMemoryBodiesEvictedFromHistory(): void {
+    this.bodyPresentVersionsInHistory.clear();
+    this.bodyCoverageInHistory.clear();
+    this.resetExhaustedBodyRefsForCurrentTurn();
+  }
+
+  restoreMemoryBodiesPresentInHistory(
+    bodies: ReadonlyArray<{ memoryRef: string; mtimeMs: number }>,
+  ): void {
+    this.bodyCoverageInHistory.clear();
+    this.reconcileMemoryBodiesPresentInHistory(bodies);
+  }
+
+  reconcileMemoryBodiesPresentInHistory(
+    bodies: ReadonlyArray<{ memoryRef: string; mtimeMs: number }>,
+  ): void {
+    this.bodyPresentVersionsInHistory.clear();
+    for (const { memoryRef, mtimeMs } of bodies) {
+      this.bodyPresentVersionsInHistory.set(memoryRef, mtimeMs);
+    }
+  }
+
+  getExhaustedBodyRefsForCurrentTurn(): Set<string> {
+    return this.exhaustedBodyRefsInCurrentTurn;
+  }
+
+  claimSearchMemoryRequestForCurrentTurn(signature: string): boolean {
+    if (this.searchMemoryRequestsInCurrentTurn.has(signature)) return false;
+    this.searchMemoryRequestsInCurrentTurn.add(signature);
+    return true;
+  }
+
+  releaseSearchMemoryRequestForCurrentTurn(signature: string): void {
+    this.searchMemoryRequestsInCurrentTurn.delete(signature);
+  }
+
+  resetExhaustedBodyRefsForCurrentTurn(): void {
+    this.exhaustedBodyRefsInCurrentTurn.clear();
+    this.searchMemoryRequestsInCurrentTurn.clear();
+  }
+
+  resetMemoryBodyStateForSession(): void {
+    this.bodyPresentVersionsInHistory.clear();
+    this.bodyCoverageInHistory.clear();
+    this.recallDocumentCache.clear();
+    this.resetExhaustedBodyRefsForCurrentTurn();
+  }
+
+  // ─── Forget ───────────────────────────────────────────────────────────────────
+
+  /** Select candidate memory entries matching the given query (step 1 of forget). */
+  selectForgetCandidates(
+    projectRoot: string,
+    query: string,
+    options: {
+      config?: Config;
+      limit?: number;
+      abortSignal?: AbortSignal;
+      scope?: AutoMemoryStorageScope;
+    } = {},
+  ): Promise<AutoMemoryForgetSelectionResult> {
+    return selectManagedAutoMemoryForgetCandidates(projectRoot, query, options);
+  }
+
+  /** Remove the selected memory entries (step 2 of forget). */
+  async forgetMatches(
+    projectRoot: string,
+    matches: AutoMemoryForgetMatch[],
+    now?: Date,
+    options: { config?: Config; abortSignal?: AbortSignal } = {},
+  ): Promise<AutoMemoryForgetResult> {
+    const result = await forgetManagedAutoMemoryMatches(
+      projectRoot,
+      matches,
+      now,
+      options,
+    );
+    if (result.touchedScopes.includes('user') && options.config) {
+      await this.recordUserMutation(
+        projectRoot,
+        options.config,
+        now ?? new Date(),
+      );
+    }
+    return result;
+  }
+
+  /** Convenience: select + remove in a single call. */
+  async forget(
+    projectRoot: string,
+    query: string,
+    options: {
+      config?: Config;
+      abortSignal?: AbortSignal;
+      scope?: AutoMemoryStorageScope;
+    } = {},
+    now?: Date,
+  ): Promise<AutoMemoryForgetResult> {
+    const result = await forgetManagedAutoMemoryEntries(
+      projectRoot,
+      query,
+      options,
+      now,
+    );
+    if (result.touchedScopes.includes('user') && options.config) {
+      await this.recordUserMutation(
+        projectRoot,
+        options.config,
+        now ?? new Date(),
+      );
+    }
+    return result;
+  }
+
+  // ─── Status ───────────────────────────────────────────────────────────────────
+
+  /** Return a full status snapshot for the given project's memory. */
+  getStatus(projectRoot: string) {
+    return getManagedAutoMemoryStatus(projectRoot, this);
+  }
+
+  // ─── Dream utilities ──────────────────────────────────────────────────────────
+
+  /**
+   * Record that a manual dream run has completed for the given session.
+   * Call this from the dreamCommand's onComplete callback.
+   */
+  writeDreamManualRun(
+    projectRoot: string,
+    sessionId: string,
+    now?: Date,
+  ): Promise<void> {
+    return writeDreamManualRunToMetadata(projectRoot, sessionId, now);
+  }
+
+  /**
+   * Run a manual `/dream` through the runtime-managed path: the forked dream
+   * agent plus the `.dream-operations.json` apply and index rebuild. The
+   * prompt-submission variant cannot work in structured recall mode — the
+   * structured session prompt forbids the main model from touching
+   * managed-memory paths with the file tools the consolidation task needs.
+   * Takes the same consolidation lock the scheduled path does so a manual
+   * run never writes concurrently with a background dream.
+   */
+  async runManualDream(
+    projectRoot: string,
+    config: Config,
+    sessionId: string,
+    now = new Date(),
+  ): Promise<AutoMemoryDreamResult> {
+    await ensureAutoMemoryScaffold(projectRoot, now);
+    const alreadyRunning: AutoMemoryDreamResult = {
+      touchedTopics: [],
+      createdEntries: 0,
+      updatedEntries: 0,
+      deletedEntries: 0,
+      dedupedEntries: 0,
+      splitEntries: 0,
+      keywordBackfilled: 0,
+      systemMessage:
+        'Managed auto-memory dream skipped: another dream is already running.',
+    };
+    // If our own previous release failed, the leaked lock holds this
+    // process's live PID with a fresh mtime, so neither the liveness sweep
+    // nor the staleness window can clear it — and the scheduled path's
+    // force-clean is unreachable right after a manual run (its same_session
+    // / min_hours gates return first). Force-clean it here, mirroring
+    // scheduleDream: best-effort, and only when the leak is ours, so a lock
+    // held by a genuinely running dream still reports 'already running'.
+    if (this.dreamLockReleaseFailed) {
+      await fs
+        .rm(getAutoMemoryConsolidationLockPath(projectRoot), { force: true })
+        .catch(() => {
+          // Best-effort recovery — fall through to the existence check.
+        });
+      this.dreamLockReleaseFailed = false;
+    }
+    // Mirror scheduleDream's sweep: acquireDreamLock creates with 'wx', so
+    // it fails on ANY existing lock — including one orphaned by a crashed
+    // CLI. Sweep by holder liveness first or that lock blocks /dream for
+    // the whole session; the EEXIST branch below stays as the race backstop.
+    if (await dreamLockExists(projectRoot)) {
+      return alreadyRunning;
+    }
+    try {
+      await acquireDreamLock(projectRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return alreadyRunning;
+      }
+      throw error;
+    }
+    try {
+      return await runManagedAutoMemoryDream(
+        projectRoot,
+        now,
+        config,
+        undefined,
+        {
+          trigger: 'manual',
+          recordMetadata: true,
+          sessionId,
+          // The manual gate in dream.ts cannot read the stall counter itself;
+          // without this it would keep refusing /dream for the life of the
+          // process once the migration gave up, while telling the user a
+          // migration is pending.
+          migrationStalled: this.isProjectMigrationStalled(projectRoot),
+        },
+      );
+    } finally {
+      // Mirror runDream's guarded release: letting a release failure
+      // propagate would overwrite a successful result, and the flag lets the
+      // next scheduleDream force-clean the leaked lock instead of reporting
+      // 'locked' until the staleness window expires.
+      try {
+        await releaseDreamLock(projectRoot);
+      } catch (error) {
+        this.dreamLockReleaseFailed = true;
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn(
+          `Failed to release dream lock after a manual dream: ${message}. ` +
+            `Next scheduleDream() will force-clean the leaked lock.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Build the consolidation task prompt used by the dream slash command.
+   * Returns a prompt string describing what the agent should do.
+   */
+  buildConsolidationPrompt(memoryRoot: string, transcriptDir: string): string {
+    return buildConsolidationTaskPrompt(memoryRoot, transcriptDir);
+  }
+
+  // ─── Test helpers ─────────────────────────────────────────────────────────────
+
+  /** Reset all extract scheduling state. Call from afterEach in tests. */
+  resetExtractStateForTests(): void {
+    this.extractRunning.clear();
+    this.extractCurrentTaskId.clear();
+    this.extractQueued.clear();
+    this.extractCadence.clear();
+    this.extractFlushRuns.clear();
+    // Bump (never re-zero) the discard epoch: a run that started before the
+    // reset holds the old value and would otherwise pass the guard and re-arm
+    // an id this helper just cleared.
+    this.cadenceDiscardEpoch += 1;
+  }
+
+  /** Reset all dream scheduling state. */
+  resetDreamStateForTests(): void {
+    this.dreamInFlightByKey.clear();
+    this.dreamLastSessionScanAt.clear();
+  }
+}
+
+/**
+ * Application-wide singleton. In a fully wired application Config creates its
+ * own MemoryManager accessible via `config.getMemoryManager()`.
+ */
+export const globalMemoryManager = new MemoryManager();

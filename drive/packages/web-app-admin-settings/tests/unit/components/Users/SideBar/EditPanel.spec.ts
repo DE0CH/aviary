@@ -1,0 +1,446 @@
+import { nextTick, reactive } from 'vue'
+import EditPanel from '../../../../../src/components/Users/SideBar/EditPanel.vue'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { mock } from 'vitest-mock-extended'
+import { Drive, Group, User } from '@opencloud-eu/web-client/graph/generated'
+import {
+  type AuthServiceInterface,
+  CapabilityStore,
+  CompareSaveDialog,
+  QuotaSelect,
+  useMessages
+} from '@opencloud-eu/web-pkg'
+import { cloneDeep } from 'lodash-es'
+import { useUserSettingsStore } from '../../../../../src/composables/stores/userSettings'
+import { OcSelect, OcSwitch, OcTextInput } from '@opencloud-eu/design-system/components'
+import { flushPromises } from '@vue/test-utils'
+import GroupSelect from '../../../../../src/components/Users/GroupSelect.vue'
+
+const availableGroupOptions = [
+  mock<Group>({ id: '1', displayName: 'group1', groupTypes: [] }),
+  mock<Group>({ id: '2', displayName: 'group2', groupTypes: [] })
+]
+const selectors = {
+  groupSelectStub: 'group-select-stub',
+  userNameInput: 'userName-input',
+  displayNameInput: 'displayName-input',
+  emailInput: 'email-input',
+  passwordInput: 'password-input'
+}
+
+describe('EditPanel', () => {
+  it('renders all available inputs', () => {
+    const { wrapper } = getWrapper()
+    expect(getInput(wrapper, selectors.userNameInput).props('modelValue')).toBe('')
+    expect(getInput(wrapper, selectors.displayNameInput).props('modelValue')).toBe('jan')
+    expect(getInput(wrapper, selectors.emailInput).props('modelValue')).toBe('jan@opencloud.eu')
+    expect(getInput(wrapper, selectors.passwordInput).props('modelValue')).toBe('')
+    expect(wrapper.findComponent(OcSwitch).props('checked')).toBeTruthy()
+    expect(wrapper.findComponent(OcSelect).props('label')).toBe('Role')
+    expect(wrapper.findComponent(QuotaSelect).exists()).toBeTruthy()
+    expect(wrapper.findComponent<typeof GroupSelect>(selectors.groupSelectStub).exists()).toBe(true)
+    expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+  })
+  it('filters selected groups when passing the options to the GroupSelect component', () => {
+    const { wrapper } = getWrapper({ selectedGroups: [availableGroupOptions[0]] })
+    const selectedGroups = wrapper
+      .findComponent<typeof GroupSelect>(selectors.groupSelectStub)
+      .props('selectedGroups')
+    const groupOptions = wrapper
+      .findComponent<typeof GroupSelect>(selectors.groupSelectStub)
+      .props('groupOptions')
+    expect(selectedGroups.length).toBe(1)
+    expect(selectedGroups[0].id).toEqual(availableGroupOptions[0].id)
+    expect(groupOptions.length).toBe(1)
+    expect(groupOptions[0].id).toEqual(availableGroupOptions[1].id)
+  })
+
+  describe('read-only attributes', () => {
+    it('makes an input read-only if included in capability readOnlyUserAttributes list', () => {
+      const { wrapper } = getWrapper({ readOnlyUserAttributes: ['user.displayName'] })
+      expect(getInput(wrapper, selectors.displayNameInput).props('readOnly')).toBeTruthy()
+    })
+    it('does not make an input read-only if not included in capability readOnlyUserAttributes list', () => {
+      const { wrapper } = getWrapper()
+      expect(getInput(wrapper, selectors.displayNameInput).props('readOnly')).toBeFalsy()
+    })
+  })
+
+  describe('reverting changes', () => {
+    it('reverts changes on the edited user', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.displayNameInput, 'jana')
+      await setInput(wrapper, selectors.emailInput, 'jana@opencloud.eu')
+      expect(getCompareSaveDialog(wrapper).props('compareObject')).toMatchObject({
+        displayName: 'jana',
+        mail: 'jana@opencloud.eu'
+      })
+
+      getCompareSaveDialog(wrapper).vm.$emit('revert')
+      await nextTick()
+
+      expect(getCompareSaveDialog(wrapper).props('compareObject')).toMatchObject({
+        displayName: 'jan',
+        mail: 'jan@opencloud.eu'
+      })
+      expect(getInput(wrapper, selectors.displayNameInput).props('modelValue')).toBe('jan')
+    })
+    it('resets validation errors', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.displayNameInput, '')
+      expect(getInput(wrapper, selectors.displayNameInput).props('errorMessage')).not.toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeTruthy()
+
+      getCompareSaveDialog(wrapper).vm.$emit('revert')
+      await nextTick()
+
+      expect(getInput(wrapper, selectors.displayNameInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+    })
+  })
+
+  describe('user name validation', () => {
+    it('ignores the result of a name check that finished after the name changed', async () => {
+      const { wrapper, mocks } = getWrapper()
+      let rejectLookup: (error: Error) => void
+      mocks.$clientService.graphAuthenticated.users.getUser.mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectLookup = reject
+        }) as ReturnType<typeof mocks.$clientService.graphAuthenticated.users.getUser>
+      )
+      getInput(wrapper, selectors.userNameInput).vm.$emit('update:modelValue', 'ab')
+      await setInput(wrapper, selectors.userNameInput, '')
+      rejectLookup(new Error(''))
+      await flushPromises()
+      expect(getInput(wrapper, selectors.userNameInput).props('errorMessage')).toBe(
+        'User name cannot be empty'
+      )
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toEqual(true)
+    })
+    it.each([
+      { userName: ' ', error: 'User name cannot be empty' },
+      { userName: 'n'.repeat(256), error: 'User name cannot exceed 255 characters' },
+      { userName: 'jan openCloud', error: 'User name cannot contain white spaces' },
+      { userName: '1moretry', error: 'User name cannot start with a number' },
+      { userName: 'jan(', error: 'User name cannot contain special characters' }
+    ])('shows "$error" for "$userName"', async ({ userName, error }) => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.userNameInput, userName)
+      expect(getInput(wrapper, selectors.userNameInput).props('errorMessage')).toBe(error)
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeTruthy()
+    })
+    it('shows an error when the user name is already taken', async () => {
+      const { wrapper, mocks } = getWrapper()
+      const { getUser } = mocks.$clientService.graphAuthenticated.users
+      getUser.mockResolvedValue(mock<User>({ onPremisesSamAccountName: 'jan' }))
+      await setInput(wrapper, selectors.userNameInput, 'jan')
+      expect(getUser).toHaveBeenCalledWith('jan')
+      expect(getInput(wrapper, selectors.userNameInput).props('errorMessage')).toBe(
+        'User "jan" already exists'
+      )
+    })
+    it('accepts a valid user name', async () => {
+      const { wrapper, mocks } = getWrapper()
+      const { getUser } = mocks.$clientService.graphAuthenticated.users
+      getUser.mockRejectedValue(new Error(''))
+      await setInput(wrapper, selectors.userNameInput, 'jana')
+      expect(getUser).toHaveBeenCalledWith('jana')
+      expect(getInput(wrapper, selectors.userNameInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+    })
+  })
+
+  describe('display name validation', () => {
+    it.each([
+      { displayName: '', error: 'First and last name cannot be empty' },
+      { displayName: 'n'.repeat(256), error: 'First and last name cannot exceed 255 characters' }
+    ])('shows "$error" for "$displayName"', async ({ displayName, error }) => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.displayNameInput, displayName)
+      expect(getInput(wrapper, selectors.displayNameInput).props('errorMessage')).toBe(error)
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeTruthy()
+    })
+    it('accepts a valid display name', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.displayNameInput, 'jan')
+      expect(getInput(wrapper, selectors.displayNameInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+    })
+  })
+
+  describe('email validation', () => {
+    it('accepts a valid email', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.emailInput, 'jan@opencloud.eu')
+      expect(getInput(wrapper, selectors.emailInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+    })
+    it('shows an error for an invalid email', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.emailInput, '')
+      expect(getInput(wrapper, selectors.emailInput).props('errorMessage')).toBe(
+        'Please enter a valid email'
+      )
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeTruthy()
+    })
+  })
+
+  describe('password validation', () => {
+    it('rejects a whitespace-only password', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.passwordInput, '   ')
+      expect(getInput(wrapper, selectors.passwordInput).props('errorMessage')).toBe(
+        'Password cannot be empty'
+      )
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeTruthy()
+    })
+    it('treats an empty password field as no change', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.passwordInput, '   ')
+      await setInput(wrapper, selectors.passwordInput, '')
+      expect(getInput(wrapper, selectors.passwordInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+      expect(getCompareSaveDialog(wrapper).props('compareObject').passwordProfile).toBeUndefined()
+    })
+    it('accepts a valid password', async () => {
+      const { wrapper } = getWrapper()
+      await setInput(wrapper, selectors.passwordInput, 'secret123')
+      expect(getInput(wrapper, selectors.passwordInput).props('errorMessage')).toBe('')
+      expect(getCompareSaveDialog(wrapper).props('confirmButtonDisabled')).toBeFalsy()
+      expect(getCompareSaveDialog(wrapper).props('compareObject').passwordProfile).toEqual({
+        password: 'secret123'
+      })
+    })
+  })
+
+  describe('group select', () => {
+    it('takes all available groups', () => {
+      const { wrapper } = getWrapper()
+      expect(
+        wrapper.findComponent<typeof GroupSelect>('group-select-stub').props('groupOptions').length
+      ).toBe(availableGroupOptions.length)
+    })
+    it('filters out read-only groups', () => {
+      const { wrapper } = getWrapper({
+        groups: [mock<Group>({ id: '1', displayName: 'group1', groupTypes: ['ReadOnly'] })]
+      })
+      expect(
+        wrapper.findComponent<typeof GroupSelect>('group-select-stub').props('groupOptions').length
+      ).toBe(0)
+    })
+    it('takes no groups if the user groups have not been loaded yet', () => {
+      const { wrapper } = getWrapper({ user: { id: '2' } as User })
+      expect(
+        wrapper.findComponent<typeof GroupSelect>('group-select-stub').props('groupOptions')
+      ).toEqual([])
+    })
+  })
+
+  describe('saving', () => {
+    it('does not renew the login of the current user when renaming another user', async () => {
+      const { wrapper, mocks } = getWrapper()
+      const { getUser, editUser } = mocks.$clientService.graphAuthenticated.users
+      getUser.mockRejectedValueOnce(new Error(''))
+      await setInput(wrapper, selectors.userNameInput, 'jana')
+      getUser.mockResolvedValue(mock<User>({ id: '2', onPremisesSamAccountName: 'jana' }))
+
+      getCompareSaveDialog(wrapper).vm.$emit('confirm')
+      await flushPromises()
+
+      expect(editUser).toHaveBeenCalledWith('2', { onPremisesSamAccountName: 'jana' })
+      expect(mocks.$authService.signinSilent).not.toHaveBeenCalled()
+    })
+
+    it('saves valid changes on form submit', async () => {
+      const { wrapper, mocks } = getWrapper()
+      const { getUser, editUser } = mocks.$clientService.graphAuthenticated.users
+      await setInput(wrapper, selectors.displayNameInput, 'jana')
+      getUser.mockResolvedValue(mock<User>({ id: '2', displayName: 'jana' }))
+
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      expect(editUser).toHaveBeenCalledWith('2', { displayName: 'jana' })
+    })
+    it('does not save on form submit without changes', async () => {
+      const { wrapper, mocks } = getWrapper()
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(mocks.$clientService.graphAuthenticated.users.editUser).not.toHaveBeenCalled()
+    })
+    it('does not save on form submit with invalid data', async () => {
+      const { wrapper, mocks } = getWrapper()
+      await setInput(wrapper, selectors.emailInput, '')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(mocks.$clientService.graphAuthenticated.users.editUser).not.toHaveBeenCalled()
+    })
+
+    describe('when a part of the changes fails to save', () => {
+      function setupPartialFailure() {
+        const user = reactive({
+          id: '2',
+          displayName: 'jan',
+          mail: 'jan@opencloud.eu',
+          drive: { quota: {} } as Drive,
+          memberOf: [],
+          appRoleAssignments: []
+        } as User)
+        const { wrapper, mocks } = getWrapper({ user })
+        const { users, groups } = mocks.$clientService.graphAuthenticated
+        users.getUser.mockResolvedValue({ ...cloneDeep(user), displayName: 'jana' })
+        groups.addMember.mockRejectedValue(new Error('group not found'))
+        const { upsertUser } = useUserSettingsStore()
+        vi.mocked(upsertUser).mockImplementation((updatedUser) => {
+          Object.assign(user, updatedUser)
+        })
+        return { wrapper, mocks, upsertUser }
+      }
+
+      async function saveNameAndGroup(wrapper: Wrapper) {
+        await setInput(wrapper, selectors.displayNameInput, 'jana')
+        wrapper
+          .findComponent<typeof GroupSelect>(selectors.groupSelectStub)
+          .vm.$emit('selectedOptionChange', [availableGroupOptions[0]])
+        await nextTick()
+        getCompareSaveDialog(wrapper).vm.$emit('confirm')
+        await flushPromises()
+      }
+
+      it('reloads the user and keeps only the failed changes as unsaved', async () => {
+        const { wrapper, mocks, upsertUser } = setupPartialFailure()
+        await saveNameAndGroup(wrapper)
+
+        expect(mocks.$clientService.graphAuthenticated.users.editUser).toHaveBeenCalled()
+        const { showErrorMessage } = useMessages()
+        expect(showErrorMessage).toHaveBeenCalled()
+        expect(upsertUser).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'jana' }))
+        const dialog = getCompareSaveDialog(wrapper)
+        expect(dialog.props('originalObject')).toMatchObject({ displayName: 'jana', memberOf: [] })
+        expect(dialog.props('compareObject').displayName).toBe('jana')
+        expect(dialog.props('compareObject').memberOf.map((g: Group) => g.id)).toEqual([
+          availableGroupOptions[0].id
+        ])
+      })
+
+      it('does not keep an already saved password as unsaved', async () => {
+        const { wrapper } = setupPartialFailure()
+        await setInput(wrapper, selectors.passwordInput, 'secret123')
+        await saveNameAndGroup(wrapper)
+
+        expect(getCompareSaveDialog(wrapper).props('compareObject').passwordProfile).toBeUndefined()
+      })
+    })
+  })
+
+  describe('expanded user attributes', () => {
+    it('are applied to the edit user once loaded', async () => {
+      const user = reactive({ id: '2', displayName: 'jan' } as User)
+      const { wrapper } = getWrapper({ user })
+      const groupSelect = () => wrapper.findComponent<typeof GroupSelect>(selectors.groupSelectStub)
+      expect(groupSelect().props('selectedGroups')).toEqual([])
+
+      Object.assign(user, {
+        memberOf: [availableGroupOptions[0]],
+        drive: { quota: { total: 100 } } as Drive
+      })
+      await nextTick()
+
+      expect(
+        groupSelect()
+          .props('selectedGroups')
+          .map((g: Group) => g.id)
+      ).toEqual([availableGroupOptions[0].id])
+      expect(wrapper.findComponent(QuotaSelect).props('totalQuota')).toBe(100)
+    })
+  })
+
+  describe('personal quota', () => {
+    it.each([0, 2e9])('applies the selected quota %i to the edited user', async (total) => {
+      const { wrapper } = getWrapper()
+      wrapper.findComponent(QuotaSelect).vm.$emit('selectedOptionChange', {
+        value: total,
+        displayValue: ''
+      })
+      await nextTick()
+
+      expect(getCompareSaveDialog(wrapper).props('compareObject')).toMatchObject({
+        drive: { quota: { total } }
+      })
+      expect(wrapper.findComponent(QuotaSelect).props('totalQuota')).toBe(total)
+      expect(wrapper.findComponent(QuotaSelect).props('allowDefault')).toBe(false)
+    })
+
+    it('preserves the current quota when a default selection is emitted', async () => {
+      const { wrapper } = getWrapper()
+      const quotaSelect = wrapper.findComponent(QuotaSelect)
+      quotaSelect.vm.$emit('selectedOptionChange', { value: 2e9, displayValue: '2 GB' })
+      await nextTick()
+      quotaSelect.vm.$emit('selectedOptionChange', { value: null, displayValue: 'Default' })
+      await nextTick()
+
+      expect(getCompareSaveDialog(wrapper).props('compareObject')).toMatchObject({
+        drive: { quota: { total: 2e9 } }
+      })
+    })
+  })
+})
+
+type Wrapper = ReturnType<typeof getWrapper>['wrapper']
+
+function getInput(wrapper: Wrapper, id: string) {
+  return wrapper.findAllComponents(OcTextInput).find((input) => input.attributes('id') === id)
+}
+
+async function setInput(wrapper: Wrapper, id: string, value: string) {
+  getInput(wrapper, id).vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
+
+function getCompareSaveDialog(wrapper: Wrapper) {
+  return wrapper.findComponent(CompareSaveDialog)
+}
+
+function getWrapper({
+  readOnlyUserAttributes = [],
+  selectedGroups = [],
+  groups = availableGroupOptions,
+  user = undefined
+}: {
+  readOnlyUserAttributes?: string[]
+  selectedGroups?: Group[]
+  groups?: Group[]
+  user?: User
+} = {}) {
+  const mocks = { ...defaultComponentMocks(), $authService: mock<AuthServiceInterface>() }
+  const capabilities = {
+    graph: { users: { read_only_attributes: readOnlyUserAttributes } }
+  } satisfies Partial<CapabilityStore['capabilities']>
+
+  return {
+    mocks,
+    wrapper: shallowMount(EditPanel, {
+      props: {
+        user:
+          user ??
+          ({
+            id: '2',
+            displayName: 'jan',
+            mail: 'jan@opencloud.eu',
+            passwordProfile: { password: '' },
+            drive: { quota: {} } as Drive,
+            memberOf: selectedGroups,
+            appRoleAssignments: []
+          } as User),
+        roles: [{ id: '1', displayName: 'admin' }],
+        groups,
+        applicationId: '1'
+      },
+      global: {
+        mocks,
+        provide: mocks,
+        plugins: [...defaultPlugins({ piniaOptions: { capabilityState: { capabilities } } })]
+      }
+    })
+  }
+}

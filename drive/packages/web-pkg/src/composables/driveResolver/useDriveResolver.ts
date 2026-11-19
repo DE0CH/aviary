@@ -1,0 +1,138 @@
+import { computed, Ref, ref, unref, watch } from 'vue'
+import { isProjectSpaceResource, SHARE_JAIL_ID, SpaceResource } from '@opencloud-eu/web-client'
+import { useRouteQuery } from '../router'
+import { useSpacesLoading } from './useSpacesLoading'
+import { queryItemAsString } from '../appDefaults'
+import { urlJoin } from '@opencloud-eu/web-client'
+import { useAuthStore, useSpacesStore } from '../piniaStores'
+import { onUnmounted } from 'vue'
+import { getSpaceForDriveAliasAndItem } from '../../helpers/spaces'
+
+interface DriveResolverOptions {
+  driveAliasAndItem?: Ref<string>
+}
+
+interface DriveResolverResult {
+  space: Ref<SpaceResource>
+  item: Ref<string>
+  itemId: Ref<string>
+}
+
+export const useDriveResolver = (options: DriveResolverOptions = {}): DriveResolverResult => {
+  const spacesStore = useSpacesStore()
+  const authStore = useAuthStore()
+  const { areSpacesLoading } = useSpacesLoading()
+  const shareId = useRouteQuery('shareId')
+  const fileIdQueryItem = useRouteQuery('fileId')
+  const fileId = computed(() => {
+    return queryItemAsString(unref(fileIdQueryItem))
+  })
+
+  const spaces = computed(() => spacesStore.spaces)
+  const space = ref<SpaceResource>(null)
+  const item: Ref<string> = ref(null)
+
+  // clean up global state as the watchers aren't triggered anymore when navigating away
+  onUnmounted(() => {
+    const driveAliasAndItem = unref(options.driveAliasAndItem)
+    if (
+      !driveAliasAndItem?.startsWith('personal/') &&
+      !driveAliasAndItem?.startsWith('project/') &&
+      !driveAliasAndItem?.startsWith('public/')
+    ) {
+      spacesStore.setCurrentSpace(null)
+    }
+  })
+
+  watch(
+    [options.driveAliasAndItem, areSpacesLoading],
+    ([driveAliasAndItem, areSpacesLoading], [driveAliasAndItemOld, areSpacesLoadingOld]) => {
+      if (driveAliasAndItem === driveAliasAndItemOld && areSpacesLoading === areSpacesLoadingOld) {
+        return
+      }
+
+      if (!driveAliasAndItem || driveAliasAndItem.startsWith('virtual/')) {
+        space.value = null
+        item.value = null
+        return
+      }
+
+      // A project space's drive alias is derived from its name, so same-named
+      // spaces share one - a matching alias alone doesn't prove we stayed in the
+      // current space.
+      const staysInCurrentSpace =
+        !isProjectSpaceResource(unref(space)) ||
+        !unref(fileId) ||
+        unref(fileId).startsWith(`${unref(space).fileId}`)
+      const isOnlyItemPathChanged =
+        unref(space) && driveAliasAndItem.startsWith(unref(space).driveAlias) && staysInCurrentSpace
+      if (isOnlyItemPathChanged) {
+        item.value = urlJoin(driveAliasAndItem.slice(unref(space).driveAlias.length), {
+          leadingSlash: true
+        })
+        return
+      }
+
+      let matchingSpace = null
+      let path = null
+      if (driveAliasAndItem.startsWith('public/') || driveAliasAndItem.startsWith('ocm/')) {
+        const [publicLinkToken, ...item] = driveAliasAndItem.split('/').slice(1)
+        matchingSpace = unref(spaces).find((s) => s.id === publicLinkToken)
+        path = item.join('/')
+      } else if (
+        driveAliasAndItem.startsWith('share/') ||
+        driveAliasAndItem.startsWith('ocm-share/')
+      ) {
+        const [shareName, ...item] = driveAliasAndItem.split('/').slice(1)
+        const driveAliasPrefix = driveAliasAndItem.startsWith('ocm-share/') ? 'ocm-share' : 'share'
+
+        let shareIdStr = queryItemAsString(unref(shareId))
+        // keep compatibility with old share jail ids pre sharing NG
+        if (shareIdStr?.includes(':')) {
+          shareIdStr = [SHARE_JAIL_ID, shareIdStr].join('!')
+        }
+        // links without a share id lead guests to the share they were invited to
+        if (!shareIdStr && authStore.isGuestContext) {
+          shareIdStr = authStore.guestSpaceId
+        }
+
+        matchingSpace =
+          spacesStore.getSpace(shareIdStr) ||
+          spacesStore.createShareSpace({
+            driveAliasPrefix,
+            id: shareIdStr,
+            shareName: unref(shareName)
+          })
+
+        path = item.join('/')
+      } else {
+        matchingSpace = getSpaceForDriveAliasAndItem(
+          unref(spaces),
+          driveAliasAndItem,
+          unref(fileId)
+        )
+
+        if (matchingSpace) {
+          path = driveAliasAndItem.slice(matchingSpace.driveAlias.length)
+        }
+      }
+      space.value = matchingSpace
+      item.value = urlJoin(path, {
+        leadingSlash: true
+      })
+    },
+    { immediate: true, deep: true }
+  )
+  watch(
+    space,
+    (s: SpaceResource) => {
+      spacesStore.setCurrentSpace(s)
+    },
+    { immediate: true }
+  )
+  return {
+    space,
+    item,
+    itemId: fileId
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "web-app-search",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenCloud web search",
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "@opencloud-eu/web-test-helpers": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opencloud-eu/design-system": "workspace:*",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
+    "lodash-es": "^4.17.21",
+    "pinia": "4.1.0",
+    "vue-concurrency": "5.0.3",
+    "vue3-gettext": "^4.0.0-beta.1",
+    "vue-router": "5.5.0"
+  }
+}

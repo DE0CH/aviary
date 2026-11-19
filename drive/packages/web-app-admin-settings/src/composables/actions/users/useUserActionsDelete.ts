@@ -1,0 +1,134 @@
+import { computed, unref } from 'vue'
+import {
+  queryItemAsString,
+  useCapabilityStore,
+  useMessages,
+  useUserStore,
+  useModals,
+  useRouteQuery,
+  isPromiseFulfilled,
+  isPromiseRejected
+} from '@opencloud-eu/web-pkg'
+import { useClientService } from '@opencloud-eu/web-pkg'
+import { UserAction, UserActionOptions } from '@opencloud-eu/web-pkg'
+import { useGettext } from 'vue3-gettext'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { useUserSettingsStore } from '../../stores/userSettings'
+
+export function useUserActionsDelete() {
+  const { showMessage, showErrorMessage } = useMessages()
+  const capabilityStore = useCapabilityStore()
+  const { $gettext, $ngettext } = useGettext()
+  const clientService = useClientService()
+  const { dispatchModal } = useModals()
+  const userSettingsStore = useUserSettingsStore()
+  const userStore = useUserStore()
+
+  const currentPageQuery = useRouteQuery('page', '1')
+  const currentPage = computed(() => {
+    return parseInt(queryItemAsString(unref(currentPageQuery)))
+  })
+
+  const itemsPerPageQuery = useRouteQuery('items-per-page', '1')
+  const itemsPerPage = computed(() => {
+    return parseInt(queryItemAsString(unref(itemsPerPageQuery)))
+  })
+
+  async function deleteUsers(users: User[]) {
+    const graphClient = clientService.graphAuthenticated
+    const promises = users.map((user) => graphClient.users.deleteUser(user.id))
+    const results = await Promise.allSettled(promises)
+
+    const succeeded = results.filter(isPromiseFulfilled)
+    if (succeeded.length) {
+      const title =
+        succeeded.length === 1 && users.length === 1
+          ? $gettext('User "%{user}" was deleted successfully', { user: users[0].displayName })
+          : $ngettext(
+              '%{userCount} user was deleted successfully',
+              '%{userCount} users were deleted successfully',
+              succeeded.length,
+              { userCount: succeeded.length.toString() }
+            )
+      showMessage({ title })
+    }
+
+    const failed = results.filter(isPromiseRejected)
+    if (failed.length) {
+      failed.forEach(console.error)
+
+      const title =
+        failed.length === 1 && users.length === 1
+          ? $gettext('Failed to delete user "%{user}"', { user: users[0].displayName })
+          : $ngettext(
+              'Failed to delete %{userCount} user',
+              'Failed to delete %{userCount} users',
+              failed.length,
+              { userCount: failed.length.toString() }
+            )
+      showErrorMessage({
+        title,
+        errors: failed.map((f) => f.reason)
+      })
+    }
+
+    userSettingsStore.removeUsers(users.filter((_, i) => isPromiseFulfilled(results[i])))
+    userSettingsStore.setSelectedUsers([])
+
+    const pageCount = Math.ceil(userSettingsStore.users.length / unref(itemsPerPage))
+    if (unref(currentPage) > 1 && unref(currentPage) > pageCount) {
+      // reset pagination to avoid empty lists (happens when deleting all items on the last page)
+      currentPageQuery.value = pageCount.toString()
+    }
+  }
+
+  function handler({ resources }: UserActionOptions) {
+    if (!resources.length) {
+      return
+    }
+
+    dispatchModal({
+      title: $ngettext('Delete user "%{user}"?', 'Delete %{userCount} users?', resources.length, {
+        user: resources[0].displayName,
+        userCount: resources.length.toString()
+      }),
+      confirmText: $gettext('Delete'),
+      showCancelAction: true,
+      message: $ngettext(
+        'Are you sure you want to delete this user?',
+        'Are you sure you want to delete the %{userCount} selected users?',
+        resources.length,
+        {
+          userCount: resources.length.toString()
+        }
+      ),
+      hasInput: false,
+      onConfirm: () => deleteUsers(resources)
+    })
+  }
+
+  const actions = computed((): UserAction[] => [
+    {
+      name: 'delete',
+      icon: 'delete-bin',
+      label: () => {
+        return $gettext('Delete')
+      },
+      handler,
+      isVisible: ({ resources }) => {
+        return (
+          !!resources.length &&
+          !capabilityStore.graphUsersDeleteDisabled &&
+          !resources.some(({ id }) => id === userStore.user?.id)
+        )
+      },
+      class: 'oc-users-actions-delete-trigger'
+    }
+  ])
+
+  return {
+    actions,
+    // HACK: exported for unit tests:
+    deleteUsers
+  }
+}

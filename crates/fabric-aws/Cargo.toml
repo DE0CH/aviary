@@ -1,0 +1,15 @@
+[package]
+name = "fabric-aws"
+description = "The AWS side of hermit's fabric: the hosts' security group, AMI, launch template, IAM users and image bucket, every value from the deployment's hermit.json."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["env"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -14,7 +14,7 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
     "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e20",
-    "e21", "e22", "e13", "e15", "e24", "e25", "e12", "e17", "stale",
+    "e21", "e22", "e13", "e15", "e24", "e25", "e26", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -38,6 +38,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e18" => e18(h).await,
         "e24" => e24(h).await,
         "e25" => e25(h).await,
+        "e26" => e26(h).await,
         "e6" => e6(h).await,
         "stale" => stale(h).await,
         "e9" => e9(h).await,
@@ -2505,5 +2506,99 @@ async fn e22(h: &Harness) -> anyhow::Result<()> {
     }
     wa.close().await;
     wb.close().await;
+    res
+}
+
+/// E26 (Deyao, 2026-11-19: the question cards): the model asks with the `ask` command in the real sandbox; the app's
+/// answer reaches it; magpie's rule 11 then shows, on the whole stack, the card's own row answered and read by the
+/// `ask` call (whose output carries the answer's marker), that call carrying the card, one entry per call in the
+/// timeline, and every row pushed once with no gap on the socket that watched it.
+#[allow(clippy::too_many_lines)] // one scenario: the turn, the answer, then the checks
+async fn e26(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let m = marker("E26");
+    let question = format!("Which colour? ({m})");
+    let questions = json!({"questions": [{"question": question, "header": "Colour", "multiSelect": false,
+                                          "options": [{"label": "Blue"}, {"label": "Red"}]}]});
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"toolUse": {"name": "Bash", "input": {
+                        "command": format!("ask '{}'", questions),
+                        "description": "ask the person"}}}],
+                    "times": 1}))
+        .await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let mut feed = Feed::default();
+    let res = async {
+        let id = create(&mut ws, &format!("Ask me ({m})")).await?;
+        let first = page(&mut ws, &id, "tail", None, 500).await?;
+        feed.load(&first);
+        // the question reaches the app as the conversation's permission request; the app answers it
+        let id2 = id.clone();
+        let asked = ws
+            .wait_for("the question", TURN_WAIT, move |v| {
+                v["message"]["type"] == "agent_permission_request" && v["message"]["payload"]["agentId"] == id2.as_str()
+            })
+            .await?;
+        let request = asked["message"]["payload"]["request"].clone();
+        ensure!(request["kind"] == "question", "not a question: {request}");
+        let ask_id = request["id"].as_str().context("no question id")?.to_owned();
+        ws.send(json!({"type": "session", "message": {
+                "type": "agent_permission_response", "agentId": id, "requestId": ask_id,
+                "response": {"behavior": "allow", "updatedInput": {"answers": {question.clone(): "Blue"}}}}}))
+            .await?;
+        let pushes = turn_end(&mut ws, &id).await?;
+        let frames: Vec<Value> = pushes
+            .into_iter()
+            .map(|p| json!({"message": {"type": "agent_stream", "payload": p}}))
+            .collect();
+        feed.take(&mut ws, &id, frames).await?;
+        let rows = timeline(&mut ws, &id).await?;
+        let calls: Vec<&Value> = rows.iter().filter(|r| r["item"]["type"] == "tool_call").collect();
+        // one entry per call
+        let mut ids: Vec<&str> = calls.iter().filter_map(|r| r["item"]["callId"].as_str()).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        ensure!(ids.len() == n, "a call twice in the timeline: {calls:?}");
+        // the card's own row: answered, read by the `ask` call
+        let card_row = calls
+            .iter()
+            .find(|r| r["item"]["callId"] == ask_id.as_str())
+            .with_context(|| format!("no card row {ask_id}: {calls:?}"))?;
+        let card = &card_row["item"]["metadata"]["personAsk"];
+        ensure!(card["state"] == "answered", "the card is {card}");
+        ensure!(
+            card["marker"] == format!("(answer to {ask_id})"),
+            "the card's marker: {card}"
+        );
+        let reader = card["readBy"]
+            .as_str()
+            .with_context(|| format!("the card was not read: {card}"))?;
+        let bash = calls
+            .iter()
+            .find(|r| r["item"]["callId"] == reader)
+            .with_context(|| format!("no row for the reading call {reader}"))?;
+        ensure!(bash["item"]["name"] == "Bash", "read by {}", bash["item"]);
+        let out = bash["item"]["detail"]["output"].as_str().unwrap_or_default();
+        ensure!(
+            out.contains("→ Blue") && out.contains(&format!("(answer to {ask_id})")),
+            "the ask output: {out}"
+        );
+        ensure!(
+            bash["item"]["metadata"]["personRead"][0]["id"] == ask_id.as_str(),
+            "the reading call does not carry the card: {}",
+            bash["item"]["metadata"]
+        );
+        // every row pushed once, no gap
+        ensure!(feed.gaps.is_empty(), "gaps: {:?}", feed.gaps);
+        if let Some(((row, seq), n)) = feed.pushed.iter().find(|(_, n)| **n > 1) {
+            bail!("row {row} seq {seq} pushed {n} times");
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if res.is_err() {
+        eprintln!("e26 socket log: {:?}", ws.log.iter().rev().take(40).collect::<Vec<_>>());
+    }
     res
 }

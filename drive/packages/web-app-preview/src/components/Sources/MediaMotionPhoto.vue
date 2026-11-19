@@ -1,0 +1,94 @@
+<template>
+  <media-image
+    ref="image"
+    :file="file"
+    :current-image-rotation="currentImageRotation"
+    @error="emit('error')"
+  >
+    <template #overlay>
+      <video
+        v-if="isPlaying"
+        :key="`motion-photo-video-${file.id}`"
+        :src="videoUrl"
+        :loop="looping"
+        muted
+        autoplay
+        playsinline
+        preload="auto"
+        class="size-full object-contain"
+        data-testid="motion-photo-video"
+        @loadedmetadata="seekToStill"
+        @ended="onEnded"
+        @error="stop"
+      />
+      <oc-spinner
+        v-if="isLoading && !isPlaying"
+        class="absolute inset-0 m-auto"
+        size="large"
+        :aria-label="loadingLabel"
+      />
+    </template>
+  </media-image>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, ref, unref, useTemplateRef } from 'vue'
+import { useGettext } from 'vue3-gettext'
+import { isLivePhoto, useGetMatchingSpace, useMotionPhotoPlayback } from '@opencloud-eu/web-pkg'
+import { MediaFile } from '../../helpers/types'
+import MediaImage from './MediaImage.vue'
+
+const { file, currentImageRotation } = defineProps<{
+  file: MediaFile
+  currentImageRotation: number
+}>()
+
+const emit = defineEmits<{
+  (e: 'error'): void
+}>()
+
+const { $gettext } = useGettext()
+const image = useTemplateRef<{ isZoomed: () => boolean }>('image')
+const { getMatchingSpace } = useGetMatchingSpace()
+
+const { isPlaying, isLoading, videoUrl, play, stop, seekToStill } = useMotionPhotoPlayback(
+  () => file.resource,
+  () => getMatchingSpace(file.resource)
+)
+
+const loadingLabel = computed(() => {
+  return isLivePhoto(file.resource)
+    ? $gettext('Loading Live Photo')
+    : $gettext('Loading Motion Photo')
+})
+
+// auto-play on open runs once, playback started from the controls loops
+const looping = ref(false)
+
+const onEnded = () => {
+  if (!unref(looping)) {
+    stop()
+  }
+}
+
+const togglePlayback = () => {
+  if (unref(isPlaying)) {
+    looping.value = false
+    stop()
+  } else {
+    looping.value = true
+    play()
+  }
+}
+
+onMounted(() => {
+  looping.value = false
+  play()
+})
+
+defineExpose({
+  isPlaying,
+  toggle: togglePlayback,
+  isZoomed: () => !!unref(image)?.isZoomed()
+})
+</script>

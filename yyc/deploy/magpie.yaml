@@ -1,0 +1,139 @@
+# magpie (aviary crates/magpie, magpie spec; spec-platform 9.5): the store of record for conversations, on its own
+# Cluster magpie-pg (decision 2) and bucket yyc-ai-magpie. Env is Secret magpie only (bindings and credentials; check
+# item 2). The replica name is POD_NAME (aviary-core log::init_in_pod; magpie README "Deviations").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magpie
+  namespace: yyc-ai
+  labels: {app: magpie}
+spec:
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: magpie}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: magpie}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 75
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: magpie}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: magpie
+          image: magpie
+          args: [serve]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: MAGPIE_DATABASE_URL, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_DATABASE_URL}}}
+            - {name: MAGPIE_S3_ENDPOINT, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_S3_ENDPOINT}}}
+            - {name: MAGPIE_S3_REGION, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_S3_REGION}}}
+            - {name: MAGPIE_S3_BUCKET, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_S3_BUCKET}}}
+            - {name: MAGPIE_S3_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_S3_ACCESS_KEY_ID}}}
+            - {name: MAGPIE_S3_SECRET_ACCESS_KEY, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_S3_SECRET_ACCESS_KEY}}}
+            - {name: MAGPIE_ACCEPT_PIGEON, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_ACCEPT_PIGEON}}}
+            - {name: MAGPIE_ACCEPT_GATEWAY, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_ACCEPT_GATEWAY}}}
+            - {name: MAGPIE_ACCEPT_HERMIT, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_ACCEPT_HERMIT}}}
+            - {name: MAGPIE_ACCEPT_ADMIN, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_ACCEPT_ADMIN}}}
+            - {name: MAGPIE_TOKEN_HERMIT, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_TOKEN_HERMIT}}}
+            # the switch window's synchronous ingest (WP-51): magpie-import is gone; the key leaves in the contraction
+            - {name: MAGPIE_TOKEN_IMPORT, valueFrom: {secretKeyRef: {name: magpie, key: MAGPIE_TOKEN_IMPORT}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            failureThreshold: 6
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
+          resources:
+            requests: {cpu: 200m, memory: 256Mi, ephemeral-storage: 64Mi}
+            limits: {cpu: "2", memory: 1536Mi, ephemeral-storage: 1088Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: magpie, namespace: yyc-ai}
+spec:
+  selector: {app: magpie}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: magpie, namespace: yyc-ai}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: magpie}
+  minReplicas: 2
+  maxReplicas: 6
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}]
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies: [{type: Pods, value: 1, periodSeconds: 120}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: magpie, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: magpie}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: magpie-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: magpie}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: pigeon}}
+        - podSelector: {matchLabels: {app: hermit}}
+        - podSelector: {matchLabels: {app: egress}}
+      ports: [{port: 8080, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: magpie-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: magpie}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    # the bucket (fsn1.your-objectstorage.com)
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+      ports: [{port: 443, protocol: TCP}]

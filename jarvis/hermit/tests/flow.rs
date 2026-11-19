@@ -1,0 +1,885 @@
+//! hermit-jarvis end to end against a real Postgres (`HERMIT_TEST_DATABASE_URL`: a server URL; TLS, as aviary-pg
+//! requires; each test makes its own database), aviary's FakeMagpie and a stand-in router: a machine boots its
+//! sandbox, the descriptor carries the boot, the supervisor's health makes it ready, magpie's get-or-start answers it,
+//! Jarvis's delivery becomes magpie's turn, a fixed-name call gets the identity headers, a pause ends the sandbox, and
+//! the next turn resumes the session and adopts its new machine's boot.
+
+#![allow(clippy::unwrap_used, clippy::too_many_lines)]
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use aviary_fakes::magpie::FakeMagpie;
+use aviary_fakes::script::Reply;
+use axum::Json;
+use axum::routing::{get, post};
+use jarvis_aviary::app::{App, Inner, Keys};
+use jarvis_aviary::jarvis::Jarvis;
+use jarvis_aviary::wire::{BootReply, BootRequest, TOKEN_HEADER};
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+const OWNER: &str = "owner@example.com";
+const KEYS: &str = "1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
+
+async fn fresh_db() -> String {
+    let url = std::env::var("HERMIT_TEST_DATABASE_URL")
+        .expect("HERMIT_TEST_DATABASE_URL (a TLS Postgres server)");
+    let name = format!("hj_{}", Uuid::new_v4().simple());
+    let admin = aviary_pg::connect(&url, "hermit-jarvis-test", 1, Duration::from_secs(10)).unwrap();
+    admin
+        .get()
+        .await
+        .unwrap()
+        .batch_execute(&format!("create database {name}"))
+        .await
+        .unwrap();
+    let (base, query) = url.split_once('?').unwrap_or((&url, ""));
+    let base = base.rsplit_once('/').map_or(base, |(b, _)| b);
+    format!("{base}/{name}?{query}")
+}
+
+/// The router's session states, as the stand-in answers them.
+#[derive(Default)]
+struct Router {
+    state: Mutex<String>,
+    resumes: Mutex<Vec<String>>,
+    /// Each chat-schedule report: (session, its `nextAt`).
+    chat: Mutex<Vec<(String, Value)>>,
+}
+
+async fn serve(router: axum::Router) -> String {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, router).await.unwrap() });
+    url
+}
+
+#[tokio::test]
+async fn a_session_boots_turns_pauses_and_resumes() {
+    let magpie = FakeMagpie::unguarded().serve().await.unwrap();
+    let cid = Uuid::new_v4();
+    let conv = json!({"conversation": {"id": cid, "title": "", "titleSource": "provisional",
+        "createdAt": "2026-11-11T03:00:00.000Z", "updatedAt": "2026-11-11T03:00:00.000Z", "lastUserMessageAt": null,
+        "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "turn": null, "lastTurn": null, "sandbox": null,
+        "asks": [], "run": {"state": "idle", "background": []}, "model": null, "contextTokens": null,
+        "origin": {"kind": "new"}}, "turn": null});
+    magpie
+        .fake
+        .script()
+        .always("hermit_create_conversation", Reply::json(201, conv.clone()));
+    // the conversation as hermit reads it back: Deyao renamed it in the chat
+    let mut titled = conv["conversation"].clone();
+    titled["title"] = json!("Model picker");
+    titled["titleSource"] = json!("user");
+    // and the AI armed a schedule in it (an aviary session's wakeup)
+    titled["nextScheduleAt"] = json!("2026-11-17T06:30:00.000Z");
+    magpie
+        .fake
+        .script()
+        .always("hermit_conversation", Reply::json(200, titled));
+    magpie.fake.script().once(
+        "hermit_send_turn",
+        Reply::json(
+            202,
+            json!({"turn": {"id": Uuid::now_v7(), "startedAt": "2026-11-11T03:00:01.000Z"}}),
+        ),
+    );
+    magpie.fake.script().once(
+        "hermit_send_turn",
+        Reply::error(409, "turn_running", "a turn is running"),
+    );
+    // the chat follows the session: closed while it is paused, open when it is up, gone when it is destroyed
+    for route in [
+        "hermit_close_conversation",
+        "hermit_delete_conversation",
+        "hermit_restore_conversation",
+    ] {
+        magpie
+            .fake
+            .script()
+            .always(route, Reply::json(200, conv["conversation"].clone()));
+    }
+    magpie.fake.script().always(
+        "cc_tree",
+        Reply::json(
+            200,
+            json!({"files": [], "ccBytes": 0, "quotaBytes": 1048576}),
+        ),
+    );
+
+    let jr = Arc::new(Router::default());
+    *jr.state.lock().unwrap() = "started".into();
+    let jr2 = jr.clone();
+    let jr3 = jr.clone();
+    let jr4 = jr.clone();
+    let jr5 = jr.clone();
+    let router_url = serve(
+        axum::Router::new()
+            .route(
+                "/api/machine-signatures/verify",
+                post(move |Json(v): Json<Value>| {
+                    let jr = jr2.clone();
+                    async move {
+                        // the stand-in knows machines m1 and m2 of session s1; it checks nothing else
+                        if matches!(v["machine"].as_str(), Some("m1" | "m2")) && v["path"] == "/jarvis/boot" {
+                            let state = jr.state.lock().unwrap().clone();
+                            (axum::http::StatusCode::OK, Json(json!({"session": "s1", "harness": "aviary", "state": state})))
+                        } else {
+                            (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "no"})))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/api/remotes",
+                get(move || {
+                    let jr = jr3.clone();
+                    async move {
+                        let state = jr.state.lock().unwrap().clone();
+                        Json(json!({"sessions": [{"id": "s1", "state": state, "model": "aviary/claude-opus-5-5"}]}))
+                    }
+                }),
+            )
+            .route(
+                "/api/sessions/{id}/chat-schedule",
+                axum::routing::put(
+                    move |axum::extract::Path(id): axum::extract::Path<String>, Json(b): Json<Value>| {
+                        let jr = jr5.clone();
+                        async move {
+                            jr.chat.lock().unwrap().push((id, b["nextAt"].clone()));
+                            Json(json!({"ok": true}))
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/sessions/{id}/start",
+                post(move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let jr = jr4.clone();
+                    async move {
+                        jr.resumes.lock().unwrap().push(id);
+                        *jr.state.lock().unwrap() = "resuming".into();
+                        (axum::http::StatusCode::ACCEPTED, Json(json!({"ok": true})))
+                    }
+                }),
+            ),
+    )
+    .await;
+
+    let pool = jarvis_aviary::db::open(&fresh_db().await).await.unwrap();
+    let http = jarvis_aviary::central::http().unwrap();
+    let hermit_l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hermit_url = format!("http://{}", hermit_l.local_addr().unwrap());
+    let app = App(Arc::new(Inner {
+        pool,
+        keys: Keys::parse(KEYS).unwrap(),
+        magpie: magpie_api::client::Client::new(http.clone(), magpie.url(), "t-hermit-magpie"),
+        jarvis: Jarvis::new(&router_url, "id", "secret").unwrap(),
+        owner: OWNER.into(),
+        access_team: "example.cloudflareaccess.com".into(),
+        access_aud: "aud".into(),
+        magpie_url: magpie.url(),
+        hermit_url: hermit_url.clone(),
+        gateway_to_magpie: "t-gw-magpie".into(),
+        gateway_to_hermit: "t-gw-hermit".into(),
+        http: http.clone(),
+        settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
+        fabric: None,
+        chat_schedules: std::sync::Mutex::default(),
+        listing: tokio::sync::Mutex::default(),
+    }));
+    let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
+    tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
+    let gw = serve(jarvis_aviary::central::router(app.clone())).await;
+    let c = jarvis_aviary::central::http().unwrap();
+
+    // 1. the machine boots (signed: the stand-in router accepts m1's signature)
+    let boot = |machine: &'static str| {
+        let c = c.clone();
+        let gw = gw.clone();
+        async move {
+            let body = serde_json::to_vec(&BootRequest {
+                session: "s1".into(),
+                image: format!("sha256:{}", "a".repeat(64)),
+                memory_bytes: 8 << 30,
+                cpus: 4,
+                env: [
+                    ("SESSION_ID".into(), "s1".into()),
+                    ("SESSION_MODEL".into(), "aviary/claude-opus-5-5".into()),
+                    ("SESSION_LABEL".into(), "chat.deyaochen.com error".into()),
+                    ("SECRET_THING".into(), "never".into()),
+                    (
+                        "CLAUDE_CONFIG_DIR".into(),
+                        "/home/sandbox/.harness/claude".into(),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                accounts: true,
+            })
+            .unwrap();
+            c.post(format!("{gw}/jarvis/boot"))
+                .header("x-machine", machine)
+                .header("x-time", "0")
+                .header("x-sig", "sig")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let r = boot("m1").await;
+    assert_eq!(r.status(), 200, "{:?}", r.text().await);
+    let b: BootReply = r.json().await.unwrap();
+    assert_eq!(b.conversation_id, cid);
+    assert!(b.token.starts_with("hst1."));
+    // the conversation starts on the model the session was made on (the chat showed its menu's default, whatever
+    // the machine ran, until someone picked there)
+    let made = magpie.fake.script().calls_to("hermit_create_conversation");
+    assert_eq!(made[0].body.as_ref().unwrap()["model"], "claude-opus-5-5");
+    // and under the name the session was given on the New session page (the chat showed a generated title)
+    assert_eq!(
+        made[0].body.as_ref().unwrap()["title"],
+        "chat.deyaochen.com error"
+    );
+    // an unknown machine is refused
+    assert_eq!(boot("mX").await.status(), 403);
+    // the same machine again keeps its sandbox
+    let again: BootReply = boot("m1").await.json().await.unwrap();
+    assert_eq!(again.sandbox_id, b.sandbox_id);
+
+    // 2. the descriptor, through the gateway listener as the supervisor reads it
+    let d: Value = c
+        .get(format!("{gw}/hermit/v1/sandbox/self"))
+        .header(TOKEN_HEADER, &b.token)
+        .header("aviary-protocol", "hermit-sandbox=1")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(d["claude"]["projectSettings"], true, "{d}");
+    assert_eq!(d["env"]["SESSION_ID"], "s1");
+    assert!(
+        d["env"].get("SECRET_THING").is_none(),
+        "only Jarvis's own names pass"
+    );
+    assert!(
+        d["env"]["HTTPS_PROXY"]
+            .as_str()
+            .unwrap()
+            .contains("@127.0.0.1:3128")
+    );
+    // dogfooding (Deyao, 2026-11-14): Claude Code runs as it does in an aviary sandbox, with nothing telling it
+    // where its home is. The session's sandbox has aviary's layout (~/.claude a link into the supervisor's mount,
+    // session-image/tools/src/aviary_sandbox.rs), so a machine's CLAUDE_CONFIG_DIR never reaches the descriptor
+    assert!(d["env"].get("CLAUDE_CONFIG_DIR").is_none(), "{d}");
+    assert_eq!(d["resources"]["memoryBytes"], 8u64 << 30);
+    // no token, or a forged one: refused
+    let r = c
+        .get(format!("{gw}/hermit/v1/sandbox/self"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    let r = c
+        .get(format!("{gw}/hermit/v1/sandbox/self"))
+        .header(TOKEN_HEADER, "hst1.1.AAAA.BBBB")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+
+    // 3. starting until the supervisor says it is ready
+    let get_sandbox = || {
+        let c = c.clone();
+        let u = format!("{hermit_url}/v1/conversations/{cid}/sandbox");
+        async move {
+            c.get(u)
+                .header("aviary-protocol", "hermit-core=1")
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let s: Value = get_sandbox().await.json().await.unwrap();
+    assert_eq!(s["state"], "starting");
+    let health = json!({"ok": true, "ready": true, "protocol": 1, "version": "abc", "bootId": "b1", "busy": false});
+    let r = c
+        .post(format!("{gw}/jarvis/health"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&health)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    // the answer names the conversation's title (the machine shows it on the session's card in the Jarvis 4 app)
+    let told: Value = r.json().await.unwrap();
+    assert_eq!(told, json!({"state": "ready", "title": "Model picker"}));
+    // and the router hears when its next schedule fires (Deyao, 2026-11-17: an aviary session's wakeups are
+    // magpie's schedules; the router keeps a paused session's runners for one)
+    assert_eq!(
+        *jr.chat.lock().unwrap(),
+        vec![("s1".to_owned(), json!("2026-11-17T06:30:00Z"))]
+    );
+    let put = c
+        .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
+        .header("aviary-protocol", "hermit-core=1")
+        .json(&json!({"person": OWNER}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 200);
+    let s: Value = put.json().await.unwrap();
+    assert_eq!(s["state"], "ready");
+    assert_eq!(s["id"], b.sandbox_id.to_string());
+    // another person is refused
+    let put = c
+        .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
+        .header("aviary-protocol", "hermit-core=1")
+        .json(&json!({"person": "else@example.com"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 409);
+
+    // 4. Jarvis's delivery is magpie's turn as the owner, and says it joins a turn that runs (a watchdog's warning
+    //    must not wait for a long turn to end); what magpie still refuses is answered as it is
+    let r = c
+        .post(format!("{gw}/jarvis/deliver"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&json!({"id": "jarvis-1", "text": "a wakeup"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let sent = magpie.fake.script().calls_to("hermit_send_turn");
+    assert_eq!(sent[0].param("id"), Some(cid.to_string().as_str()));
+    assert_eq!(sent[0].body.as_ref().unwrap()["person"], OWNER);
+    assert_eq!(
+        sent[0].body.as_ref().unwrap()["message"]["clientMessageId"],
+        "jarvis-1"
+    );
+    assert_eq!(sent[0].body.as_ref().unwrap()["joinRunning"], true);
+    let r = c
+        .post(format!("{gw}/jarvis/deliver"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&json!({"id": "jarvis-2", "text": "another"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    // an image of Jarvis's delivery (the screenshots of the New session form) is uploaded for the owner and is an image
+    // of the turn, as Deyao's own in the chat: never a path in the text
+    let up = Uuid::now_v7();
+    magpie.fake.script().always(
+        "hermit_upload",
+        Reply::json(
+            201,
+            json!({"uploadId": up, "path": format!("uploads/{up}/Screenshot 17.06.png"),
+                "name": "Screenshot 17.06.png", "size": 9, "mimeType": "image/png", "width": 1, "height": 1}),
+        ),
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/upload"))
+        .header(TOKEN_HEADER, &b.token)
+        .header("aviary-upload-name", "Screenshot%2017.06.png")
+        .header("aviary-upload-kind", "image")
+        .header("content-type", "image/png")
+        .body(b"png bytes".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let u: Value = r.json().await.unwrap();
+    assert_eq!(u["uploadId"], up.to_string());
+    let ups = magpie.fake.script().calls_to("hermit_upload");
+    assert_eq!(ups[0].param("person"), Some(OWNER));
+    assert_eq!(ups[0].bytes.as_deref(), Some(&b"png bytes"[..]));
+    assert_eq!(
+        ups[0].header("aviary-upload-name"),
+        Some("Screenshot%2017.06.png")
+    );
+    assert_eq!(ups[0].header("aviary-upload-kind"), Some("image"));
+    assert_eq!(
+        ups[0].header("authorization"),
+        Some("Bearer t-hermit-magpie")
+    );
+    // no sandbox token, no upload
+    let r = c
+        .post(format!("{gw}/jarvis/upload"))
+        .header("aviary-upload-name", "x.png")
+        .header("aviary-upload-kind", "image")
+        .body(b"png bytes".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    assert_eq!(magpie.fake.script().calls_to("hermit_upload").len(), 1);
+    magpie.fake.script().once(
+        "hermit_send_turn",
+        Reply::json(
+            202,
+            json!({"turn": {"id": Uuid::now_v7(), "startedAt": "2026-11-11T03:00:02.000Z"}}),
+        ),
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/deliver"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&json!({"id": "jarvis-3", "text": "This page is broken", "images": [up]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let sent = magpie.fake.script().calls_to("hermit_send_turn");
+    let m = &sent.last().unwrap().body.as_ref().unwrap()["message"];
+    assert_eq!(m["text"], "This page is broken");
+    assert_eq!(m["images"], json!([{"uploadId": up}]));
+
+    // 5. a fixed-name call: the identity headers and the gateway's bearer replace whatever the sandbox sent
+    let r = c
+        .get(format!("{gw}/magpie/v1/sandbox/cc/tree"))
+        .header(TOKEN_HEADER, &b.token)
+        .header("aviary-protocol", "magpie-sandbox=1")
+        .header("aviary-sandbox-person", "forged@example.com")
+        .header("authorization", "Bearer sandbox")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let hb = magpie.fake.script().calls_to("cc_tree");
+    let call = hb.last().unwrap();
+    assert_eq!(call.header("aviary-sandbox-person"), Some(OWNER));
+    assert_eq!(
+        call.header("aviary-sandbox-id"),
+        Some(b.sandbox_id.to_string().as_str())
+    );
+    assert_eq!(call.header("authorization"), Some("Bearer t-gw-magpie"));
+    // only the contract's paths
+    let r = c
+        .get(format!("{gw}/magpie/v1/conversations"))
+        .header(TOKEN_HEADER, &b.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+
+    // 6. Jarvis pauses the session: the next pass ends the sandbox (idle) and its token no longer works
+    *jr.state.lock().unwrap() = "paused".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let s: Value = get_sandbox().await.json().await.unwrap();
+    assert_eq!(s["state"], "gone");
+    assert_eq!(s["release"]["reason"], "idle");
+    // and its conversation takes no message from its person, saying why
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 1, "open until now: nothing was told");
+    assert_eq!(closes[0].params["id"], cid.to_string());
+    assert_eq!(
+        closes[0].body,
+        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    // the conversation as it pauses has no schedule left: the router hears it once
+    assert_eq!(
+        jr.chat.lock().unwrap().last().cloned(),
+        Some(("s1".to_owned(), Value::Null))
+    );
+    // a second pass tells magpie nothing new
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    assert_eq!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_close_conversation")
+            .len(),
+        1
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/health"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&health)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+
+    // 7. a turn for a paused session resumes it, and its new machine's boot is that sandbox
+    let put = c
+        .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
+        .header("aviary-protocol", "hermit-core=1")
+        .json(&json!({"person": OWNER}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 202);
+    let waiting: Value = put.json().await.unwrap();
+    assert_eq!(waiting["state"], "starting");
+    for _ in 0..50 {
+        if !jr.resumes.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(*jr.resumes.lock().unwrap(), vec!["s1".to_owned()]);
+    // a reconcile pass while the resume is in flight leaves it alone
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    *jr.state.lock().unwrap() = "started".into();
+    let b2: BootReply = boot("m2").await.json().await.unwrap();
+    assert_eq!(b2.sandbox_id.to_string(), waiting["id"].as_str().unwrap());
+    assert_ne!(b2.sandbox_id, b.sandbox_id);
+
+    // 8. the change feed saw every step, in order
+    let feed: Value = c
+        .get(format!("{hermit_url}/v1/sandbox-events?after=0&limit=100"))
+        .header("aviary-protocol", "hermit-core=1")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let states: Vec<&str> = feed["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["state"].as_str().unwrap())
+        .collect();
+    assert!(
+        states.contains(&"ready") && states.contains(&"gone"),
+        "{states:?}"
+    );
+    assert_eq!(*states.last().unwrap(), "starting");
+
+    // 9. the session is up again: its conversation is open; destroyed: it leaves the chat, once
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 2);
+    assert_eq!(closes[1].body, Some(json!({"reason": null})));
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_delete_conversation")
+            .is_empty()
+    );
+    *jr.state.lock().unwrap() = "destroyed".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let ended = magpie.fake.script().calls_to("hermit_delete_conversation");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].params["id"], cid.to_string());
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_restore_conversation")
+            .is_empty()
+    );
+
+    // 10. the session was not destroyed after all (the router's list had left it out): its conversation comes back
+    // into the chat, once, in the state the session is in
+    *jr.state.lock().unwrap() = "paused".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let restored = magpie.fake.script().calls_to("hermit_restore_conversation");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].params["id"], cid.to_string());
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 3);
+    assert_eq!(
+        closes[2].body,
+        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    *jr.state.lock().unwrap() = "started".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 4);
+    assert_eq!(closes[3].body, Some(json!({"reason": null})));
+    assert_eq!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_restore_conversation")
+            .len(),
+        1
+    );
+}
+
+/// The stand-in router of a conversation begun in the chat: the sessions it lists (id → state), the proposals it got.
+#[derive(Default)]
+struct Proposals {
+    sessions: Mutex<std::collections::BTreeMap<String, String>>,
+    got: Mutex<Vec<Value>>,
+}
+
+/// hermit-jarvis on its own database, aviary's FakeMagpie at `magpie_url` and the stand-in router at `router_url`:
+/// the app, hermit's URL and the gateway listener's.
+async fn hermit_jarvis(router_url: &str, magpie_url: &str) -> (App, String, String) {
+    let pool = jarvis_aviary::db::open(&fresh_db().await).await.unwrap();
+    let http = jarvis_aviary::central::http().unwrap();
+    let hermit_l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hermit_url = format!("http://{}", hermit_l.local_addr().unwrap());
+    let app = App(Arc::new(Inner {
+        pool,
+        keys: Keys::parse(KEYS).unwrap(),
+        magpie: magpie_api::client::Client::new(
+            http.clone(),
+            magpie_url.to_owned(),
+            "t-hermit-magpie",
+        ),
+        jarvis: Jarvis::new(router_url, "id", "secret").unwrap(),
+        owner: OWNER.into(),
+        access_team: "example.cloudflareaccess.com".into(),
+        access_aud: "aud".into(),
+        magpie_url: magpie_url.to_owned(),
+        hermit_url: hermit_url.clone(),
+        gateway_to_magpie: "t-gw-magpie".into(),
+        gateway_to_hermit: "t-gw-hermit".into(),
+        http,
+        settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
+        fabric: None,
+        chat_schedules: std::sync::Mutex::default(),
+        listing: tokio::sync::Mutex::default(),
+    }));
+    let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
+    tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
+    let gw = serve(jarvis_aviary::central::router(app.clone())).await;
+    (app, hermit_url, gw)
+}
+
+/// Deyao starts a conversation in the chat and types at once (Deyao, 2026-11-18): its first get-or-start proposes a
+/// session with the defaults through the router, the start waits in phase `approval` while the session waits for his
+/// approval in the Inbox, goes on once approved, and the session's machine boots that conversation's sandbox (no new
+/// conversation). A denied session's start ends and its conversation, with the message that waited, leaves the chat.
+#[tokio::test]
+async fn a_conversation_begun_in_the_chat_proposes_its_session() {
+    let magpie = FakeMagpie::unguarded().serve().await.unwrap();
+    let conv = json!({"id": Uuid::new_v4(), "title": "", "titleSource": "provisional",
+        "createdAt": "2026-11-18T03:00:00.000Z", "updatedAt": "2026-11-18T03:00:00.000Z", "lastUserMessageAt": null,
+        "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "turn": null, "lastTurn": null, "sandbox": null,
+        "asks": [], "run": {"state": "idle", "background": []}, "model": null, "contextTokens": null,
+        "origin": {"kind": "new"}});
+    for route in [
+        "hermit_close_conversation",
+        "hermit_delete_conversation",
+        "hermit_conversation",
+    ] {
+        magpie
+            .fake
+            .script()
+            .always(route, Reply::json(200, conv.clone()));
+    }
+    let jr = Arc::new(Proposals::default());
+    let (jr2, jr3, jr4) = (jr.clone(), jr.clone(), jr.clone());
+    let router_url = serve(
+        axum::Router::new()
+            .route(
+                "/api/remotes",
+                get(move || {
+                    let jr = jr2.clone();
+                    async move {
+                        let sessions: Vec<Value> = jr.sessions.lock().unwrap().iter()
+                            .map(|(id, state)| json!({"id": id, "state": state, "model": "aviary/claude-opus-5-5"}))
+                            .collect();
+                        Json(json!({"sessions": sessions}))
+                    }
+                })
+                .post(move |Json(b): Json<Value>| {
+                    let jr = jr3.clone();
+                    async move {
+                        // one session per request id, as the router's admitSession
+                        let id = format!("s-{}", b["requestId"].as_str().unwrap());
+                        jr.got.lock().unwrap().push(b);
+                        let state = jr.sessions.lock().unwrap().entry(id.clone()).or_insert_with(|| "approval".into()).clone();
+                        Json(json!({"id": id, "state": state}))
+                    }
+                }),
+            )
+            .route(
+                "/api/machine-signatures/verify",
+                post(move |Json(v): Json<Value>| {
+                    let jr = jr4.clone();
+                    async move {
+                        // machine m-<session> is that session's
+                        let session = v["machine"].as_str().unwrap().trim_start_matches("m-").to_owned();
+                        let state = jr.sessions.lock().unwrap().get(&session).cloned();
+                        match state {
+                            Some(state) => (axum::http::StatusCode::OK, Json(json!({"session": session, "harness": "aviary", "state": state}))),
+                            None => (axum::http::StatusCode::FORBIDDEN, Json(json!({"error": "no"}))),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/api/sessions/{id}/chat-schedule",
+                axum::routing::put(|| async { Json(json!({"ok": true})) }),
+            ),
+    )
+    .await;
+    let (app, hermit_url, gw) = hermit_jarvis(&router_url, &magpie.url()).await;
+    let c = jarvis_aviary::central::http().unwrap();
+    let core = |req: reqwest::RequestBuilder| req.header("aviary-protocol", "hermit-core=1");
+
+    // the chat offers New chat
+    let d: Value = core(c.get(format!("{hermit_url}/v1/deployment")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(d["conversations"]["peopleCreate"], true, "{d}");
+
+    // 1. the first message's get-or-start: a session proposed, the start waiting for its approval
+    let cid = Uuid::new_v4();
+    let put = || async {
+        core(c.put(format!("{hermit_url}/v1/conversations/{cid}/sandbox")))
+            .json(&json!({"person": OWNER}))
+            .send()
+            .await
+            .unwrap()
+    };
+    let r = put().await;
+    assert_eq!(r.status(), 202);
+    let s: Value = r.json().await.unwrap();
+    assert_eq!(
+        (s["state"].as_str(), s["phase"].as_str()),
+        (Some("starting"), Some("approval"))
+    );
+    let session = format!("s-chat:{cid}");
+    assert_eq!(
+        *jr.got.lock().unwrap(),
+        vec![json!({"harness": "aviary", "requestId": format!("chat:{cid}")})]
+    );
+    // magpie asking again answers the same start, and proposes nothing more
+    let again: Value = put().await.json().await.unwrap();
+    assert_eq!(again["id"], s["id"]);
+    assert_eq!(jr.got.lock().unwrap().len(), 1);
+    // another person's conversation proposes nothing
+    let r = core(c.put(format!(
+        "{hermit_url}/v1/conversations/{}/sandbox",
+        Uuid::new_v4()
+    )))
+    .json(&json!({"person": "else@example.com"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(jr.got.lock().unwrap().len(), 1);
+
+    // 2. hours may pass before Deyao answers: the start waits, the conversation stays open to more messages
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let get_sandbox = || async {
+        core(c.get(format!("{hermit_url}/v1/conversations/{cid}/sandbox")))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let s = get_sandbox().await;
+    assert_eq!(
+        (s["state"].as_str(), s["phase"].as_str()),
+        (Some("starting"), Some("approval"))
+    );
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_close_conversation")
+            .is_empty()
+    );
+
+    // 3. approved: the start goes on to the session's machine
+    jr.sessions
+        .lock()
+        .unwrap()
+        .insert(session.clone(), "starting".into());
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let s = get_sandbox().await;
+    assert_eq!(
+        (s["state"].as_str(), s["phase"].as_str()),
+        (Some("starting"), Some("host"))
+    );
+
+    // 4. its machine boots that conversation's sandbox: no conversation is made for the session
+    let body = serde_json::to_vec(&BootRequest {
+        session: session.clone(),
+        image: format!("sha256:{}", "a".repeat(64)),
+        memory_bytes: 8 << 30,
+        cpus: 4,
+        env: [("SESSION_ID".into(), session.clone())]
+            .into_iter()
+            .collect(),
+        accounts: false,
+    })
+    .unwrap();
+    let r = c
+        .post(format!("{gw}/jarvis/boot"))
+        .header("x-machine", format!("m-{session}"))
+        .header("x-time", "0")
+        .header("x-sig", "sig")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{:?}", r.text().await);
+    let b: BootReply = r.json().await.unwrap();
+    assert_eq!(b.conversation_id, cid);
+    assert_eq!(b.sandbox_id.to_string(), s["id"].as_str().unwrap());
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_create_conversation")
+            .is_empty()
+    );
+    let health = json!({"ok": true, "ready": true, "protocol": 1, "version": "abc", "bootId": "b1", "busy": false});
+    let r = c
+        .post(format!("{gw}/jarvis/health"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&health)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        get_sandbox().await["state"],
+        "ready",
+        "the held message goes to it now"
+    );
+
+    // 5. another conversation whose session Deyao denies: its start ends, and the conversation leaves the chat
+    let cid2 = Uuid::new_v4();
+    let r = core(c.put(format!("{hermit_url}/v1/conversations/{cid2}/sandbox")))
+        .json(&json!({"person": OWNER}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    jr.sessions
+        .lock()
+        .unwrap()
+        .remove(&format!("s-chat:{cid2}"));
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let s: Value = core(c.get(format!("{hermit_url}/v1/conversations/{cid2}/sandbox")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["state"], "gone");
+    assert_eq!(s["release"]["reason"], "not_allowed");
+    assert_eq!(
+        s["release"]["message"],
+        jarvis_aviary::reconcile::NOT_APPROVED
+    );
+    let ended = magpie.fake.script().calls_to("hermit_delete_conversation");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].params["id"], cid2.to_string());
+    // the first conversation's session is untouched
+    assert_eq!(get_sandbox().await["state"], "ready");
+}

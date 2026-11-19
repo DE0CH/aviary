@@ -1,0 +1,100 @@
+# YYC AI's new stack (aviary: pigeon, magpie, hermit; jarvis3: egress, tools), applied to the new Talos cluster by
+# .github/workflows/yyc-ai.yml (yyc/refactor DESIGN 15, spec-platform 9 and 25). Its Secrets are SealedSecrets in
+# ./sealed/ (sealed with infra/sealed-secrets-talos.pem), applied by the same workflow's fenced step.
+#
+# Namespaces yyc-ai and yyc-ai-fabric, the deployer's rights and the JuiceFS CSI driver are cluster-level
+# (news-stream/deploy/clusters/talos/, the new cluster's own workflow): never in this render (check items 12-13).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - limits.yaml
+  - network.yaml
+  - cloudflared.yaml
+  - pigeon.yaml
+  - magpie.yaml
+  - hermit/hermit.yaml
+  - hermit/fabric.yaml
+  - hermit/juicefs.yaml
+  - hermit/pg-forward.yaml
+  - egress/egress.yaml
+  - tools/tools.yaml
+  - herald/herald.yaml
+  - drive/drive.yaml
+  # the one-shot Jobs (hermit-jfs-owner) are not here: a Job's image is immutable, so each re-pin of the tags below
+  # would refuse them; they run from yyc/oneshot/ with oneshot/run.sh, on the images pinned here, outside the inventory
+# The tags are written by the deploy run (docs/DEPLOY.md: aviary-deploy yyc, from deploy/images.json): each image's tag
+# is the last commit that changed its part. `deploy` below is a placeholder and never what runs. pigeon, magpie,
+# hermit, herald and sandboxd share aviary's tag (check item 4); hermit.json's fabric.sandboxd and sandbox.image and
+# hermit/gateway.release follow it.
+images:
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "deploy"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "deploy"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "deploy"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "deploy"}
+  - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "deploy"}
+  # the app bundle (app/, app.yml)
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "deploy"}
+  # YYC Drive: its server, and its edge at /srv/edge (the deploy run's drive-edge), in one image (drive/, drive.yml)
+  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "deploy"}
+  # egress and tools (egress/, egress.yml)
+  - {name: egress, newName: ghcr.io/de0ch/egress, newTag: "deploy"}
+configMapGenerator:
+  # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
+  - name: hermit-config
+    namespace: yyc-ai
+    files: [hermit/hermit.json, hermit/system-prompt.md, hermit/sandbox-rules.md, hermit/title-system.md]
+  # the managed skills (decision 15; hermit's prompt.skills, the descriptor's claude.managedSkills): hermit/skills/<skill>/
+  # <file> as key <skill>.<file>, mounted back at <skill>/<file> by hermit.yaml's items (check_deploy.py item K keeps the
+  # three lists equal); hashed, so a change rolls hermit and new sandboxes get it
+  - name: hermit-skills
+    namespace: yyc-ai
+    files:
+      - code.SKILL.md=hermit/skills/code/SKILL.md
+      - feishu-files.SKILL.md=hermit/skills/feishu-files/SKILL.md
+      - labels.SKILL.md=hermit/skills/labels/SKILL.md
+      - newswatch.SKILL.md=hermit/skills/newswatch/SKILL.md
+      - report.SKILL.md=hermit/skills/report/SKILL.md
+      - schedules.SKILL.md=hermit/skills/schedules/SKILL.md
+      - telegram.SKILL.md=hermit/skills/telegram/SKILL.md
+      - video.SKILL.md=hermit/skills/video/SKILL.md
+      - web.SKILL.md=hermit/skills/web/SKILL.md
+  # YYC's look (check item B): the app bundle holds neutral files under /branding/ (the logo, the tab and home-screen
+  # icons, the manifest); pigeon mounts these over them. Hashed, so a change rolls pigeon
+  - name: pigeon-branding
+    namespace: yyc-ai
+    files:
+      - branding/logo.png
+      - branding/favicon.png
+      - branding/favicon-running.png
+      - branding/favicon-attention.png
+      - branding/apple-touch-icon.png
+      - branding/icon-192.png
+      - branding/icon-512.png
+      - branding/manifest.json
+  # pg-forward's HAProxy configuration: hashed, so a change rolls it
+  - name: pg-forward-config
+    namespace: yyc-ai
+    files: [hermit/pg-forward.cfg]
+  - name: egress-config
+    namespace: yyc-ai
+    files: [egress/egress.json]
+  - name: tools-config
+    namespace: yyc-ai
+    files: [tools/tools.json]
+patches:
+  # the Secrets' revision, per Deployment (gap-2 2.15): a resealed Secret reaches running pods only through a new pod
+  # template, so bump the value for the readers of that Secret only
+  - target: {kind: Deployment, name: pigeon}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: magpie}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: hermit}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "2026-11-17-hosts-meta-2"}}]'
+  - target: {kind: Deployment, name: egress}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: tools}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: herald}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: cloudflared}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'

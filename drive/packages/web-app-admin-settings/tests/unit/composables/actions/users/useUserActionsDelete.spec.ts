@@ -1,0 +1,108 @@
+import { useUserActionsDelete } from '../../../../../src/composables/actions/users/useUserActionsDelete'
+import { mock } from 'vitest-mock-extended'
+import { unref } from 'vue'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { useCapabilityStore, useModals, useUserStore } from '@opencloud-eu/web-pkg'
+import {
+  defaultComponentMocks,
+  getComposableWrapper,
+  writable
+} from '@opencloud-eu/web-test-helpers'
+import { useUserSettingsStore } from '../../../../../src/composables/stores/userSettings'
+
+describe('useUserActionsDelete', () => {
+  describe('method "isVisible"', () => {
+    it.each([
+      { resources: [], disabledViaCapability: false, isVisible: false },
+      { resources: [mock<User>()], disabledViaCapability: false, isVisible: true },
+      { resources: [mock<User>(), mock<User>()], disabledViaCapability: false, isVisible: true },
+      { resources: [mock<User>(), mock<User>()], disabledViaCapability: true, isVisible: false },
+      {
+        resources: [mock<User>(), mock<User>({ id: 'own-id' })],
+        disabledViaCapability: false,
+        isVisible: false
+      }
+    ])(
+      'should only return true if 1 or more users are selected and not disabled via capability',
+      ({ resources, disabledViaCapability, isVisible }) => {
+        getWrapper({
+          setup: ({ actions }) => {
+            const capabilityStore = useCapabilityStore()
+            writable(capabilityStore).graphUsersDeleteDisabled = !!disabledViaCapability
+            const userStore = useUserStore()
+            userStore.user = mock<User>({ id: 'own-id' })
+            expect(unref(actions)[0].isVisible({ resources })).toEqual(isVisible)
+          }
+        })
+      }
+    )
+  })
+  describe('handler', () => {
+    it('shows a cancel action in the confirmation', () => {
+      getWrapper({
+        setup: ({ actions }) => {
+          const { dispatchModal } = useModals()
+          unref(actions)[0].handler({ resources: [mock<User>()] })
+
+          expect(dispatchModal).toHaveBeenCalledWith(
+            expect.objectContaining({ showCancelAction: true })
+          )
+        }
+      })
+    })
+  })
+  describe('method "deleteUsers"', () => {
+    it('should successfully delete all given users and reload the users list', () => {
+      getWrapper({
+        setup: async ({ deleteUsers }, { clientService }) => {
+          const user = mock<User>({ id: '1' })
+          await deleteUsers([user])
+          expect(clientService.graphAuthenticated.users.deleteUser).toHaveBeenCalledWith(user.id)
+          const { removeUsers } = useUserSettingsStore()
+          expect(removeUsers).toHaveBeenCalled()
+        }
+      })
+    })
+    it('should only remove the successfully deleted users from the list', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const deleted = mock<User>({ id: '1' })
+      const failed = mock<User>({ id: '2' })
+      let deletion: Promise<void>
+      getWrapper({
+        setup: ({ deleteUsers }, { clientService }) => {
+          clientService.graphAuthenticated.users.deleteUser.mockImplementation((id) =>
+            id === failed.id ? Promise.reject(new Error()) : Promise.resolve(undefined)
+          )
+          deletion = deleteUsers([deleted, failed])
+        }
+      })
+      await deletion
+      const { removeUsers } = useUserSettingsStore()
+      expect(removeUsers).toHaveBeenCalledWith([deleted])
+    })
+  })
+})
+
+function getWrapper({
+  setup
+}: {
+  setup: (
+    instance: ReturnType<typeof useUserActionsDelete>,
+    {
+      clientService
+    }: {
+      clientService: ReturnType<typeof defaultComponentMocks>['$clientService']
+    }
+  ) => void
+}) {
+  const mocks = defaultComponentMocks()
+  return {
+    wrapper: getComposableWrapper(
+      () => {
+        const instance = useUserActionsDelete()
+        setup(instance, { clientService: mocks.$clientService })
+      },
+      { mocks, provide: mocks }
+    )
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "@opencloud-eu/web-test-helpers",
+  "version": "8.2.2",
+  "description": "OpenCloud web test helpers",
+  "license": "AGPL-3.0",
+  "private": false,
+  "type": "module",
+  "main": "src/index.ts",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/web-test-helpers",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencloud-eu/web",
+    "directory": "packages/web-test-helpers"
+  },
+  "files": [
+    "dist/"
+  ],
+  "publishConfig": {
+    "linkDirectory": false,
+    "exports": {
+      ".": {
+        "default": "./dist/web-test-helpers.js",
+        "types": "./dist/src/index.d.ts"
+      }
+    }
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "vite": "vite",
+    "build": "vite build && vue-tsc --project tsconfig.build.json",
+    "check:types": "vue-tsc --declaration --noEmit --project tsconfig.build.json"
+  },
+  "peerDependencies": {
+    "@opencloud-eu/web-pkg": "workspace:^",
+    "@vue/test-utils": "^2.4.6",
+    "vue": "^3.5.10"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@vitejs/plugin-vue": "6.0.11",
+    "vite": "^8.0.3"
+  },
+  "dependencies": {
+    "@casl/ability": "^7.0.0",
+    "@casl/vue": "^3.0.0",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:^",
+    "@pinia/testing": "^2.0.0",
+    "axios": "^1.13.6",
+    "pinia": "^4.0.0",
+    "vitest-mock-extended": "^6.0.0",
+    "vue-router": "^5.0.4",
+    "vue3-gettext": "4.0.1"
+  }
+}

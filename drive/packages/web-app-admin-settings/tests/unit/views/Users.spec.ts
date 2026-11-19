@@ -1,0 +1,723 @@
+import { nextTick, reactive } from 'vue'
+import Users from '../../../src/views/Users.vue'
+import { ItemFilter, OptionsConfig, useAppDefaults } from '@opencloud-eu/web-pkg'
+import { mock, mockDeep } from 'vitest-mock-extended'
+import {
+  defaultComponentMocks,
+  defaultPlugins,
+  mount,
+  shallowMount,
+  useAppDefaultsMock
+} from '@opencloud-eu/web-test-helpers'
+import { Action, ClientService, SideBarPanel, eventBus, useMessages } from '@opencloud-eu/web-pkg'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
+import { flushPromises } from '@vue/test-utils'
+import { RouteLocationNormalizedLoaded } from 'vue-router'
+import AppTemplate from '../../../src/components/AppTemplate.vue'
+import { useUserSettingsStore } from '../../../src/composables/stores/userSettings'
+
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  useAppDefaults: vi.fn()
+}))
+vi.mocked(useAppDefaults).mockImplementation(() => useAppDefaultsMock())
+
+const getDefaultUser = (): User => {
+  return {
+    id: '1',
+    displayName: 'Admin',
+    givenName: 'Admin',
+    surname: 'Admin',
+    memberOf: [],
+    mail: 'admin@example.org',
+    drive: {
+      id: '1',
+      name: 'admin',
+      quota: { remaining: 5000000000, state: 'normal', total: 5000000000, used: 0 }
+    },
+    appRoleAssignments: [
+      {
+        appRoleId: '1',
+        id: '1',
+        principalId: '1',
+        principalType: 'User',
+        resourceDisplayName: 'OpenCloud',
+        resourceId: 'some-graph-app-id'
+      }
+    ]
+  } as User
+}
+
+const getDefaultApplications = () => {
+  return [
+    {
+      appRoles: [
+        {
+          displayName: 'Admin',
+          id: '1'
+        },
+        {
+          displayName: 'Guest',
+          id: '2'
+        },
+        {
+          displayName: 'Space Admin',
+          id: '3'
+        },
+        {
+          displayName: 'User',
+          id: '4'
+        }
+      ],
+      displayName: 'OpenCloud',
+      id: 'some-graph-app-id'
+    }
+  ]
+}
+
+const getClientService = () => {
+  const clientService = mockDeep<ClientService>()
+  clientService.graphAuthenticated.users.listUsers.mockResolvedValue([mock<User>(getDefaultUser())])
+  clientService.graphAuthenticated.users.getUser.mockResolvedValue(mock<User>(getDefaultUser()))
+  clientService.graphAuthenticated.users.editUser.mockResolvedValue(mock<User>(getDefaultUser()))
+  clientService.graphAuthenticated.groups.listGroups.mockResolvedValue([mock<Group>()])
+  clientService.graphAuthenticated.applications.listApplications.mockResolvedValue(
+    getDefaultApplications()
+  )
+  return clientService
+}
+
+const selectors = {
+  itemFilterGroupsStub: 'item-filter-stub[filtername="groups"]',
+  itemFilterRolesStub: 'item-filter-stub[filtername="roles"]'
+}
+
+describe('Users view', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  describe('list view', () => {
+    it('renders the loaded users initially', async () => {
+      const clientService = getClientService()
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        clientService,
+        users: [getDefaultUser()]
+      })
+      await flushPromises()
+      expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.users-table').text()).toContain('admin@example.org')
+      expect(wrapper.find('no-content-message-stub').exists()).toBeFalsy()
+      expect(wrapper.find(selectors.itemFilterGroupsStub).exists()).toBeTruthy()
+      expect(wrapper.find(selectors.itemFilterRolesStub).exists()).toBeTruthy()
+    })
+    it('renders a warning initially if filters are mandatory', async () => {
+      const clientService = getClientService()
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        clientService,
+        options: { userListRequiresFilter: true }
+      })
+      await flushPromises()
+      expect(clientService.graphAuthenticated.users.listUsers).not.toHaveBeenCalled()
+      expect(wrapper.find('.users-table').exists()).toBeFalsy()
+      expect(wrapper.find('no-content-message-stub').exists()).toBeTruthy()
+    })
+    it('shows an error and an empty list if loading the users fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const subscribeSpy = vi.spyOn(eventBus, 'subscribe')
+      const clientService = getClientService()
+      clientService.graphAuthenticated.users.listUsers.mockRejectedValueOnce(new Error('failed'))
+      const { wrapper } = getMountedWrapper({ mountType: mount, clientService })
+      await flushPromises()
+      expect(useMessages().showErrorMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Failed to load users' })
+      )
+      expect(wrapper.find('no-content-message-stub').exists()).toBeTruthy()
+      expect(subscribeSpy).toHaveBeenCalledWith(
+        'app.admin-settings.users.user.quota.updated',
+        expect.any(Function)
+      )
+    })
+    it('stops loading the users without an error when leaving the page', async () => {
+      const clientService = getClientService()
+      clientService.graphAuthenticated.users.listUsers.mockReturnValue(new Promise(() => {}))
+      const errorHandler = vi.fn()
+      const { wrapper } = getMountedWrapper({ mountType: mount, clientService, errorHandler })
+
+      wrapper.unmount()
+      await flushPromises()
+
+      expect(errorHandler).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('created user', () => {
+    // the views subscribe to the global event bus, so they must not outlive their test
+    let wrapper: ReturnType<typeof getMountedWrapper>['wrapper']
+    afterEach(() => {
+      wrapper?.unmount()
+      wrapper = undefined
+    })
+
+    it('adds the created user to the list if no filter is active', async () => {
+      const clientService = getClientService()
+      wrapper = getMountedWrapper({ clientService }).wrapper
+      const { upsertUser } = useUserSettingsStore()
+      await flushPromises()
+      const createdUser = mock<User>({ id: '2' })
+
+      eventBus.publish('app.admin-settings.users.user.created', createdUser)
+      await flushPromises()
+
+      expect(upsertUser).toHaveBeenCalledWith(createdUser)
+      expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(1)
+    })
+    it.each([
+      {
+        description: 'a group filter',
+        query: { groupFilterQuery: '1' },
+        expected: { filter: "(memberOf/any(m:m/id eq '1'))" }
+      },
+      {
+        description: 'a search term',
+        query: { displayNameFilterQuery: 'Albert' },
+        expected: { search: '"Albert"' }
+      }
+    ])(
+      'reloads the list instead of adding the created user if $description is active',
+      async ({ query, expected }) => {
+        const clientService = getClientService()
+        wrapper = getMountedWrapper({
+          clientService,
+          selectedUsers: [{ id: '1', displayName: 'Admin' }] as User[],
+          ...query
+        }).wrapper
+        const { upsertUser, setSelectedUsers } = useUserSettingsStore()
+        await flushPromises()
+
+        eventBus.publish('app.admin-settings.users.user.created', mock<User>({ id: '2' }))
+        await flushPromises()
+
+        expect(upsertUser).not.toHaveBeenCalled()
+        expect(setSelectedUsers).toHaveBeenCalledWith([])
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(2)
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenLastCalledWith(
+          expect.objectContaining(expected),
+          expect.anything()
+        )
+      }
+    )
+    it('keeps the list empty if a filter is mandatory but none is set', async () => {
+      const clientService = getClientService()
+      wrapper = getMountedWrapper({
+        clientService,
+        stubActions: false,
+        options: { userListRequiresFilter: true }
+      }).wrapper
+      const userSettingsStore = useUserSettingsStore()
+      await flushPromises()
+
+      eventBus.publish('app.admin-settings.users.user.created', mock<User>({ id: '2' }))
+      await flushPromises()
+
+      expect(userSettingsStore.users).toEqual([])
+      expect(clientService.graphAuthenticated.users.listUsers).not.toHaveBeenCalled()
+    })
+    it('stops listening for created users when leaving the page', async () => {
+      const { wrapper: unmountedWrapper } = getMountedWrapper()
+      const { upsertUser } = useUserSettingsStore()
+      await flushPromises()
+      unmountedWrapper.unmount()
+
+      eventBus.publish('app.admin-settings.users.user.created', mock<User>({ id: '2' }))
+
+      expect(upsertUser).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('side bar panels', () => {
+    it('should contain EditPanel when one user is selected and loaded', async () => {
+      const { wrapper } = getMountedWrapper()
+      await flushPromises()
+      const user = getDefaultUser()
+      const editPanel = getSideBarPanels(wrapper).find(({ name }) => name === 'EditPanel')
+      expect(editPanel.isVisible({ items: [user] })).toBeFalsy()
+
+      useUserSettingsStore().selectedUsers = [user]
+      await flushPromises()
+      expect(editPanel.isVisible({ items: [user] })).toBeTruthy()
+    })
+    it('should contain DetailsPanel no user is selected', () => {
+      const { wrapper } = getMountedWrapper()
+      expect(
+        getSideBarPanels(wrapper)
+          .find(({ name }) => name === 'DetailsPanel')
+          .isVisible({ items: [] })
+      ).toBeTruthy()
+    })
+    it('should not contain EditPanel when multiple users are selected', () => {
+      const { wrapper } = getMountedWrapper()
+      expect(
+        getSideBarPanels(wrapper)
+          .find(({ name }) => name === 'EditPanel')
+          .isVisible({ items: [{ id: '1' }, { id: '2' }] as User[] })
+      ).toBeFalsy()
+    })
+  })
+
+  describe('additional user data', () => {
+    it('loads the selected user once when the same selection is set again while loading', async () => {
+      const clientService = getClientService()
+      getMountedWrapper({ mountType: mount, clientService })
+      await flushPromises()
+      const userSettingsStore = useUserSettingsStore()
+      const user = { ...getDefaultUser(), id: '2' }
+      let resolveUser: (user: User) => void
+      clientService.graphAuthenticated.users.getUser.mockReturnValue(
+        new Promise<User>((resolve) => {
+          resolveUser = resolve
+        }) as ReturnType<typeof clientService.graphAuthenticated.users.getUser>
+      )
+
+      // the quick action button selects the user, then the row click handler
+      // resets the selection and selects the same user again
+      userSettingsStore.selectedUsers.push(user)
+      await nextTick()
+      userSettingsStore.selectedUsers = []
+      userSettingsStore.selectedUsers.push(user)
+      await nextTick()
+      resolveUser(mock<User>(user))
+      await flushPromises()
+
+      expect(clientService.graphAuthenticated.users.getUser).toHaveBeenCalledTimes(1)
+      expect(clientService.graphAuthenticated.users.getUser).toHaveBeenCalledWith(
+        '2',
+        {},
+        expect.anything()
+      )
+    })
+
+    it('shows an error, disables the group actions and loads the user again on reselect if loading fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const clientService = getClientService()
+      const { wrapper } = getMountedWrapper({ mountType: mount, clientService })
+      await flushPromises()
+      const userSettingsStore = useUserSettingsStore()
+      const user = { ...getDefaultUser(), id: '2' }
+      const getBatchAction = (actionName: string) =>
+        (wrapper.findComponent(AppTemplate).props('batchActions') as Action[]).find(
+          ({ name }) => name === actionName
+        )
+      const isAddToGroupsDisabled = () => getBatchAction('add-to-groups').isDisabled()
+      clientService.graphAuthenticated.users.getUser.mockRejectedValueOnce(new Error('failed'))
+
+      userSettingsStore.selectedUsers = [user]
+      await flushPromises()
+      expect(useMessages().showErrorMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Failed to load user details' })
+      )
+      expect(isAddToGroupsDisabled()).toBe(true)
+      expect(getBatchAction('remove-users-from-groups').isDisabled()).toBe(true)
+      expect(
+        getSideBarPanels(wrapper)
+          .find(({ name }) => name === 'EditPanel')
+          .isVisible({ items: [user] })
+      ).toBeFalsy()
+
+      userSettingsStore.selectedUsers = []
+      await flushPromises()
+      clientService.graphAuthenticated.users.getUser.mockClear()
+      clientService.graphAuthenticated.users.getUser.mockResolvedValue(mock<User>(user))
+      userSettingsStore.selectedUsers = [user]
+      await flushPromises()
+      expect(clientService.graphAuthenticated.users.getUser).toHaveBeenCalledTimes(1)
+      expect(clientService.graphAuthenticated.users.getUser).toHaveBeenCalledWith(
+        '2',
+        {},
+        expect.anything()
+      )
+      expect(isAddToGroupsDisabled()).toBe(false)
+    })
+
+    it('shows the error only once when the edit quick action of a user is clicked while another user is selected', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const clientService = getClientService()
+      const failingUser = { ...getDefaultUser(), id: '2' }
+      const otherUser = { ...getDefaultUser(), id: '3' }
+      clientService.graphAuthenticated.users.listUsers.mockResolvedValue([failingUser, otherUser])
+      clientService.graphAuthenticated.users.getUser.mockImplementation((id) =>
+        id === failingUser.id
+          ? Promise.reject(new Error('failed'))
+          : Promise.resolve(mock<User>(otherUser))
+      )
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        clientService,
+        selectedUsers: [otherUser],
+        stubActions: false
+      })
+      await flushPromises()
+
+      // the click reaches the quick action and then the row. the browser runs the pending
+      // reactive updates in between, so the row only gets the click after they are done.
+      const row = wrapper.find(`[data-item-id="${failingUser.id}"]`)
+      const editButton = row.find('.users-table-btn-edit')
+      editButton.element.parentElement.addEventListener('click', (event) => event.stopPropagation())
+      await editButton.trigger('click')
+      await flushPromises()
+      await row.trigger('click')
+      await flushPromises()
+
+      expect(useUserSettingsStore().selectedUsers.map(({ id }) => id)).toEqual([failingUser.id])
+      expect(useMessages().showErrorMessage).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops loading the user details without an error when leaving the page', async () => {
+      const clientService = getClientService()
+      const { wrapper } = getMountedWrapper({ mountType: mount, clientService })
+      await flushPromises()
+      clientService.graphAuthenticated.users.getUser.mockReturnValue(new Promise(() => {}))
+      useUserSettingsStore().selectedUsers = [{ ...getDefaultUser(), id: '2' }]
+      await nextTick()
+
+      wrapper.unmount()
+      await flushPromises()
+
+      expect(useMessages().showErrorMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('batch actions', () => {
+    it('do not display when no user selected', async () => {
+      const { wrapper } = getMountedWrapper({ mountType: mount })
+      await flushPromises()
+      expect(wrapper.find('batch-actions-stub').exists()).toBeFalsy()
+    })
+    it('display when one user selected', async () => {
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        selectedUsers: [{ id: '1', displayName: 'Admin' } as User]
+      })
+      await flushPromises()
+      expect(wrapper.find('batch-actions-stub').exists()).toBeTruthy()
+    })
+    it('show the delete action last', async () => {
+      // not the logged in user (id 1), who can't delete their own account
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        selectedUsers: [{ id: '2', displayName: 'User' }] as User[]
+      })
+      await flushPromises()
+      const batchActions = wrapper.findComponent(AppTemplate).props('batchActions') as Action[]
+      expect(batchActions.length).toBeGreaterThan(1)
+      expect(batchActions.at(-1).name).toBe('delete')
+    })
+    it('display when more than one users selected', async () => {
+      const { wrapper } = getMountedWrapper({
+        mountType: mount,
+        selectedUsers: [{ id: '1' }, { id: '2' }] as User[]
+      })
+      await flushPromises()
+      expect(wrapper.find('batch-actions-stub').exists()).toBeTruthy()
+    })
+    it('show a spinner while the data of the selected user is loading', async () => {
+      const clientService = getClientService()
+      const { wrapper } = getMountedWrapper({ mountType: mount, clientService })
+      await flushPromises()
+      const userSettingsStore = useUserSettingsStore()
+      const user = { ...getDefaultUser(), id: '2' }
+      let resolveUser: (user: User) => void
+      clientService.graphAuthenticated.users.getUser.mockReturnValue(
+        new Promise<User>((resolve) => {
+          resolveUser = resolve
+        }) as ReturnType<typeof clientService.graphAuthenticated.users.getUser>
+      )
+
+      userSettingsStore.selectedUsers.push(user)
+      await nextTick()
+      expect(wrapper.findComponent(AppTemplate).props('batchActionsLoading')).toBeTruthy()
+
+      resolveUser(mock<User>(user))
+      await flushPromises()
+      expect(wrapper.findComponent(AppTemplate).props('batchActionsLoading')).toBe(false)
+    })
+  })
+
+  describe('filter', () => {
+    describe('groups', () => {
+      it('does filter users by groups when the "selectionChange"-event is triggered', async () => {
+        const clientService = getClientService()
+        const { wrapper, mocks } = getMountedWrapper({ mountType: mount, clientService })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(1)
+        wrapper
+          .findComponent<typeof ItemFilter>(selectors.itemFilterGroupsStub)
+          .vm.$emit('selectionChange', [{ id: '1' }])
+        await flushPromises()
+        expect(mocks.$router.replace).toHaveBeenCalledWith(
+          expect.objectContaining({ query: expect.objectContaining({ page: '1' }) })
+        )
+        expect(mocks.$router.push).not.toHaveBeenCalled()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(2)
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenNthCalledWith(
+          2,
+          {
+            orderBy: ['displayName'],
+            filter: "(memberOf/any(m:m/id eq '1'))",
+            expand: ['appRoleAssignments']
+          },
+          expect.anything()
+        )
+      })
+      it('does filter initially if group ids are given via query param', async () => {
+        const groupIdsQueryParam = '1+2'
+        const clientService = getClientService()
+        getMountedWrapper({
+          mountType: mount,
+          clientService,
+          groupFilterQuery: groupIdsQueryParam
+        })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledWith(
+          {
+            orderBy: ['displayName'],
+            filter: "(memberOf/any(m:m/id eq '1') or memberOf/any(m:m/id eq '2'))",
+            expand: ['appRoleAssignments']
+          },
+          expect.anything()
+        )
+      })
+      it.each([
+        { description: 'other groups exist', groups: [{ id: '1', displayName: 'Group 1' }] },
+        { description: 'it was the last group', groups: [] }
+      ])(
+        'shows a group id from the query param that does not exist anymore as removable filter if $description',
+        async ({ groups }) => {
+          vi.spyOn(console, 'error').mockImplementation(() => undefined)
+          const clientService = getClientService()
+          clientService.graphAuthenticated.groups.listGroups.mockResolvedValue(
+            groups.map((g) => mock<Group>(g))
+          )
+          // the server responds with 404 for a filter with an unknown group
+          clientService.graphAuthenticated.users.listUsers.mockRejectedValueOnce(new Error('404'))
+          const { wrapper } = getMountedWrapper({
+            mountType: mount,
+            clientService,
+            groupFilterQuery: 'deleted-group',
+            stubs: { ItemFilter: false, OcButton: false }
+          })
+          // the id must not be shown as unknown before the groups have been loaded
+          expect(wrapper.text()).not.toContain('deleted-group')
+          await flushPromises()
+          expect(useMessages().showErrorMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ title: 'Failed to load users' })
+          )
+          const groupFilter = wrapper.find('.item-filter-groups')
+          expect(groupFilter.find('.oc-filter-chip').text()).toContain('deleted-group')
+
+          await groupFilter.find('.oc-filter-chip-clear').trigger('click')
+          await flushPromises()
+          expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenLastCalledWith(
+            { orderBy: ['displayName'], filter: '', expand: ['appRoleAssignments'] },
+            expect.anything()
+          )
+        }
+      )
+    })
+    describe('roles', () => {
+      it('does filter users by roles when the "selectionChange"-event is triggered', async () => {
+        const clientService = getClientService()
+        const { wrapper } = getMountedWrapper({ mountType: mount, clientService })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(1)
+        wrapper
+          .findComponent<typeof ItemFilter>(selectors.itemFilterRolesStub)
+          .vm.$emit('selectionChange', [{ id: '1' }])
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(2)
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenNthCalledWith(
+          2,
+          {
+            orderBy: ['displayName'],
+            filter: "(appRoleAssignments/any(m:m/appRoleId eq '1'))",
+            expand: ['appRoleAssignments']
+          },
+          expect.anything()
+        )
+      })
+      it('does filter initially if role ids are given via query param', async () => {
+        const roleIdsQueryParam = '1+2'
+        const clientService = getClientService()
+        getMountedWrapper({
+          mountType: mount,
+          clientService,
+          roleFilterQuery: roleIdsQueryParam
+        })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledWith(
+          {
+            orderBy: ['displayName'],
+            filter:
+              "(appRoleAssignments/any(m:m/appRoleId eq '1') or appRoleAssignments/any(m:m/appRoleId eq '2'))",
+            expand: ['appRoleAssignments']
+          },
+          expect.anything()
+        )
+      })
+    })
+    describe('search term', () => {
+      it('searches initially if a search term is given via query param', async () => {
+        const clientService = getClientService()
+        getMountedWrapper({ mountType: mount, clientService, displayNameFilterQuery: 'Albert' })
+        await flushPromises()
+        // the server search covers the display name, the user name and the email
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledWith(
+          {
+            orderBy: ['displayName'],
+            filter: '',
+            search: '"Albert"',
+            expand: ['appRoleAssignments']
+          },
+          expect.anything()
+        )
+      })
+      it('combines the search with the group filter', async () => {
+        const clientService = getClientService()
+        getMountedWrapper({
+          mountType: mount,
+          clientService,
+          displayNameFilterQuery: 'alice-1db',
+          groupFilterQuery: '1'
+        })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledWith(
+          expect.objectContaining({
+            filter: "(memberOf/any(m:m/id eq '1'))",
+            search: '"alice-1db"'
+          }),
+          expect.anything()
+        )
+      })
+      it('removes double quotes from the search term', async () => {
+        const clientService = getClientService()
+        getMountedWrapper({ mountType: mount, clientService, displayNameFilterQuery: 'Al"bert' })
+        await flushPromises()
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledWith(
+          expect.objectContaining({ search: '"Albert"' }),
+          expect.anything()
+        )
+      })
+      it('clears the search term and reloads the users when it is removed from the route', async () => {
+        const clientService = getClientService()
+        const { wrapper, mocks } = getMountedWrapper({
+          mountType: mount,
+          clientService,
+          displayNameFilterQuery: 'Albert'
+        })
+        await flushPromises()
+        delete mocks.$router.currentRoute.value.query.q_displayName
+        await flushPromises()
+        expect((wrapper.vm as any).searchTerm).toBe('')
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenCalledTimes(2)
+        expect(clientService.graphAuthenticated.users.listUsers).toHaveBeenLastCalledWith(
+          expect.not.objectContaining({ search: expect.anything() }),
+          expect.anything()
+        )
+        expect(mocks.$router.push).not.toHaveBeenCalled()
+      })
+      it('resets the selection when the search term in the route changes', async () => {
+        const { mocks } = getMountedWrapper({
+          mountType: mount,
+          displayNameFilterQuery: 'Albert',
+          selectedUsers: [{ id: '2', displayName: 'User' }] as User[]
+        })
+        await flushPromises()
+        const userSettingsStore = useUserSettingsStore()
+        delete mocks.$router.currentRoute.value.query.q_displayName
+        await flushPromises()
+        expect(userSettingsStore.setSelectedUsers).toHaveBeenCalledWith([])
+      })
+    })
+  })
+})
+
+function getSideBarPanels(wrapper: ReturnType<typeof getMountedWrapper>['wrapper']) {
+  return wrapper.findComponent(AppTemplate).props('sideBarAvailablePanels') as SideBarPanel<
+    unknown,
+    unknown,
+    User
+  >[]
+}
+
+function getMountedWrapper({
+  mountType = shallowMount,
+  clientService = getClientService(),
+  displayNameFilterQuery = null,
+  groupFilterQuery = null,
+  roleFilterQuery = null,
+  options = {},
+  users = [],
+  selectedUsers = [],
+  stubActions = true,
+  stubs = {},
+  errorHandler = undefined
+}: {
+  mountType?: typeof shallowMount | typeof mount
+  clientService?: ReturnType<typeof mockDeep<ClientService>>
+  displayNameFilterQuery?: string
+  groupFilterQuery?: string
+  roleFilterQuery?: string
+  options?: OptionsConfig
+  users?: User[]
+  selectedUsers?: User[]
+  stubActions?: boolean
+  stubs?: Record<string, boolean>
+  errorHandler?: (err: unknown) => void
+} = {}) {
+  const query: Record<string, string> = reactive({
+    ...(displayNameFilterQuery && { q_displayName: displayNameFilterQuery }),
+    ...(groupFilterQuery && { q_groups: groupFilterQuery }),
+    ...(roleFilterQuery && { q_roles: roleFilterQuery })
+  })
+  const mocks = {
+    ...defaultComponentMocks({
+      currentRoute: { name: 'route', path: '/', query, meta: {} } as RouteLocationNormalizedLoaded
+    }),
+    $clientService: clientService
+  }
+
+  const user = { id: '1' } as User
+
+  return {
+    mocks,
+    wrapper: mountType(Users, {
+      global: {
+        plugins: [
+          ...defaultPlugins({
+            piniaOptions: {
+              stubActions,
+              userState: { user },
+              configState: { options },
+              userSettingsStore: { users, selectedUsers }
+            }
+          })
+        ],
+        mocks,
+        provide: mocks,
+        stubs: {
+          AppLoadingSpinner: true,
+          ViewOptions: true,
+          OcBreadcrumb: true,
+          NoContentMessage: true,
+          ItemFilter: true,
+          BatchActions: true,
+          OcButton: true,
+          ...stubs
+        },
+        config: { errorHandler }
+      }
+    })
+  }
+}

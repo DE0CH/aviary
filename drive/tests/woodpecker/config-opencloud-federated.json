@@ -1,0 +1,5 @@
+{
+  "server": "https://federation-opencloud:10200",
+  "theme": "https://federation-opencloud:10200/themes/opencloud/theme.json",
+  "apps": ["files", "text-editor", "preview", "pdf-viewer", "search", "admin-settings", "ocm"]
+}

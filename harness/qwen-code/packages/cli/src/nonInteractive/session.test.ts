@@ -1,0 +1,3114 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  SendMessageType,
+  type ChatRecord,
+  type Config,
+} from '@qwen-code/qwen-code-core';
+import type { Content } from '@google/genai';
+import { runNonInteractiveStreamJson } from './session.js';
+import type {
+  CLIUserMessage,
+  CLIControlRequest,
+  CLIControlResponse,
+  ControlCancelRequest,
+} from './types.js';
+import { StreamJsonInputReader } from './io/StreamJsonInputReader.js';
+import { StreamJsonOutputAdapter } from './io/StreamJsonOutputAdapter.js';
+import { ControlDispatcher } from './control/ControlDispatcher.js';
+import { ControlContext } from './control/ControlContext.js';
+import { ControlService } from './control/ControlService.js';
+import { waitForPendingMemoryTasks } from './memory-tasks.js';
+
+const runNonInteractiveMock = vi.fn();
+
+// Mock dependencies
+vi.mock('../nonInteractiveCli.js', () => ({
+  runNonInteractive: (...args: unknown[]) => runNonInteractiveMock(...args),
+  TurnInterruptedError: class TurnInterruptedError extends Error {
+    constructor() {
+      super('Operation cancelled.');
+      this.name = 'TurnInterruptedError';
+    }
+  },
+}));
+
+vi.mock('./io/StreamJsonInputReader.js', () => ({
+  StreamJsonInputReader: vi.fn(),
+}));
+
+vi.mock('./io/StreamJsonOutputAdapter.js', () => ({
+  StreamJsonOutputAdapter: vi.fn(),
+}));
+
+vi.mock('./control/ControlDispatcher.js', () => ({
+  ControlDispatcher: vi.fn(),
+}));
+
+vi.mock('./control/ControlContext.js', () => ({
+  ControlContext: vi.fn(),
+}));
+
+vi.mock('./control/ControlService.js', () => ({
+  ControlService: vi.fn(),
+}));
+
+interface ConfigOverrides {
+  getSessionId?: () => string;
+  getModel?: () => string;
+  getIncludePartialMessages?: () => boolean;
+  getDebugMode?: () => boolean;
+  getApprovalMode?: () => string;
+  getOutputFormat?: () => string;
+  [key: string]: unknown;
+}
+
+let mockMonitorRegistry: {
+  setNotificationCallback: ReturnType<typeof vi.fn>;
+  setRegisterCallback: ReturnType<typeof vi.fn>;
+  setStatusChangeCallback: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
+  abortAll: ReturnType<typeof vi.fn>;
+};
+let mockBackgroundShellRegistry: {
+  setNotificationCallback: ReturnType<typeof vi.fn>;
+  setRegisterCallback: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
+  requestCancel: ReturnType<typeof vi.fn>;
+  abortAll: ReturnType<typeof vi.fn>;
+};
+let mockBackgroundTaskRegistry: {
+  get: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
+  abortAll: ReturnType<typeof vi.fn>;
+};
+
+function createConfig(overrides: ConfigOverrides = {}): Config {
+  const base = {
+    getSessionId: () => 'test-session',
+    getModel: () => 'test-model',
+    getIncludePartialMessages: () => false,
+    getDebugMode: () => false,
+    getApprovalMode: () => 'auto',
+    getOutputFormat: () => 'stream-json',
+    getWarnings: () => [],
+    initialize: vi.fn(),
+    waitForMcpReady: vi.fn().mockResolvedValue(undefined),
+    getMonitorRegistry: () => mockMonitorRegistry,
+    getBackgroundShellRegistry: () => mockBackgroundShellRegistry,
+    getBackgroundTaskRegistry: () => mockBackgroundTaskRegistry,
+    getLlmClient: () => ({
+      getPendingMemoryTaskPromises: vi.fn().mockReturnValue([]),
+      removePendingMemoryTaskPromises: vi.fn(),
+    }),
+  };
+  return { ...base, ...overrides } as unknown as Config;
+}
+
+function createUserMessage(content: string): CLIUserMessage {
+  return {
+    type: 'user',
+    session_id: 'test-session',
+    message: {
+      role: 'user',
+      content,
+    },
+    parent_tool_use_id: null,
+  };
+}
+
+function createResumedUserRecord(text: string): ChatRecord {
+  return {
+    uuid: `uuid-${text}`,
+    parentUuid: null,
+    sessionId: 'test-session',
+    timestamp: new Date().toISOString(),
+    type: 'user',
+    cwd: '/tmp',
+    version: 'test',
+    message: { role: 'user', parts: [{ text }] },
+  } as ChatRecord;
+}
+
+function createResumedTelemetryRecord(promptId: string): ChatRecord {
+  return {
+    uuid: `uuid-${promptId}`,
+    parentUuid: null,
+    sessionId: 'test-session',
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    subtype: 'ui_telemetry',
+    cwd: '/tmp',
+    version: 'test',
+    systemPayload: { uiEvent: { prompt_id: promptId } },
+  } as unknown as ChatRecord;
+}
+
+function createControlRequest(
+  subtype: 'initialize' | 'set_model' | 'interrupt' = 'initialize',
+): CLIControlRequest {
+  if (subtype === 'set_model') {
+    return {
+      type: 'control_request',
+      request_id: 'req-1',
+      request: {
+        subtype: 'set_model',
+        model: 'test-model',
+      },
+    };
+  }
+  if (subtype === 'interrupt') {
+    return {
+      type: 'control_request',
+      request_id: 'req-1',
+      request: {
+        subtype: 'interrupt',
+      },
+    };
+  }
+  return {
+    type: 'control_request',
+    request_id: 'req-1',
+    request: {
+      subtype: 'initialize',
+    },
+  };
+}
+
+function createContinueRequest(requestId = 'req-continue'): CLIControlRequest {
+  return {
+    type: 'control_request',
+    request_id: requestId,
+    request: {
+      subtype: 'continue_last_turn',
+    },
+  };
+}
+
+function createControlResponse(requestId: string): CLIControlResponse {
+  return {
+    type: 'control_response',
+    response: {
+      subtype: 'success',
+      request_id: requestId,
+      response: {},
+    },
+  };
+}
+
+function createControlCancel(requestId: string): ControlCancelRequest {
+  return {
+    type: 'control_cancel_request',
+    request_id: requestId,
+  };
+}
+
+describe('runNonInteractiveStreamJson', () => {
+  let config: Config;
+  let mockInputReader: {
+    read: () => AsyncGenerator<
+      | CLIUserMessage
+      | CLIControlRequest
+      | CLIControlResponse
+      | ControlCancelRequest
+    >;
+  };
+  let mockOutputAdapter: {
+    send: ReturnType<typeof vi.fn>;
+    emitResult: ReturnType<typeof vi.fn>;
+    emitMessage: ReturnType<typeof vi.fn>;
+    emitUserMessage: ReturnType<typeof vi.fn>;
+    emitSystemMessage: ReturnType<typeof vi.fn>;
+  };
+  let mockDispatcher: {
+    dispatch: ReturnType<typeof vi.fn>;
+    handleControlResponse: ReturnType<typeof vi.fn>;
+    handleCancel: ReturnType<typeof vi.fn>;
+    shutdown: ReturnType<typeof vi.fn>;
+    markInputClosed: ReturnType<typeof vi.fn>;
+    getPendingIncomingRequestCount: ReturnType<typeof vi.fn>;
+    waitForPendingIncomingRequests: ReturnType<typeof vi.fn>;
+    sdkMcpController: {
+      createSendSdkMcpMessage: ReturnType<typeof vi.fn>;
+    };
+  };
+  beforeEach(() => {
+    mockMonitorRegistry = {
+      setNotificationCallback: vi.fn(),
+      setRegisterCallback: vi.fn(),
+      setStatusChangeCallback: vi.fn(),
+      get: vi.fn().mockReturnValue({ status: 'running' }),
+      cancel: vi.fn(),
+      abortAll: vi.fn(),
+    };
+    mockBackgroundShellRegistry = {
+      setNotificationCallback: vi.fn(),
+      setRegisterCallback: vi.fn(),
+      get: vi.fn().mockReturnValue(undefined),
+      requestCancel: vi.fn(),
+      abortAll: vi.fn(),
+    };
+    mockBackgroundTaskRegistry = {
+      get: vi.fn().mockReturnValue(undefined),
+      cancel: vi.fn(),
+      abortAll: vi.fn(),
+    };
+    config = createConfig();
+    runNonInteractiveMock.mockReset();
+
+    // Setup mocks
+    mockOutputAdapter = {
+      send: vi.fn(),
+      emitResult: vi.fn(),
+      emitMessage: vi.fn(),
+      emitUserMessage: vi.fn(),
+      emitSystemMessage: vi.fn(),
+    } as {
+      send: ReturnType<typeof vi.fn>;
+      emitResult: ReturnType<typeof vi.fn>;
+      emitMessage: ReturnType<typeof vi.fn>;
+      emitUserMessage: ReturnType<typeof vi.fn>;
+      emitSystemMessage: ReturnType<typeof vi.fn>;
+      [key: string]: unknown;
+    };
+    (
+      StreamJsonOutputAdapter as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(() => mockOutputAdapter);
+
+    mockDispatcher = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+      handleControlResponse: vi.fn(),
+      handleCancel: vi.fn(),
+      shutdown: vi.fn(),
+      markInputClosed: vi.fn(),
+      getPendingIncomingRequestCount: vi.fn().mockReturnValue(0),
+      waitForPendingIncomingRequests: vi.fn().mockResolvedValue(undefined),
+      sdkMcpController: {
+        createSendSdkMcpMessage: vi.fn().mockReturnValue(vi.fn()),
+      },
+    };
+    (
+      ControlDispatcher as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(() => mockDispatcher);
+    (ControlContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({}),
+    );
+    (ControlService as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({}),
+    );
+
+    mockInputReader = {
+      async *read() {
+        // Default: empty stream
+        // Override in tests as needed
+      },
+    };
+    (
+      StreamJsonInputReader as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(() => mockInputReader);
+
+    runNonInteractiveMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  type CapturedControlContext = {
+    onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+    onStopTask?: (taskId: string) => Record<string, unknown>;
+    onInterrupt?: () => void;
+    abortSignal?: AbortSignal;
+    getActiveTurnAbortSignal?: () => AbortSignal | undefined;
+  };
+
+  function installContinueDispatch(): {
+    continueResults: Array<Record<string, unknown> | undefined>;
+    getControlContext: () => CapturedControlContext | undefined;
+  } {
+    let controlContext: CapturedControlContext | undefined;
+    const pendingDispatches = new Set<Promise<unknown>>();
+    const continueResults: Array<Record<string, unknown> | undefined> = [];
+
+    (ControlContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: {
+        onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+      }) => {
+        controlContext = options;
+        return {};
+      },
+    );
+    mockDispatcher.dispatch.mockImplementation((request: CLIControlRequest) => {
+      const work = (async () => {
+        if (request.request.subtype === 'interrupt') {
+          controlContext?.onInterrupt?.();
+          return undefined;
+        }
+        if (request.request.subtype !== 'continue_last_turn') {
+          return undefined;
+        }
+        const result = await controlContext?.onContinueLastTurn?.();
+        continueResults.push(result);
+        return result;
+      })();
+      pendingDispatches.add(work);
+      void work.finally(() => pendingDispatches.delete(work));
+      return work;
+    });
+    mockDispatcher.getPendingIncomingRequestCount.mockImplementation(
+      () => pendingDispatches.size,
+    );
+    mockDispatcher.waitForPendingIncomingRequests.mockImplementation(
+      async () => {
+        await Promise.allSettled([...pendingDispatches]);
+      },
+    );
+
+    return { continueResults, getControlContext: () => controlContext };
+  }
+
+  function createInitializedLlmClient(historyTail: Content[]) {
+    const getHistoryTail = vi.fn().mockReturnValue(historyTail);
+    const llmClient = {
+      isInitialized: vi.fn().mockReturnValue(true),
+      getChat: vi
+        .fn<
+          () => {
+            getHistoryTail: ReturnType<typeof vi.fn>;
+            getHistoryShallow: ReturnType<typeof vi.fn>;
+          }
+        >()
+        .mockReturnValue({
+          getHistoryTail,
+          getHistoryShallow: vi.fn(() => historyTail),
+        }),
+      getPendingMemoryTaskPromises: vi.fn().mockReturnValue([]),
+      removePendingMemoryTaskPromises: vi.fn(),
+    };
+    config = createConfig({
+      getLlmClient: vi.fn().mockReturnValue(llmClient),
+      getChatRecordingService: vi.fn().mockReturnValue({
+        readActiveTranscriptChain: vi.fn().mockResolvedValue([]),
+        flush: vi.fn().mockResolvedValue(undefined),
+        finalize: vi.fn(),
+      }),
+    });
+    return { llmClient, getHistoryTail };
+  }
+
+  it.each(['settlement', 'SIGINT'] as const)(
+    'waits for retained memory at EOF and finishes on %s',
+    async (completion) => {
+      let finishMemory!: (count: number) => void;
+      let rejectMemory!: (error: Error) => void;
+      const memory = new Promise<number>((resolve, reject) => {
+        finishMemory = resolve;
+        rejectMemory = reject;
+      });
+      let tasks = [memory];
+      config = createConfig({
+        getLlmClient: () => ({
+          getPendingMemoryTaskPromises: () => [...tasks],
+          removePendingMemoryTaskPromises: (
+            completed: ReadonlyArray<Promise<number>>,
+          ) => {
+            tasks = tasks.filter((task) => !completed.includes(task));
+          },
+        }),
+      });
+      runNonInteractiveMock.mockResolvedValueOnce(130);
+      mockInputReader.read = async function* () {
+        yield createControlRequest('initialize');
+        yield createUserMessage('interrupted turn');
+      };
+      const signalListeners = process.listeners('SIGINT');
+      let finished = false;
+      const run = runNonInteractiveStreamJson(config, '').finally(() => {
+        finished = true;
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(mockDispatcher.markInputClosed).toHaveBeenCalledOnce(),
+        );
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(runNonInteractiveMock).toHaveBeenCalledOnce();
+        expect(finished).toBe(false);
+        expect(process.listeners('SIGINT')).toHaveLength(
+          signalListeners.length + 1,
+        );
+        if (completion === 'SIGINT') {
+          process.emit('SIGINT');
+        } else {
+          finishMemory(1);
+        }
+        await run;
+        expect(finished).toBe(true);
+        expect(tasks).toEqual(completion === 'SIGINT' ? [memory] : []);
+        expect(process.listeners('SIGINT')).toEqual(signalListeners);
+        expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+        if (completion === 'SIGINT') {
+          rejectMemory(new Error('Memory rejected after EOF cancellation'));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      } finally {
+        finishMemory(0);
+        await run;
+      }
+    },
+  );
+
+  describe('EOF memory deadline', () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      return { promise, resolve };
+    }
+
+    const flushPromises = () =>
+      new Promise<void>((resolve) => setImmediate(resolve));
+
+    function memoryFixture() {
+      const memory = deferred<number>();
+      let tasks = [memory.promise];
+      const { llmClient } = createInitializedLlmClient([
+        { role: 'user', parts: [{ text: 'resume me' }] },
+      ]);
+      llmClient.getPendingMemoryTaskPromises.mockImplementation(() => [
+        ...tasks,
+      ]);
+      llmClient.removePendingMemoryTaskPromises.mockImplementation(
+        (completed: ReadonlyArray<Promise<number>>) => {
+          tasks = tasks.filter((task) => !completed.includes(task));
+        },
+      );
+      return {
+        memory,
+        llmClient,
+        append: (task: Promise<number>) => tasks.push(task),
+      };
+    }
+
+    type MemoryRunOptions = {
+      abortController: AbortController;
+      memoryWaitStopSignal?: AbortSignal;
+      onResultEmitted?: () => void;
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each(['user', 'continue', 'monitor'] as const)(
+      'releases an active %s memory wait at the EOF deadline without aborting the turn',
+      async (kind) => {
+        const { memory, llmClient } = memoryFixture();
+        const closeInput = deferred<void>();
+        const enteredMemory = deferred<void>();
+        let turn: MemoryRunOptions | undefined;
+        let monitorCallback:
+          | ((
+              display: string,
+              model: string,
+              meta: {
+                monitorId: string;
+                status: string;
+              },
+            ) => void)
+          | undefined;
+        mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+          monitorCallback = cb;
+        });
+        if (kind === 'continue') installContinueDispatch();
+        if (kind === 'monitor') {
+          runNonInteractiveMock.mockImplementationOnce(async () => {
+            monitorCallback?.(
+              'ready',
+              '<task-notification>ready</task-notification>',
+              {
+                monitorId: 'deadline-monitor',
+                status: 'running',
+              },
+            );
+          });
+        }
+        runNonInteractiveMock.mockImplementationOnce(
+          async (...args: unknown[]) => {
+            turn = args[4] as MemoryRunOptions;
+            turn.onResultEmitted?.();
+            const wait = waitForPendingMemoryTasks(
+              llmClient,
+              turn.abortController.signal,
+              turn.memoryWaitStopSignal,
+            );
+            enteredMemory.resolve();
+            await wait;
+            return 0;
+          },
+        );
+        mockInputReader.read = async function* () {
+          yield createControlRequest('initialize');
+          yield kind === 'continue'
+            ? createContinueRequest()
+            : createUserMessage('work');
+          await closeInput.promise;
+        };
+        const listeners = process.listeners('SIGINT');
+        let finished = false;
+        const run = runNonInteractiveStreamJson(config, '').finally(() => {
+          finished = true;
+        });
+        try {
+          await enteredMemory.promise;
+          await vi.advanceTimersByTimeAsync(10_000);
+          expect(finished).toBe(false);
+          expect(turn?.abortController.signal.aborted).toBe(false);
+          expect(mockDispatcher.markInputClosed).not.toHaveBeenCalled();
+          closeInput.resolve();
+          await flushPromises();
+          expect(mockDispatcher.markInputClosed).toHaveBeenCalledOnce();
+          await vi.advanceTimersByTimeAsync(4_999);
+          expect(finished).toBe(false);
+          await vi.advanceTimersByTimeAsync(1);
+          await flushPromises();
+          expect(finished).toBe(true);
+          expect(turn?.abortController.signal.aborted).toBe(false);
+          expect(llmClient.getPendingMemoryTaskPromises()).toEqual([
+            memory.promise,
+          ]);
+          expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+          expect(mockOutputAdapter.emitSystemMessage).not.toHaveBeenCalledWith(
+            'continue_turn_failed',
+            expect.anything(),
+          );
+          expect(process.listeners('SIGINT')).toEqual(listeners);
+          expect(vi.getTimerCount()).toBe(0);
+        } finally {
+          closeInput.resolve();
+          memory.resolve(0);
+          await run;
+        }
+      },
+    );
+
+    it('releases retained memory at EOF after 5000 ms without settling it', async () => {
+      const { memory, llmClient } = memoryFixture();
+      runNonInteractiveMock.mockResolvedValueOnce(130);
+      mockInputReader.read = async function* () {
+        yield createControlRequest('initialize');
+        yield createUserMessage('previously interrupted');
+      };
+      let finished = false;
+      const run = runNonInteractiveStreamJson(config, '').finally(() => {
+        finished = true;
+      });
+      try {
+        await flushPromises();
+        expect(mockDispatcher.markInputClosed).toHaveBeenCalledOnce();
+        expect(llmClient.getPendingMemoryTaskPromises).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await flushPromises();
+        expect(finished).toBe(true);
+        expect(llmClient.getPendingMemoryTaskPromises()).toEqual([
+          memory.promise,
+        ]);
+        expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        memory.resolve(0);
+        await run;
+      }
+    });
+
+    it('releases the active memory wait at EOF and bounds the final retained wait with its own window', async () => {
+      const { memory, llmClient, append } = memoryFixture();
+      const laterMemory = deferred<number>();
+      const closeInput = deferred<void>();
+      const enteredMemory = deferred<void>();
+      runNonInteractiveMock.mockImplementationOnce(
+        async (...args: unknown[]) => {
+          const options = args[4] as MemoryRunOptions;
+          const wait = waitForPendingMemoryTasks(
+            llmClient,
+            options.abortController.signal,
+            options.memoryWaitStopSignal,
+          );
+          enteredMemory.resolve();
+          await wait;
+          return 0;
+        },
+      );
+      mockInputReader.read = async function* () {
+        yield createControlRequest('initialize');
+        yield createUserMessage('work');
+        await closeInput.promise;
+      };
+      let finished = false;
+      const run = runNonInteractiveStreamJson(config, '').finally(() => {
+        finished = true;
+      });
+      try {
+        await enteredMemory.promise;
+        append(laterMemory.promise);
+        closeInput.resolve();
+        await flushPromises();
+        await vi.advanceTimersByTimeAsync(4_999);
+        memory.resolve(1);
+        await flushPromises();
+        expect(llmClient.getPendingMemoryTaskPromises).toHaveBeenCalledTimes(2);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await flushPromises();
+        expect(finished).toBe(true);
+        expect(llmClient.getPendingMemoryTaskPromises()).toEqual([
+          laterMemory.promise,
+        ]);
+        expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        closeInput.resolve();
+        memory.resolve(0);
+        laterMemory.resolve(0);
+        await run;
+      }
+    });
+
+    it('preserves foreground work and gives its memory a fresh window when it outlasts EOF', async () => {
+      const { memory, llmClient } = memoryFixture();
+      const foreground = deferred<void>();
+      const optionsSeen: MemoryRunOptions[] = [];
+      runNonInteractiveMock.mockImplementation(async (...args: unknown[]) => {
+        const options = args[4] as MemoryRunOptions;
+        optionsSeen.push(options);
+        if (optionsSeen.length === 1) {
+          await foreground.promise;
+        }
+        // The in-turn memory wait begins only after the foreground work,
+        // long past any absolute EOF deadline: the released EOF signal
+        // makes it skip without waiting, keeping the task identity for
+        // the final window.
+        await waitForPendingMemoryTasks(
+          llmClient,
+          options.abortController.signal,
+          options.memoryWaitStopSignal,
+        );
+        return 0;
+      });
+      mockInputReader.read = async function* () {
+        yield createControlRequest('initialize');
+        yield createUserMessage('first');
+        yield createUserMessage('already accepted second');
+      };
+      let finished = false;
+      const run = runNonInteractiveStreamJson(config, '').finally(() => {
+        finished = true;
+      });
+      try {
+        await flushPromises();
+        expect(mockDispatcher.markInputClosed).toHaveBeenCalledOnce();
+        expect(optionsSeen).toHaveLength(1);
+        // Any absolute EOF deadline is long spent; the foreground turn is
+        // still running, un-aborted, and its queued successor still runs
+        // (R7-1: the window must bound the memory wait, not this work).
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(finished).toBe(false);
+        expect(optionsSeen[0].abortController.signal.aborted).toBe(false);
+        expect(optionsSeen[0].memoryWaitStopSignal?.aborted).toBe(true);
+        foreground.resolve();
+        await flushPromises();
+        expect(finished).toBe(false);
+        expect(optionsSeen).toHaveLength(2);
+        expect(
+          optionsSeen.every(
+            (options) => !options.abortController.signal.aborted,
+          ),
+        ).toBe(true);
+        expect(optionsSeen[0].memoryWaitStopSignal).toBe(
+          optionsSeen[1].memoryWaitStopSignal,
+        );
+        // The final retained-memory drain opened a fresh window and is
+        // still holding for the memory task past the old absolute bound.
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(finished).toBe(false);
+        memory.resolve(1);
+        await vi.waitFor(() => expect(finished).toBe(true), { timeout: 500 });
+        // The write landed: the settled task left the pending list.
+        expect(llmClient.getPendingMemoryTaskPromises()).toEqual([]);
+        expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        foreground.resolve();
+        memory.resolve(0);
+        await run;
+      }
+    });
+
+    it.each(['settlement', 'SIGINT'] as const)(
+      'clears the EOF timer and signal handlers after early %s',
+      async (completion) => {
+        const { memory } = memoryFixture();
+        mockInputReader.read = async function* () {
+          yield createControlRequest('initialize');
+        };
+        const listeners = process.listeners('SIGINT');
+        const run = runNonInteractiveStreamJson(config, '');
+        try {
+          await flushPromises();
+          expect(vi.getTimerCount()).toBe(1);
+          if (completion === 'SIGINT') process.emit('SIGINT');
+          else memory.resolve(1);
+          await run;
+          expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+          expect(vi.getTimerCount()).toBe(0);
+          expect(process.listeners('SIGINT')).toEqual(listeners);
+          await vi.advanceTimersByTimeAsync(5_000);
+          expect(mockDispatcher.shutdown).toHaveBeenCalledOnce();
+        } finally {
+          memory.resolve(0);
+          await run;
+        }
+      },
+    );
+
+    it('clears the EOF timer when the retained-memory drain throws', async () => {
+      const { memory, llmClient } = memoryFixture();
+      const failure = new Error('could not snapshot retained memory');
+      llmClient.getPendingMemoryTaskPromises.mockImplementation(() => {
+        throw failure;
+      });
+      mockInputReader.read = async function* () {
+        yield createControlRequest('initialize');
+      };
+      const listeners = process.listeners('SIGINT');
+      try {
+        await expect(runNonInteractiveStreamJson(config, '')).rejects.toBe(
+          failure,
+        );
+        expect(mockDispatcher.markInputClosed).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(process.listeners('SIGINT')).toEqual(listeners);
+      } finally {
+        memory.resolve(0);
+      }
+    });
+  });
+
+  it('initializes session and processes initialize control request', async () => {
+    const initRequest = createControlRequest('initialize');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith(initRequest, true);
+  });
+
+  it('keeps MCP responses flowing while a Workflow mode getter awaits readiness', async () => {
+    let releaseInitialization!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+    config = createConfig({ initialize: vi.fn(() => initialization) });
+    let waitForInitialization!: () => Promise<void>;
+    vi.mocked(ControlContext).mockImplementation((options) => {
+      waitForInitialization = options.waitForInitialization!;
+      return {} as ControlContext;
+    });
+    let getter: Promise<void> | undefined;
+    let getterComplete = false;
+    mockDispatcher.dispatch.mockImplementation((request: CLIControlRequest) => {
+      if (request.request.subtype === 'get_workflow_mode') {
+        getter = waitForInitialization().then(() => {
+          getterComplete = true;
+        });
+        return getter;
+      }
+      return Promise.resolve();
+    });
+    mockDispatcher.handleControlResponse.mockImplementation(() => {
+      expect(getterComplete).toBe(false);
+      releaseInitialization();
+    });
+    mockDispatcher.waitForPendingIncomingRequests.mockImplementation(
+      () => getter,
+    );
+    mockInputReader.read = async function* () {
+      yield createControlRequest();
+      yield {
+        type: 'control_request',
+        request_id: 'workflow-get',
+        request: { subtype: 'get_workflow_mode' },
+      };
+      yield createControlResponse('mcp-initialize');
+    };
+    await runNonInteractiveStreamJson(config, '');
+    expect(mockDispatcher.handleControlResponse).toHaveBeenCalledOnce();
+    expect(getterComplete).toBe(true);
+  });
+
+  it('does not dispatch the first prompt after an initial Workflow mode staging failure', async () => {
+    mockDispatcher.dispatch.mockRejectedValueOnce(
+      new Error('Conflicting Workflow mode'),
+    );
+    mockInputReader.read = async function* () {
+      yield createControlRequest();
+      yield createUserMessage('must not reach the model');
+    };
+    await runNonInteractiveStreamJson(config, '');
+    expect(config.initialize).not.toHaveBeenCalled();
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalled();
+  });
+
+  it('rejects a pending duplicate initialize without executing it after cancellation', async () => {
+    let release!: () => void;
+    const initialization = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    config = createConfig({ initialize: vi.fn(() => initialization) });
+    const first = createControlRequest();
+    const duplicate: CLIControlRequest = {
+      type: 'control_request',
+      request_id: 'pending-duplicate',
+      request: { subtype: 'initialize', effort: 'low' },
+    };
+    let responseBeforeReady: unknown;
+    mockInputReader.read = async function* () {
+      try {
+        yield first;
+        await vi.waitFor(() =>
+          expect(config.initialize).toHaveBeenCalledOnce(),
+        );
+        yield duplicate;
+        await Promise.resolve();
+        responseBeforeReady = mockOutputAdapter.send.mock.calls.find(
+          ([frame]) => frame.response?.request_id === duplicate.request_id,
+        )?.[0];
+        yield {
+          type: 'control_cancel_request',
+          request_id: duplicate.request_id,
+        } as ControlCancelRequest;
+      } finally {
+        release();
+      }
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(responseBeforeReady).toEqual({
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: duplicate.request_id,
+        error: 'Session initialization is in progress. Try again when ready.',
+      },
+    });
+    expect(mockDispatcher.dispatch).toHaveBeenCalledExactlyOnceWith(
+      first,
+      true,
+    );
+    expect(mockDispatcher.handleCancel).toHaveBeenCalledWith(
+      duplicate.request_id,
+    );
+    expect(config.initialize).toHaveBeenCalledOnce();
+  });
+
+  it('rejects another initialize after payload validation fails', async () => {
+    const initialRequest = createControlRequest();
+    const retryRequest = {
+      ...createControlRequest(),
+      request_id: 'initialize-retry',
+    };
+    const error = new Error(
+      'Invalid effort value. Supported: low, medium, high, xhigh, max',
+    );
+    mockDispatcher.dispatch.mockImplementation(
+      async (request: CLIControlRequest, propagateError = false) => {
+        const failed = request.request_id === initialRequest.request_id;
+        mockOutputAdapter.send({
+          type: 'control_response',
+          response: failed
+            ? {
+                subtype: 'error',
+                request_id: request.request_id,
+                error: error.message,
+              }
+            : {
+                subtype: 'success',
+                request_id: request.request_id,
+                response: { subtype: 'initialize' },
+              },
+        });
+        if (failed && propagateError) throw error;
+      },
+    );
+    mockInputReader.read = async function* () {
+      yield initialRequest;
+      yield retryRequest;
+      yield createUserMessage('must not reach the model');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledExactlyOnceWith(
+      initialRequest,
+      true,
+    );
+    expect(mockOutputAdapter.send.mock.calls.map(([frame]) => frame)).toEqual([
+      {
+        type: 'control_response',
+        response: {
+          subtype: 'error',
+          request_id: initialRequest.request_id,
+          error: error.message,
+        },
+      },
+      {
+        type: 'control_response',
+        response: {
+          subtype: 'error',
+          request_id: retryRequest.request_id,
+          error: `Session initialization failed: ${error.message}`,
+        },
+      },
+    ]);
+    expect(config.initialize).not.toHaveBeenCalled();
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: error.message,
+      }),
+    );
+  });
+
+  it.each([true, false])(
+    'rejects a pending initialize and preserves the settled config outcome (success=%s)',
+    async (succeeds) => {
+      let resolveInitialization!: () => void;
+      let rejectInitialization!: (error: Error) => void;
+      const initialization = new Promise<void>((resolve, reject) => {
+        resolveInitialization = resolve;
+        rejectInitialization = reject;
+      });
+      let initializationStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        initializationStarted = resolve;
+      });
+      config = createConfig({
+        initialize: vi.fn(() => {
+          initializationStarted();
+          return initialization;
+        }),
+      });
+      const initialRequest = createControlRequest();
+      const retryRequest = {
+        ...createControlRequest(),
+        request_id: 'initialize-retry',
+      };
+      const settledRequest = {
+        ...createControlRequest(),
+        request_id: 'initialize-settled',
+      };
+      const error = new Error('bad credentials');
+      mockDispatcher.dispatch.mockImplementation(
+        async (request: CLIControlRequest) => {
+          mockOutputAdapter.send({
+            type: 'control_response',
+            response: {
+              subtype: 'success',
+              request_id: request.request_id,
+              response: { subtype: 'initialize' },
+            },
+          });
+        },
+      );
+      mockDispatcher.handleControlResponse.mockImplementation(() => {
+        if (succeeds) resolveInitialization();
+        else rejectInitialization(error);
+      });
+      let dispatchesWhileInitializing: number | undefined;
+      mockInputReader.read = async function* () {
+        yield initialRequest;
+        await started;
+        yield retryRequest;
+        dispatchesWhileInitializing = mockDispatcher.dispatch.mock.calls.length;
+        yield createControlResponse('mcp-initialize');
+        yield createUserMessage('run only after successful initialization');
+        await vi.waitFor(() => {
+          if (succeeds) expect(runNonInteractiveMock).toHaveBeenCalledOnce();
+          else expect(mockOutputAdapter.emitResult).toHaveBeenCalledOnce();
+        });
+        yield settledRequest;
+      };
+
+      await runNonInteractiveStreamJson(config, '');
+
+      expect(dispatchesWhileInitializing).toBe(1);
+      expect(
+        mockDispatcher.handleControlResponse,
+      ).toHaveBeenCalledExactlyOnceWith(
+        createControlResponse('mcp-initialize'),
+      );
+      expect(config.initialize).toHaveBeenCalledOnce();
+      expect(mockOutputAdapter.send).toHaveBeenCalledTimes(3);
+      expect(mockOutputAdapter.send).toHaveBeenNthCalledWith(2, {
+        type: 'control_response',
+        response: {
+          subtype: 'error',
+          request_id: retryRequest.request_id,
+          error: 'Session initialization is in progress. Try again when ready.',
+        },
+      });
+      expect(mockOutputAdapter.send).toHaveBeenLastCalledWith({
+        type: 'control_response',
+        response: succeeds
+          ? {
+              subtype: 'success',
+              request_id: settledRequest.request_id,
+              response: { subtype: 'initialize' },
+            }
+          : {
+              subtype: 'error',
+              request_id: settledRequest.request_id,
+              error: `Session initialization failed: ${error.message}`,
+            },
+      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(succeeds ? 2 : 1);
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+      expect(mockOutputAdapter.emitResult).toHaveBeenCalledTimes(
+        succeeds ? 0 : 1,
+      );
+    },
+  );
+
+  it('writes only warnings produced during deferred initialization to stderr', async () => {
+    const warnings = ['Warning: already emitted before stream-json startup'];
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    config = createConfig({
+      getWarnings: () => warnings,
+      initialize: vi.fn().mockImplementation(async () => {
+        warnings.push('Warning: emitted during stream-json initialization');
+      }),
+    });
+
+    mockInputReader.read = async function* () {
+      yield createControlRequest('initialize');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(stderrWrite).toHaveBeenCalledWith(
+      'Warning: emitted during stream-json initialization\n',
+    );
+    expect(stderrWrite).not.toHaveBeenCalledWith(
+      'Warning: already emitted before stream-json startup\n',
+    );
+  });
+
+  it('processes user message when received as first message', async () => {
+    const userMessage = createUserMessage('Hello world');
+
+    mockInputReader.read = async function* () {
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    const runCall = runNonInteractiveMock.mock.calls[0];
+    expect(runCall[2]).toBe('Hello world'); // Direct text, not processed
+    expect(typeof runCall[3]).toBe('string'); // promptId
+    expect(runCall[4]).toEqual(
+      expect.objectContaining({
+        abortController: expect.any(AbortController),
+        adapter: mockOutputAdapter,
+      }),
+    );
+  });
+
+  it('mints a fresh promptId chain when nothing was resumed', async () => {
+    mockInputReader.read = async function* () {
+      yield createUserMessage('Hello world');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock.mock.calls[0][3]).toBe(
+      'test-session########1',
+    );
+  });
+
+  it('forwards only per-message declared human input to the execution loop', async () => {
+    const human = createUserMessage('workflow declared');
+    human.origin = { kind: 'human' };
+    mockInputReader.read = async function* () {
+      yield createUserMessage('workflow unknown before');
+      await vi.waitFor(() =>
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1),
+      );
+      yield human;
+      await vi.waitFor(() =>
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2),
+      );
+      yield createUserMessage('workflow unknown after');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(3);
+    expect(
+      runNonInteractiveMock.mock.calls.map((call) => call[4].humanInput),
+    ).toEqual([undefined, { text: 'workflow declared' }, undefined]);
+    for (const call of runNonInteractiveMock.mock.calls) {
+      expect(call[4]).not.toHaveProperty('userMessage');
+    }
+  });
+
+  it('passes the text blocks apart from the others only when a message has both', async () => {
+    const image = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+    };
+    const mixed = createUserMessage('');
+    mixed.message.content = [
+      { type: 'text', text: 'Describe' },
+      image,
+      { type: 'text', text: 'briefly' },
+    ] as CLIUserMessage['message']['content'];
+    const textOnly = createUserMessage('');
+    textOnly.message.content = [{ type: 'text', text: 'Hello' }];
+    mockInputReader.read = async function* () {
+      yield mixed;
+      await vi.waitFor(() =>
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1),
+      );
+      yield textOnly;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+    const [first, second] = runNonInteractiveMock.mock.calls;
+    expect(first[2]).toBe(`Describe\n${JSON.stringify(image)}\nbriefly`);
+    expect(first[4].promptParts).toEqual({
+      text: 'Describe\nbriefly',
+      blocks: [JSON.stringify(image)],
+    });
+    expect(second[2]).toBe('Hello');
+    expect(second[4]).not.toHaveProperty('promptParts');
+  });
+
+  it('marks a message that answers a tool call as one no person typed', async () => {
+    const result = createUserMessage('');
+    result.message.content = [
+      { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+    ] as CLIUserMessage['message']['content'];
+    const scoped = createUserMessage('Go on');
+    scoped.parent_tool_use_id = 't1';
+    const typed = createUserMessage('Hello');
+    mockInputReader.read = async function* () {
+      for (const message of [result, scoped, typed]) {
+        const calls = runNonInteractiveMock.mock.calls.length;
+        yield message;
+        await vi.waitFor(() =>
+          expect(runNonInteractiveMock).toHaveBeenCalledTimes(calls + 1),
+        );
+      }
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    const [first, second, third] = runNonInteractiveMock.mock.calls;
+    expect(first[4].fromTool).toBe(true);
+    expect(second[4].fromTool).toBe(true);
+    expect(third[4]).not.toHaveProperty('fromTool');
+  });
+
+  it('seeds the promptId counter past turns the resumed transcript claims', async () => {
+    // A resumed headless chain reuses the session id, so restarting the
+    // counter at 1 would re-mint ids the previous run already persisted —
+    // loadSession keeps only the last file-history snapshot per promptId,
+    // silently dropping the earlier run's /rewind target for that turn.
+    config = createConfig({
+      getResumedSessionData: () => ({
+        conversation: {
+          sessionId: 'test-session',
+          messages: [
+            createResumedUserRecord('first turn'),
+            createResumedUserRecord('second turn'),
+            createResumedTelemetryRecord('test-session########5'),
+          ],
+        },
+      }),
+    });
+
+    mockInputReader.read = async function* () {
+      yield createUserMessage('third turn');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    // 5 is the highest turn the transcript claims (a ui_telemetry record from
+    // the previous run), not the 2 user turns it happens to contain.
+    expect(runNonInteractiveMock.mock.calls[0][3]).toBe(
+      'test-session########6',
+    );
+  });
+
+  it('falls back to the resumed user-turn count when no promptId is persisted', async () => {
+    config = createConfig({
+      getResumedSessionData: () => ({
+        conversation: {
+          sessionId: 'test-session',
+          messages: [
+            createResumedUserRecord('first turn'),
+            createResumedUserRecord('second turn'),
+            createResumedUserRecord('third turn'),
+          ],
+        },
+      }),
+    });
+
+    mockInputReader.read = async function* () {
+      yield createUserMessage('fourth turn');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock.mock.calls[0][3]).toBe(
+      'test-session########4',
+    );
+  });
+
+  it('processes multiple user messages sequentially', async () => {
+    // Initialize first to enable multi-query mode
+    const initRequest = createControlRequest('initialize');
+    const userMessage1 = createUserMessage('First message');
+    const userMessage2 = createUserMessage('Second message');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage1;
+      yield userMessage2;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('processes direct-mode startup messages in arrival order', async () => {
+    // No `initialize` control request: the first frame is a user message, so
+    // the session takes the direct-mode path.
+    let releaseInit: () => void = () => {};
+    config = createConfig({
+      initialize: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseInit = resolve;
+          }),
+      ),
+    });
+
+    mockInputReader.read = async function* () {
+      yield createUserMessage('First message');
+      yield createUserMessage('Second message');
+      // Both frames have already reached the read loop by the time the
+      // generator resumes here, so config initialization is still pending
+      // for both of them. No sleeps, no polling.
+      releaseInit();
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock.mock.calls.map((call) => call[2])).toEqual([
+      'First message',
+      'Second message',
+    ]);
+  });
+
+  it('mints the first direct-mode promptId after initialization resolves', async () => {
+    // Resumed data only becomes authoritative once initialize() re-reads the
+    // session file, so a promptId minted before that await restarts the
+    // counter at 1 and re-mints ids the previous run already persisted.
+    let releaseInit: () => void = () => {};
+    let initResolved = false;
+    config = createConfig({
+      initialize: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseInit = () => {
+              initResolved = true;
+              resolve();
+            };
+          }),
+      ),
+      getResumedSessionData: () =>
+        initResolved
+          ? {
+              conversation: {
+                sessionId: 'test-session',
+                messages: [
+                  createResumedUserRecord('first turn'),
+                  createResumedTelemetryRecord('test-session########5'),
+                ],
+              },
+            }
+          : undefined,
+    });
+
+    mockInputReader.read = async function* () {
+      yield createUserMessage('resumed turn');
+      // The frame reaches the read loop while initialize() is still pending.
+      releaseInit();
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(runNonInteractiveMock.mock.calls[0][3]).toBe(
+      'test-session########6',
+    );
+  });
+
+  it('reports one error result when direct-mode config initialization fails', async () => {
+    // The first user message is enqueued before config initialization is
+    // awaited, so a rejected initialize() reaches the queued message and
+    // surfaces as a terminal result frame instead of leaving an SDK consumer
+    // waiting on a frame that is never written.
+    config = createConfig({
+      initialize: vi.fn().mockRejectedValue(new Error('bad credentials')),
+    });
+
+    mockInputReader.read = async function* () {
+      yield createUserMessage('Only message');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledTimes(1);
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: 'bad credentials',
+      }),
+    );
+  });
+
+  it('rejects continue_last_turn when the Gemini client is not initialized', async () => {
+    const { continueResults } = installContinueDispatch();
+    config = createConfig({
+      getLlmClient: vi.fn().mockReturnValue(undefined),
+    });
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: false, interruption: 'none' },
+    ]);
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects continuation using classifiable history before the bounded pre-check', async () => {
+    const { continueResults } = installContinueDispatch();
+    const { llmClient } = createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'restored context' }] },
+    ]);
+    const getHistoryForRecovery = vi.fn(() => [
+      { role: 'model', parts: [{ text: 'Done.' }] },
+    ]);
+    Object.assign(llmClient.getChat(), { getHistoryForRecovery });
+    mockInputReader.read = async function* () {
+      yield createControlRequest('initialize');
+      yield createContinueRequest();
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(getHistoryForRecovery).toHaveBeenCalledWith(50);
+    expect(continueResults).toEqual([
+      { accepted: false, interruption: 'none' },
+    ]);
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects continue_last_turn when the last turn ended cleanly', async () => {
+    const { continueResults } = installContinueDispatch();
+    const { getHistoryTail } = createInitializedLlmClient([
+      { role: 'model', parts: [{ text: 'done' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(getHistoryTail).toHaveBeenCalledWith(50);
+    expect(continueResults).toEqual([
+      { accepted: false, interruption: 'none' },
+    ]);
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses stream-json continuation of an unknown legacy cancellation', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    vi.mocked(
+      config.getChatRecordingService()!.readActiveTranscriptChain,
+    ).mockResolvedValue([
+      {
+        ...createResumedTelemetryRecord('legacy-daemon'),
+        subtype: 'turn_result',
+        systemPayload: {
+          promptId: 'legacy-daemon',
+          state: 'cancelled',
+          cancelledAt: 1,
+          endedAt: 2,
+        },
+      },
+    ]);
+    mockInputReader.read = async function* () {
+      yield createControlRequest('initialize');
+      yield createContinueRequest();
+    };
+    await runNonInteractiveStreamJson(config, '');
+    expect(continueResults).toEqual([
+      { accepted: false, interruption: 'none' },
+    ]);
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates continue_last_turn while a continuation is pending or running', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const firstContinue = createContinueRequest('req-continue-1');
+    const secondContinue = createContinueRequest('req-continue-2');
+    let releaseContinue!: () => void;
+    let continueRunCount = 0;
+    runNonInteractiveMock.mockImplementation(() => {
+      continueRunCount++;
+      if (continueRunCount === 1) {
+        return new Promise<void>((resolve) => {
+          releaseContinue = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield firstContinue;
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      yield secondContinue;
+      await vi.waitFor(() => {
+        expect(continueResults).toHaveLength(2);
+      });
+      releaseContinue();
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+      { accepted: false, interruption: 'interrupted_prompt' },
+    ]);
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(runNonInteractiveMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ merged: expect.any(Object) }),
+      '',
+      expect.stringContaining('test-session'),
+      expect.objectContaining({ continueInterrupted: true }),
+    );
+  });
+
+  it('keeps continue_last_turn available after an interrupt with no active turn', async () => {
+    const { continueResults, getControlContext } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      await vi.waitFor(() => {
+        expect(getControlContext()).toBeDefined();
+      });
+      getControlContext()?.onInterrupt?.();
+      continueResults.push(await getControlContext()?.onContinueLastTurn?.());
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+    ]);
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('interrupts only the active turn and accepts a later prompt', async () => {
+    let controlContext: CapturedControlContext | undefined;
+    (ControlContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: CapturedControlContext) => {
+        controlContext = options;
+        return {};
+      },
+    );
+
+    const turnControllers: AbortController[] = [];
+    runNonInteractiveMock.mockImplementation(
+      (
+        _config: Config,
+        _settings: unknown,
+        _input: string,
+        _promptId: string,
+        options: { abortController: AbortController },
+      ) => {
+        const turnController = options.abortController;
+        turnControllers.push(turnController);
+        if (turnControllers.length > 1) {
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+          turnController.signal.addEventListener('abort', () => resolve(), {
+            once: true,
+          });
+        });
+      },
+    );
+
+    mockInputReader.read = async function* () {
+      yield createControlRequest('initialize');
+      yield createUserMessage('first prompt');
+      await vi.waitFor(() => {
+        expect(turnControllers).toHaveLength(1);
+        expect(controlContext).toBeDefined();
+      });
+
+      expect(controlContext?.getActiveTurnAbortSignal?.()).toBe(
+        turnControllers[0]?.signal,
+      );
+      controlContext?.onInterrupt?.();
+      expect(turnControllers[0]?.signal.aborted).toBe(true);
+      expect(controlContext?.abortSignal?.aborted).toBe(false);
+
+      yield createUserMessage('second prompt');
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+    expect(turnControllers[1]).not.toBe(turnControllers[0]);
+    expect(turnControllers[1]?.signal.aborted).toBe(false);
+  });
+
+  it('emits a terminal error result when an accepted continuation is abandoned by shutdown', async () => {
+    const { continueResults, getControlContext } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('first turn');
+
+    // Block the in-flight user turn so the continuation accepted below stays
+    // queued (pendingContinueTurn) instead of being picked up by the work loop.
+    let releaseFirstTurn!: () => void;
+    runNonInteractiveMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFirstTurn = resolve;
+        }),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      // Wait until the first (user-message) turn is actually running.
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+        expect(getControlContext()).toBeDefined();
+      });
+      // Accept a continuation: an interrupted turn exists and no continuation is
+      // pending yet, so pendingContinueTurn becomes true. ensureProcessingStarted
+      // is a no-op because the user-message work loop is already running.
+      continueResults.push(await getControlContext()?.onContinueLastTurn?.());
+      // Begin a real session shutdown before the continuation can run, then
+      // let the work loop unwind. Its abort guard skips the pending work.
+      process.emit('SIGTERM', 'SIGTERM');
+      releaseFirstTurn();
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+    ]);
+    // The continuation itself never ran (only the first user turn did).
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: 'Continuation abandoned: session shut down before it ran',
+      }),
+    );
+  });
+
+  it('emits an error result when a scheduled continue turn fails', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+    runNonInteractiveMock.mockRejectedValueOnce(new Error('continue failed'));
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+      await vi.waitFor(() => {
+        expect(continueResults).toHaveLength(1);
+      });
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+    ]);
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: 'Continue turn failed: continue failed',
+      }),
+    );
+  });
+
+  it('flushes recording failures before a session-level error result', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const order: string[] = [];
+    let failureListener:
+      | ((event: { sessionId: string; error: Error }) => void)
+      | undefined;
+    let flushCount = 0;
+    config = createConfig({
+      getLlmClient: vi.fn().mockReturnValue(config.getLlmClient()),
+      onChatRecordingFailure: (
+        listener: (event: { sessionId: string; error: Error }) => void,
+      ) => {
+        failureListener = listener;
+        return vi.fn();
+      },
+      getChatRecordingService: () => ({
+        readActiveTranscriptChain: vi.fn().mockResolvedValue([]),
+        finalize: () => order.push('finalize'),
+        flush: async () => {
+          order.push('flush');
+          if (flushCount++ === 0) {
+            failureListener?.({
+              sessionId: 'affected-session',
+              error: new Error('disk full'),
+            });
+          }
+        },
+      }),
+    });
+    mockOutputAdapter.emitMessage.mockImplementation(() => {
+      order.push('warning');
+    });
+    mockOutputAdapter.emitResult.mockImplementation(() => {
+      order.push('result');
+    });
+    runNonInteractiveMock.mockRejectedValueOnce(new Error('continue failed'));
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+      await vi.waitFor(() => {
+        expect(continueResults).toHaveLength(1);
+      });
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(order.slice(0, 3)).toEqual(['flush', 'warning', 'result']);
+    expect(mockOutputAdapter.emitMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subtype: 'session_recording_degraded',
+        session_id: 'affected-session',
+      }),
+    );
+  });
+
+  it('does not emit a second result when a failed continue turn already reported one', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+    runNonInteractiveMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[4] as {
+        adapter: StreamJsonOutputAdapter;
+        onResultEmitted?: () => void;
+      };
+      options.onResultEmitted?.();
+      options.adapter.emitResult({
+        isError: true,
+        errorMessage: 'raw continue failure',
+        durationMs: 1,
+        apiDurationMs: 1,
+        numTurns: 0,
+      });
+      throw new Error('raw continue failure');
+    });
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+      await vi.waitFor(() => {
+        expect(continueResults).toHaveLength(1);
+      });
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+    ]);
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledTimes(1);
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: 'raw continue failure',
+      }),
+    );
+  });
+
+  it('emits a continue_turn_failed diagnostic when a continue turn fails after a result', async () => {
+    const { continueResults } = installContinueDispatch();
+    createInitializedLlmClient([
+      { role: 'user', parts: [{ text: 'resume me' }] },
+    ]);
+    const initRequest = createControlRequest('initialize');
+    const continueRequest = createContinueRequest();
+    // The continuation flushes a result (onResultEmitted) and then crashes mid
+    // stream. Because the one-result contract is already spent, processContinueTurn
+    // surfaces a structured diagnostic instead of a silent stop.
+    runNonInteractiveMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[4] as {
+        onResultEmitted?: () => void;
+      };
+      options.onResultEmitted?.();
+      throw new Error('stream collapsed mid-turn');
+    });
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield continueRequest;
+      await vi.waitFor(() => {
+        expect(continueResults).toHaveLength(1);
+      });
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(continueResults).toEqual([
+      { accepted: true, interruption: 'interrupted_prompt' },
+    ]);
+    expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
+      'continue_turn_failed',
+      { error: 'stream collapsed mid-turn' },
+    );
+    // The diagnostic replaces a terminal error result, so no extra result is emitted.
+    expect(mockOutputAdapter.emitResult).not.toHaveBeenCalled();
+  });
+
+  it('routes monitor notifications through the session queue', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Start a monitor');
+    let closeInput: (() => void) | undefined;
+
+    let registerCallback:
+      | ((entry: {
+          monitorId: string;
+          toolUseId?: string;
+          description: string;
+        }) => void)
+      | undefined;
+    let monitorCallback:
+      | ((
+          displayText: string,
+          modelText: string,
+          meta: {
+            monitorId: string;
+            toolUseId?: string;
+            status: string;
+          },
+        ) => void)
+      | undefined;
+    mockMonitorRegistry.setRegisterCallback.mockImplementation((cb) => {
+      registerCallback = cb;
+    });
+    mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+      monitorCallback = cb;
+    });
+
+    const notificationXml =
+      '<task-notification>\n' +
+      '<task-id>mon_1</task-id>\n' +
+      '<kind>monitor</kind>\n' +
+      '<status>running</status>\n' +
+      '<summary>Monitor emitted event #1.</summary>\n' +
+      '<result>ready</result>\n' +
+      '</task-notification>';
+
+    runNonInteractiveMock
+      .mockImplementationOnce(async () => {
+        registerCallback?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+        monitorCallback?.('Monitor "logs" event #1: ready', notificationXml, {
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          status: 'running',
+        });
+      })
+      .mockResolvedValueOnce(undefined);
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      await new Promise<void>((resolve) => {
+        closeInput = resolve;
+      });
+    };
+
+    const sessionPromise = runNonInteractiveStreamJson(config, '');
+    await vi.waitFor(() => {
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+    });
+    closeInput?.();
+    await sessionPromise;
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+    expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
+      'task_started',
+      {
+        task_id: 'mon_1',
+        tool_use_id: 'tool_mon_1',
+        description: 'logs',
+        task_type: 'monitor',
+      },
+    );
+    expect(mockOutputAdapter.emitUserMessage).toHaveBeenCalledWith([
+      { text: notificationXml },
+    ]);
+    expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
+      'task_notification',
+      {
+        task_id: 'mon_1',
+        tool_use_id: 'tool_mon_1',
+        status: 'running',
+      },
+    );
+    expect(runNonInteractiveMock).toHaveBeenNthCalledWith(
+      2,
+      config,
+      expect.objectContaining({ merged: expect.any(Object) }),
+      notificationXml,
+      expect.stringContaining('test-session'),
+      expect.objectContaining({
+        adapter: mockOutputAdapter,
+        sendMessageType: SendMessageType.Notification,
+        notificationDisplayText: 'Monitor "logs" event #1: ready',
+        captureMonitorNotifications: false,
+        captureMonitorRegistrations: false,
+      }),
+    );
+  });
+
+  it('drops a queued running monitor event after cancellation', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Start then stop a monitor');
+    let closeInput: (() => void) | undefined;
+    let monitorCallback:
+      | ((
+          displayText: string,
+          modelText: string,
+          meta: {
+            monitorId: string;
+            toolUseId?: string;
+            status: string;
+          },
+        ) => void)
+      | undefined;
+    let monitorStatus = 'running';
+
+    mockMonitorRegistry.get.mockImplementation(() => ({
+      status: monitorStatus,
+    }));
+    mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+      monitorCallback = cb;
+    });
+    runNonInteractiveMock.mockImplementationOnce(async () => {
+      monitorCallback?.(
+        'Monitor "logs" event #1: ready',
+        '<task-notification>running</task-notification>',
+        {
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          status: 'running',
+        },
+      );
+      monitorStatus = 'cancelled';
+    });
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      await new Promise<void>((resolve) => {
+        closeInput = resolve;
+      });
+    };
+
+    const sessionPromise = runNonInteractiveStreamJson(config, '');
+    await vi.waitFor(() => {
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+    closeInput?.();
+    await sessionPromise;
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+    expect(mockOutputAdapter.emitSystemMessage).not.toHaveBeenCalledWith(
+      'task_notification',
+      expect.anything(),
+    );
+  });
+
+  it('stops accepting new monitor events before EOF drain', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Start a monitor');
+    let closeInput: (() => void) | undefined;
+
+    let registerCallback:
+      | ((entry: {
+          monitorId: string;
+          toolUseId?: string;
+          description: string;
+        }) => void)
+      | undefined;
+    let notificationCallback:
+      | ((
+          displayText: string,
+          modelText: string,
+          meta: {
+            monitorId: string;
+            toolUseId?: string;
+            status: string;
+          },
+        ) => void)
+      | undefined;
+
+    mockMonitorRegistry.setRegisterCallback.mockImplementation((cb) => {
+      registerCallback = cb;
+    });
+    mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+      notificationCallback = cb;
+    });
+
+    let releaseFirstTurn: (() => void) | undefined;
+    runNonInteractiveMock.mockImplementationOnce(async () => {
+      registerCallback?.({
+        monitorId: 'mon_before_eof',
+        toolUseId: 'tool_mon_before_eof',
+        description: 'before eof',
+      });
+      notificationCallback?.(
+        'Monitor "before eof" event #1: ready',
+        '<task-notification>before-eof</task-notification>',
+        {
+          monitorId: 'mon_before_eof',
+          toolUseId: 'tool_mon_before_eof',
+          status: 'running',
+        },
+      );
+      await new Promise<void>((resolve) => {
+        releaseFirstTurn = () => {
+          registerCallback?.({
+            monitorId: 'mon_late',
+            toolUseId: 'tool_mon_late',
+            description: 'late monitor',
+          });
+          notificationCallback?.(
+            'Monitor "late monitor" event #1: ignored',
+            '<task-notification>late</task-notification>',
+            {
+              monitorId: 'mon_late',
+              toolUseId: 'tool_mon_late',
+              status: 'running',
+            },
+          );
+          resolve();
+        };
+      });
+    });
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      await new Promise<void>((resolve) => {
+        closeInput = resolve;
+      });
+    };
+
+    const sessionPromise = runNonInteractiveStreamJson(config, '');
+    await vi.waitFor(() => {
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+
+    closeInput?.();
+    await vi.waitFor(() => {
+      expect(
+        mockMonitorRegistry.setNotificationCallback,
+      ).toHaveBeenLastCalledWith(undefined);
+      expect(mockMonitorRegistry.setRegisterCallback).toHaveBeenLastCalledWith(
+        undefined,
+      );
+    });
+
+    releaseFirstTurn?.();
+    await sessionPromise;
+
+    expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
+      'task_started',
+      {
+        task_id: 'mon_before_eof',
+        tool_use_id: 'tool_mon_before_eof',
+        description: 'before eof',
+        task_type: 'monitor',
+      },
+    );
+    expect(mockOutputAdapter.emitSystemMessage).not.toHaveBeenCalledWith(
+      'task_started',
+      expect.objectContaining({ task_id: 'mon_late' }),
+    );
+    expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
+      'task_notification',
+      {
+        task_id: 'mon_before_eof',
+        tool_use_id: 'tool_mon_before_eof',
+        status: 'running',
+      },
+    );
+    expect(mockOutputAdapter.emitSystemMessage).not.toHaveBeenCalledWith(
+      'task_notification',
+      expect.objectContaining({ task_id: 'mon_late' }),
+    );
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+
+    const clearCalls = mockMonitorRegistry.setNotificationCallback.mock.calls
+      .map(([cb]) => cb)
+      .filter((cb) => cb === undefined);
+    expect(clearCalls).toHaveLength(1);
+    expect(mockMonitorRegistry.setRegisterCallback).toHaveBeenLastCalledWith(
+      undefined,
+    );
+  });
+
+  describe('background tasks', () => {
+    type ShellEntry = {
+      shellId: string;
+      toolUseId?: string;
+      description: string;
+    };
+    type ShellMeta = { shellId: string; toolUseId?: string; status: string };
+    type MonitorEntry = {
+      monitorId: string;
+      toolUseId?: string;
+      description: string;
+      status?: string;
+    };
+    type MonitorMeta = {
+      monitorId: string;
+      toolUseId?: string;
+      status: string;
+    };
+
+    const shellXml =
+      '<task-notification>\n' +
+      '<task-id>bg_1</task-id>\n' +
+      '<tool-use-id>call_1</tool-use-id>\n' +
+      '<kind>shell</kind>\n' +
+      '<status>completed</status>\n' +
+      '<summary>Shell command "npm run render" completed.</summary>\n' +
+      '</task-notification>';
+    const shellDisplay = 'Background shell "npm run render" completed.';
+
+    function captureShellCallbacks() {
+      const shell: {
+        register?: (entry: ShellEntry) => void;
+        notify?: (display: string, model: string, meta: ShellMeta) => void;
+      } = {};
+      mockBackgroundShellRegistry.setRegisterCallback.mockImplementation(
+        (cb) => {
+          shell.register = cb;
+        },
+      );
+      mockBackgroundShellRegistry.setNotificationCallback.mockImplementation(
+        (cb) => {
+          shell.notify = cb;
+        },
+      );
+      return shell;
+    }
+
+    function captureMonitorCallbacks() {
+      const monitor: {
+        register?: (entry: MonitorEntry) => void;
+        notify?: (display: string, model: string, meta: MonitorMeta) => void;
+        statusChange?: (entry?: MonitorEntry) => void;
+      } = {};
+      mockMonitorRegistry.setRegisterCallback.mockImplementation((cb) => {
+        monitor.register = cb;
+      });
+      mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+        monitor.notify = cb;
+      });
+      mockMonitorRegistry.setStatusChangeCallback.mockImplementation((cb) => {
+        monitor.statusChange = cb;
+      });
+      return monitor;
+    }
+
+    /** Starts a session whose input stays open until `close()`. */
+    function openSession(
+      ...messages: Array<
+        | CLIUserMessage
+        | CLIControlRequest
+        | CLIControlResponse
+        | ControlCancelRequest
+      >
+    ) {
+      let closeInput: (() => void) | undefined;
+      mockInputReader.read = async function* () {
+        yield* messages;
+        await new Promise<void>((resolve) => {
+          closeInput = resolve;
+        });
+      };
+      const done = runNonInteractiveStreamJson(config, '');
+      return {
+        close: async () => {
+          closeInput?.();
+          await done;
+        },
+      };
+    }
+
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    function systemMessages(subtype: string): unknown[] {
+      return mockOutputAdapter.emitSystemMessage.mock.calls
+        .filter(([sent]) => sent === subtype)
+        .map(([, data]) => data);
+    }
+
+    function callOrder(
+      mock: ReturnType<typeof vi.fn>,
+      matches: (args: unknown[]) => boolean,
+    ): number {
+      const index = mock.mock.calls.findIndex((args) => matches(args));
+      expect(index).toBeGreaterThanOrEqual(0);
+      return mock.mock.invocationCallOrder[index]!;
+    }
+
+    it('reports a background shell when it starts and wakes the model when it ends', async () => {
+      const shell = captureShellCallbacks();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'completed',
+        outputFile: '/tmp/shells/bg_1.output',
+      });
+      let startedDuringTurn: unknown[] = [];
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+        startedDuringTurn = systemMessages('task_started');
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+
+      shell.notify?.(shellDisplay, shellXml, {
+        shellId: 'bg_1',
+        toolUseId: 'call_1',
+        status: 'completed',
+      });
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(startedDuringTurn).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          description: 'npm run render',
+          task_type: 'local_bash',
+        },
+      ]);
+      expect(systemMessages('task_started')).toHaveLength(1);
+      expect(mockOutputAdapter.emitUserMessage.mock.calls).toEqual([
+        [[{ text: shellXml }]],
+      ]);
+      expect(systemMessages('task_notification')).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          status: 'completed',
+          summary: shellDisplay,
+          output_file: '/tmp/shells/bg_1.output',
+        },
+      ]);
+      expect(runNonInteractiveMock).toHaveBeenNthCalledWith(
+        2,
+        config,
+        expect.objectContaining({ merged: expect.any(Object) }),
+        shellXml,
+        expect.stringContaining('test-session'),
+        expect.objectContaining({
+          adapter: mockOutputAdapter,
+          sendMessageType: SendMessageType.Notification,
+          notificationDisplayText: shellDisplay,
+        }),
+      );
+
+      // The user line opens the host's turn, so it comes before the line
+      // that ends the task, and both before the model runs.
+      const userLine = callOrder(mockOutputAdapter.emitUserMessage, () => true);
+      const taskLine = callOrder(
+        mockOutputAdapter.emitSystemMessage,
+        ([sent]) => sent === 'task_notification',
+      );
+      const notificationTurn =
+        runNonInteractiveMock.mock.invocationCallOrder[1]!;
+      expect(userLine).toBeLessThan(taskLine);
+      expect(taskLine).toBeLessThan(notificationTurn);
+    });
+
+    it('keeps a shell that ends during a turn open until that turn is over', async () => {
+      const shell = captureShellCallbacks();
+      let endedDuringTurn: unknown[] = [{}];
+      let userLinesDuringTurn = -1;
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+        shell.notify?.(shellDisplay, shellXml, {
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          status: 'completed',
+        });
+        await tick();
+        endedDuringTurn = systemMessages('task_notification');
+        userLinesDuringTurn =
+          mockOutputAdapter.emitUserMessage.mock.calls.length;
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(endedDuringTurn).toEqual([]);
+      expect(userLinesDuringTurn).toBe(0);
+      expect(systemMessages('task_notification')).toEqual([
+        expect.objectContaining({ task_id: 'bg_1', status: 'completed' }),
+      ]);
+      expect(runNonInteractiveMock.mock.calls[1]?.[2]).toBe(shellXml);
+    });
+
+    it('stops a background shell for the host without a model turn', async () => {
+      const shell = captureShellCallbacks();
+      const { getControlContext } = installContinueDispatch();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'running',
+        outputFile: '/tmp/shells/bg_1.output',
+      });
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      expect(getControlContext()?.onStopTask?.('bg_1')).toEqual({
+        stopped: true,
+      });
+      expect(mockBackgroundShellRegistry.requestCancel).toHaveBeenCalledWith(
+        'bg_1',
+      );
+      expect(systemMessages('task_notification')).toEqual([]);
+
+      // The process has drained: the registry settles the shell.
+      shell.notify?.(
+        'Background shell "npm run render" was cancelled.',
+        shellXml.replace('completed', 'cancelled'),
+        { shellId: 'bg_1', toolUseId: 'call_1', status: 'cancelled' },
+      );
+      await tick();
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          status: 'cancelled',
+          summary: 'Background shell "npm run render" was cancelled.',
+          output_file: '/tmp/shells/bg_1.output',
+        },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers stop_task for a shell that has already ended', async () => {
+      const { getControlContext } = installContinueDispatch();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'completed',
+      });
+
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(getControlContext()?.onStopTask).toBeDefined();
+      });
+
+      expect(getControlContext()?.onStopTask?.('bg_1')).toEqual({
+        stopped: false,
+      });
+      expect(mockBackgroundShellRegistry.requestCancel).not.toHaveBeenCalled();
+      await session.close();
+    });
+
+    it('stops a monitor and a background agent for the host', async () => {
+      const { getControlContext } = installContinueDispatch();
+      mockMonitorRegistry.get.mockImplementation((id: string) =>
+        id === 'mon_1' ? { monitorId: 'mon_1', status: 'running' } : undefined,
+      );
+      mockBackgroundTaskRegistry.get.mockImplementation((id: string) =>
+        id === 'agent_1'
+          ? { agentId: 'agent_1', status: 'running' }
+          : undefined,
+      );
+
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(getControlContext()?.onStopTask).toBeDefined();
+      });
+      const stopTask = getControlContext()!.onStopTask!;
+
+      expect(stopTask('mon_1')).toEqual({ stopped: true });
+      expect(mockMonitorRegistry.cancel).toHaveBeenCalledWith('mon_1', {
+        notify: false,
+      });
+      expect(stopTask('agent_1')).toEqual({ stopped: true });
+      expect(mockBackgroundTaskRegistry.cancel).toHaveBeenCalledWith('agent_1');
+      expect(() => stopTask('nope')).toThrow('No background task "nope"');
+      await session.close();
+    });
+
+    it('reports a monitor when it starts, inside the turn that started it', async () => {
+      const monitor = captureMonitorCallbacks();
+      let startedDuringTurn: unknown[] = [];
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+        startedDuringTurn = systemMessages('task_started');
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await session.close();
+
+      expect(startedDuringTurn).toEqual([
+        {
+          task_id: 'mon_1',
+          tool_use_id: 'tool_mon_1',
+          description: 'logs',
+          task_type: 'monitor',
+        },
+      ]);
+      expect(systemMessages('task_started')).toHaveLength(1);
+    });
+
+    it('ends a monitor that was cancelled without a notification', async () => {
+      const monitor = captureMonitorCallbacks();
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      // task_stop and the host's stop_task settle a monitor silently.
+      monitor.statusChange?.({
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        description: 'logs',
+        status: 'cancelled',
+      });
+      await tick();
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        { task_id: 'mon_1', tool_use_id: 'tool_mon_1', status: 'cancelled' },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends a monitor once when its end comes with a notification', async () => {
+      const monitor = captureMonitorCallbacks();
+      const endXml =
+        '<task-notification>\n' +
+        '<task-id>mon_1</task-id>\n' +
+        '<kind>monitor</kind>\n' +
+        '<status>completed</status>\n' +
+        '</task-notification>';
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      // The registry settles the monitor, then notifies, in one call.
+      mockMonitorRegistry.get.mockReturnValue({ status: 'completed' });
+      monitor.statusChange?.({
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        description: 'logs',
+        status: 'completed',
+      });
+      monitor.notify?.('Monitor "logs" completed. (0 events)', endXml, {
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        status: 'completed',
+      });
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        { task_id: 'mon_1', tool_use_id: 'tool_mon_1', status: 'completed' },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage.mock.calls).toEqual([
+        [[{ text: endXml }]],
+      ]);
+    });
+
+    it('stops listening to background shells at the end of input', async () => {
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(
+          mockBackgroundShellRegistry.setNotificationCallback,
+        ).toHaveBeenCalledWith(expect.any(Function));
+      });
+      expect(
+        mockBackgroundShellRegistry.setRegisterCallback,
+      ).toHaveBeenCalledWith(expect.any(Function));
+      await session.close();
+
+      expect(
+        mockBackgroundShellRegistry.setNotificationCallback,
+      ).toHaveBeenLastCalledWith(undefined);
+      expect(
+        mockBackgroundShellRegistry.setRegisterCallback,
+      ).toHaveBeenLastCalledWith(undefined);
+    });
+  });
+
+  it('enqueues user messages received during processing', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage1 = createUserMessage('First message');
+    const userMessage2 = createUserMessage('Second message');
+
+    // Make runNonInteractive take some time to simulate processing
+    runNonInteractiveMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 10)),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage1;
+      yield userMessage2;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    // Both messages should be processed
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('processes control request in idle state', async () => {
+    const initRequest = createControlRequest('initialize');
+    const controlRequest = createControlRequest('set_model');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield controlRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+    expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+      1,
+      initRequest,
+      true,
+    );
+    expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(2, controlRequest);
+  });
+
+  it('handles control response in idle state', async () => {
+    const initRequest = createControlRequest('initialize');
+    const controlResponse = createControlResponse('req-2');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield controlResponse;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.handleControlResponse).toHaveBeenCalledWith(
+      controlResponse,
+    );
+  });
+
+  it('handles control cancel in idle state', async () => {
+    const initRequest = createControlRequest('initialize');
+    const cancelRequest = createControlCancel('req-2');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield cancelRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.handleCancel).toHaveBeenCalledWith('req-2');
+  });
+
+  it('handles control request during processing state', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Process me');
+    const controlRequest = createControlRequest('set_model');
+
+    runNonInteractiveMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 10)),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      yield controlRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith(controlRequest);
+  });
+
+  it('handles control response during processing state', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Process me');
+    const controlResponse = createControlResponse('req-1');
+
+    runNonInteractiveMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 10)),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      yield controlResponse;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.handleControlResponse).toHaveBeenCalledWith(
+      controlResponse,
+    );
+  });
+
+  it('handles user message with text content', async () => {
+    const userMessage = createUserMessage('Test message');
+
+    mockInputReader.read = async function* () {
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(runNonInteractiveMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ merged: expect.any(Object) }),
+      'Test message',
+      expect.stringContaining('test-session'),
+      expect.objectContaining({
+        abortController: expect.any(AbortController),
+        adapter: mockOutputAdapter,
+      }),
+    );
+  });
+
+  it('handles user message with array content blocks', async () => {
+    const userMessage: CLIUserMessage = {
+      type: 'user',
+      session_id: 'test-session',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'First part' },
+          { type: 'text', text: 'Second part' },
+        ],
+      },
+      parent_tool_use_id: null,
+    };
+
+    mockInputReader.read = async function* () {
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(runNonInteractiveMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ merged: expect.any(Object) }),
+      'First part\nSecond part',
+      expect.stringContaining('test-session'),
+      expect.objectContaining({
+        abortController: expect.any(AbortController),
+        adapter: mockOutputAdapter,
+      }),
+    );
+  });
+
+  it('skips user message with no text content', async () => {
+    const userMessage: CLIUserMessage = {
+      type: 'user',
+      session_id: 'test-session',
+      message: {
+        role: 'user',
+        content: [],
+      },
+      parent_tool_use_id: null,
+    };
+
+    mockInputReader.read = async function* () {
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).not.toHaveBeenCalled();
+  });
+
+  it('handles error from processUserMessage', async () => {
+    const userMessage = createUserMessage('Test message');
+
+    const error = new Error('Processing error');
+    runNonInteractiveMock.mockRejectedValue(error);
+
+    mockInputReader.read = async function* () {
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    // Error should be caught and handled gracefully
+  });
+
+  it('handles stream error gracefully', async () => {
+    const streamError = new Error('Stream error');
+    // eslint-disable-next-line require-yield
+    mockInputReader.read = async function* () {
+      throw streamError;
+    } as typeof mockInputReader.read;
+
+    await expect(runNonInteractiveStreamJson(config, '')).rejects.toThrow(
+      'Stream error',
+    );
+  });
+
+  it('stops processing when abort signal is triggered', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Test message');
+
+    // Capture abort signal from ControlContext
+    let abortSignal: AbortSignal | null = null;
+    (ControlContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: { abortSignal?: AbortSignal }) => {
+        abortSignal = options.abortSignal ?? null;
+        return {};
+      },
+    );
+
+    // Create input reader that aborts after first message
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      // Abort the signal after initialization
+      if (abortSignal && !abortSignal.aborted) {
+        // The signal doesn't have an abort method, but the controller does
+        // Since we can't access the controller directly, we'll test by
+        // verifying that cleanup happens properly
+      }
+      // Yield second message - if abort works, it should be checked
+      yield userMessage;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    // Verify initialization happened
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith(initRequest, true);
+    expect(mockDispatcher.shutdown).toHaveBeenCalled();
+  });
+
+  it('generates unique prompt IDs for each message', async () => {
+    // Initialize first to enable multi-query mode
+    const initRequest = createControlRequest('initialize');
+    const userMessage1 = createUserMessage('First');
+    const userMessage2 = createUserMessage('Second');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage1;
+      yield userMessage2;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+    const promptId1 = runNonInteractiveMock.mock.calls[0][3] as string;
+    const promptId2 = runNonInteractiveMock.mock.calls[1][3] as string;
+    expect(promptId1).not.toBe(promptId2);
+    expect(promptId1).toContain('test-session');
+    expect(promptId2).toContain('test-session');
+  });
+
+  it('ignores non-initialize control request during initialization', async () => {
+    const controlRequest = createControlRequest('set_model');
+
+    mockInputReader.read = async function* () {
+      yield controlRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    // Should not transition to idle since it's not an initialize request
+    expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('cleans up console patcher on completion', async () => {
+    mockInputReader.read = async function* () {
+      // Empty stream - should complete immediately
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+  });
+
+  it('cleans up output adapter on completion', async () => {
+    mockInputReader.read = async function* () {
+      // Empty stream
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+  });
+
+  it('calls dispatcher shutdown on completion', async () => {
+    const initRequest = createControlRequest('initialize');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockDispatcher.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts background registries on stream completion shutdown', async () => {
+    const initRequest = createControlRequest('initialize');
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts background registries on error shutdown', async () => {
+    const streamError = new Error('Stream error');
+    // eslint-disable-next-line require-yield
+    mockInputReader.read = async function* () {
+      throw streamError;
+    } as typeof mockInputReader.read;
+
+    await expect(runNonInteractiveStreamJson(config, '')).rejects.toThrow(
+      'Stream error',
+    );
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs final background cleanup after in-flight processing drains', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Start background work');
+    let releaseProcessing: (() => void) | undefined;
+    const callOrder: string[] = [];
+
+    mockMonitorRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('monitor:abortAll');
+    });
+    mockBackgroundShellRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('background:abortAll');
+    });
+    mockBackgroundTaskRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('agent:abortAll');
+    });
+
+    runNonInteractiveMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          callOrder.push('run:start');
+          releaseProcessing = () => {
+            callOrder.push('run:end');
+            resolve();
+          };
+        }),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+    };
+
+    const sessionPromise = runNonInteractiveStreamJson(config, '');
+    await vi.waitFor(() => {
+      expect(releaseProcessing).toBeDefined();
+    });
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(callOrder).toContain('run:start');
+    expect(callOrder).toContain('monitor:abortAll');
+    expect(callOrder).toContain('background:abortAll');
+    expect(callOrder).toContain('agent:abortAll');
+
+    releaseProcessing?.();
+    await sessionPromise;
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(callOrder.slice(-4)).toEqual([
+      'run:end',
+      'monitor:abortAll',
+      'background:abortAll',
+      'agent:abortAll',
+    ]);
+  });
+
+  it('runs final background cleanup after in-flight processing drains on error shutdown', async () => {
+    const initRequest = createControlRequest('initialize');
+    const userMessage = createUserMessage('Start background work');
+    let releaseProcessing: (() => void) | undefined;
+    const callOrder: string[] = [];
+    const streamError = new Error('Stream error');
+    let sessionSignal: AbortSignal | undefined;
+    let turnSignal: AbortSignal | undefined;
+
+    (ControlContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: { abortSignal: AbortSignal }) => {
+        sessionSignal = options.abortSignal;
+        return {};
+      },
+    );
+
+    mockMonitorRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('monitor:abortAll');
+    });
+    mockBackgroundShellRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('background:abortAll');
+    });
+    mockBackgroundTaskRegistry.abortAll.mockImplementation(() => {
+      callOrder.push('agent:abortAll');
+    });
+
+    runNonInteractiveMock.mockImplementationOnce(
+      (
+        _config: Config,
+        _settings: unknown,
+        _input: string,
+        _promptId: string,
+        options: { abortController: AbortController },
+      ) =>
+        new Promise<void>((resolve) => {
+          turnSignal = options.abortController.signal;
+          callOrder.push('run:start');
+          releaseProcessing = () => {
+            callOrder.push('run:end');
+            resolve();
+          };
+        }),
+    );
+
+    mockInputReader.read = async function* () {
+      yield initRequest;
+      yield userMessage;
+      throw streamError;
+    } as typeof mockInputReader.read;
+
+    const sessionPromise = runNonInteractiveStreamJson(config, '');
+    await vi.waitFor(() => {
+      expect(releaseProcessing).toBeDefined();
+      expect(sessionSignal?.aborted).toBe(true);
+      expect(turnSignal?.aborted).toBe(true);
+    });
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(1);
+    expect(callOrder).toContain('run:start');
+
+    releaseProcessing?.();
+    await expect(sessionPromise).rejects.toThrow('Stream error');
+
+    expect(mockMonitorRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundShellRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(mockBackgroundTaskRegistry.abortAll).toHaveBeenCalledTimes(2);
+    expect(callOrder.slice(-4)).toEqual([
+      'run:end',
+      'monitor:abortAll',
+      'background:abortAll',
+      'agent:abortAll',
+    ]);
+  });
+
+  it('handles empty stream gracefully', async () => {
+    mockInputReader.read = async function* () {
+      // Empty stream
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+  });
+});

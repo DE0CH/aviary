@@ -1,0 +1,235 @@
+import { getComposableWrapper, useGetMatchingSpaceMock } from '@opencloud-eu/web-test-helpers'
+import { mock } from 'vitest-mock-extended'
+import {
+  GraphSharePermission,
+  IncomingShareResource,
+  PersonalSpaceResource,
+  PublicSpaceResource,
+  Resource,
+  ShareSpaceResource,
+  SpaceResource,
+  TrashResource
+} from '@opencloud-eu/web-client'
+import { useCanListShares } from '../../../../src/composables/shares'
+import { useCapabilityStore } from '../../../../src/composables/piniaStores'
+import { useGetMatchingSpace } from '../../../../src/composables/spaces/useGetMatchingSpace'
+import { Identity } from '@opencloud-eu/web-client/graph/generated'
+
+vi.mock('../../../../src/composables/spaces/useGetMatchingSpace')
+
+describe('useCanListShares', () => {
+  describe('canListShares', () => {
+    it('returns true with sharing enabled and sufficient permissions', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<SpaceResource>()
+          const resource = mock<Resource>()
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeTruthy()
+        }
+      })
+    })
+    it('returns false when sharing not enabled', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<SpaceResource>()
+          const resource = mock<Resource>()
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = false
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeFalsy()
+        }
+      })
+    })
+    it('returns false for disabled project spaces', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const resource = mock<SpaceResource>({ driveType: 'project', disabled: true })
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space: undefined, resource })
+          expect(canList).toBeFalsy()
+        }
+      })
+    })
+    it('returns true for enabled project spaces', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const resource = mock<SpaceResource>({ driveType: 'project', disabled: false })
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space: undefined, resource })
+          expect(canList).toBeTruthy()
+        }
+      })
+    })
+    it('returns false in public spaces', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<PublicSpaceResource>({ driveType: 'public' })
+          const resource = mock<Resource>()
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeFalsy()
+        }
+      })
+    })
+    it('returns false in a guest context', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<ShareSpaceResource>({
+            driveType: 'share',
+            graphPermissions: [GraphSharePermission.readPermissions]
+          })
+          const resource = mock<Resource>()
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeFalsy()
+        },
+        isGuest: true
+      })
+    })
+    it('returns false for personal space root resources', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<PersonalSpaceResource>()
+          const resource = mock<Resource>()
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeFalsy()
+        },
+        isPersonalSpaceRoot: true
+      })
+    })
+    it('returns false for trash resources', () => {
+      getWrapper({
+        setup: ({ canListShares }) => {
+          const space = mock<SpaceResource>()
+          const resource = mock<TrashResource>({ ddate: '2021-01-01T00:00:00Z' })
+
+          const capabilityStore = useCapabilityStore()
+          vi.mocked(capabilityStore).sharingApiEnabled = true
+
+          const canList = canListShares({ space, resource })
+          expect(canList).toBeFalsy()
+        }
+      })
+    })
+    describe('incoming share resources', () => {
+      it('returns true with sufficient permissions', () => {
+        getWrapper({
+          setup: ({ canListShares }) => {
+            const space = mock<SpaceResource>()
+            const resource = mock<IncomingShareResource>({
+              sharedWith: [mock<Identity>()],
+              sharePermissions: [GraphSharePermission.readPermissions],
+              outgoing: false
+            })
+
+            const capabilityStore = useCapabilityStore()
+            vi.mocked(capabilityStore).sharingApiEnabled = true
+
+            const canList = canListShares({ space, resource })
+            expect(canList).toBeTruthy()
+          }
+        })
+      })
+      it('returns false with insufficient permissions', () => {
+        getWrapper({
+          setup: ({ canListShares }) => {
+            const space = mock<SpaceResource>()
+            const resource = mock<IncomingShareResource>({
+              sharedWith: [mock<Identity>()],
+              sharePermissions: [],
+              outgoing: false
+            })
+
+            const capabilityStore = useCapabilityStore()
+            vi.mocked(capabilityStore).sharingApiEnabled = true
+
+            const canList = canListShares({ space, resource })
+            expect(canList).toBeFalsy()
+          }
+        })
+      })
+    })
+    describe('share spaces', () => {
+      it('returns true with sufficient permissions', () => {
+        getWrapper({
+          setup: ({ canListShares }) => {
+            const space = mock<ShareSpaceResource>({
+              driveType: 'share',
+              graphPermissions: [GraphSharePermission.readPermissions]
+            })
+            const resource = mock<Resource>()
+
+            const capabilityStore = useCapabilityStore()
+            vi.mocked(capabilityStore).sharingApiEnabled = true
+
+            const canList = canListShares({ space, resource })
+            expect(canList).toBeTruthy()
+          }
+        })
+      })
+      it('returns false with insufficient permissions', () => {
+        getWrapper({
+          setup: ({ canListShares }) => {
+            const space = mock<ShareSpaceResource>({ driveType: 'share', graphPermissions: [] })
+            const resource = mock<Resource>()
+
+            const capabilityStore = useCapabilityStore()
+            vi.mocked(capabilityStore).sharingApiEnabled = true
+
+            const canList = canListShares({ space, resource })
+            expect(canList).toBeFalsy()
+          }
+        })
+      })
+    })
+  })
+})
+
+function getWrapper({
+  setup,
+  isPersonalSpaceRoot = false,
+  isGuest = false
+}: {
+  setup: (instance: ReturnType<typeof useCanListShares>) => void
+  isPersonalSpaceRoot?: boolean
+  isGuest?: boolean
+}) {
+  vi.mocked(useGetMatchingSpace).mockImplementation(() =>
+    useGetMatchingSpaceMock({
+      isPersonalSpaceRoot: () => isPersonalSpaceRoot
+    })
+  )
+
+  return {
+    wrapper: getComposableWrapper(
+      () => {
+        const instance = useCanListShares()
+        setup(instance)
+      },
+      { pluginOptions: { piniaOptions: { authState: { guestContextReady: isGuest } } } }
+    )
+  }
+}

@@ -1,0 +1,34 @@
+<template>
+  <div id="ghost-element" class="z-[var(--z-index-modal)] absolute pt-1 pl-4 bg-transparent">
+    <div class="relative rounded-sm bg-role-surface-container-high">
+      <resource-icon class="p-1" :resource="previewItems[0]" />
+      <div
+        v-if="showSecondLayer"
+        class="-z-10 absolute top-[3px] left-[3px] right-[-3px] bottom-[-3px] rounded-sm bg-role-surface-container-high brightness-82"
+      />
+      <div
+        v-if="showThirdLayer"
+        class="-z-20 absolute top-[6px] left-[6px] right-[-6px] bottom-[-6px] rounded-sm bg-role-surface-container-high brightness-72"
+      />
+    </div>
+    <span
+      class="badge absolute top-[-2px] right-[-8px] p-1 text-sm text-center leading-2 bg-red-600 text-white rounded-4xl box-content min-w-2 h-2"
+      >{{ itemCount }}</span
+    >
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { Resource } from '@opencloud-eu/web-client'
+import ResourceIcon from './ResourceIcon.vue'
+
+const { previewItems } = defineProps<{
+  previewItems: Resource[]
+}>()
+
+const layerCount = computed(() => Math.min(previewItems.length, 3))
+const showSecondLayer = computed(() => layerCount.value > 1)
+const showThirdLayer = computed(() => layerCount.value > 2)
+const itemCount = computed(() => previewItems.length)
+</script>
