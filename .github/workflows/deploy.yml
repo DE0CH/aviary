@@ -1,0 +1,330 @@
+name: deploy
+# A push to main is the deploy (docs/DEPLOY.md; Deyao, 2026-11-19). Each part's workflow ends on main by building its
+# images (once per tag); this run starts when one of them completes and deploys main's head once every part's newest
+# run on it is over and green (aviary-deploy ready: only main's head deploys, so a late run of an older commit never
+# rolls back a newer one). Then, in order, stopping at the first failure:
+#   1. jarvis: Jarvis chat and Jarvis 4's sessions, through DE0CH/jarvis4's git (its cluster takes changes only from git,
+#      jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release, sandbox and gateway)
+#      and k8s/cluster/tenants/chat.yaml (the chat's source commit and image tags), with jarvis4's deploy key; Flux
+#      applies the chat, jarvis4's images.yml the session image. The site check waits until chat.deyaochen.com serves
+#      this app build and pigeon's API answers (an Access service token; no chat turn, Deyao 2026-11-19).
+#   2. yyc: YYC AI on YYC's cluster (yyc-apply, through the Access-gated API, with this run's GitHub OIDC token; the
+#      control nodes trust DE0CH/aviary's deploy.yml in environment yyc-ai), then YYC Drive's edge, the host AMI (a
+#      no-op unless the sandbox image, sandboxd, runsc or the disk changed), the sandbox gateway (gateway.sh setup, a
+#      no-op unless its release changed) and the live checks: one chat turn and the drive (yyc/tests/e2e), the site's
+#      install from Chrome on Android.
+#   3. record: a GitHub Deployment per environment with the tags (pigeon-app's image keeps the builds served).
+# Every 3 h it re-applies main's head to YYC's cluster (reverts drift), without the live checks.
+on:
+  workflow_run:
+    workflows: [ci, app, app-tests, app-android, egress, jarvis, drive, yyc]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "7 */3 * * *"
+  workflow_dispatch:
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  PARTS: ci,app,app-tests,app-android,egress,jarvis,drive,yyc
+jobs:
+  ready:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      go: ${{ steps.r.outputs.go }}
+      sha: ${{ steps.r.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          filter: "blob:none"
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: tools/aviary-deploy}
+      - run: cargo build --locked --release --manifest-path tools/aviary-deploy/Cargo.toml
+      - id: r
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          out=$(tools/aviary-deploy/target/release/aviary-deploy ready "$SHA" "$PARTS")
+          echo "$out"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$out" = go ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+      - name: the tags, and every image there
+        if: steps.r.outputs.go == 'true'
+        env:
+          SHA: ${{ steps.r.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/deploy"
+          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "$SHA" > "$RUNNER_TEMP/deploy/tags.json"
+          tools/aviary-deploy/target/release/aviary-deploy digests "$RUNNER_TEMP/deploy/tags.json" > "$RUNNER_TEMP/deploy/digests.json"
+          cp tools/aviary-deploy/target/release/aviary-deploy "$RUNNER_TEMP/deploy/"
+          cat "$RUNNER_TEMP/deploy/tags.json"
+      - if: steps.r.outputs.go == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: deploy, path: "${{ runner.temp }}/deploy", retention-days: 7}
+
+  jarvis:
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: jarvis   # main only: jarvis4's deploy key, the chat site check's Access token
+    env:
+      SHA: ${{ needs.ready.outputs.sha }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: deploy, path: "${{ runner.temp }}/deploy"}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/jarvis4, path: jarvis4, ssh-key: "${{ secrets.JARVIS4_DEPLOY_KEY }}"}
+      - name: the sessions' release and the chat's commit and tags, in jarvis4
+        working-directory: jarvis4
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/deploy"
+          chmod +x "$d/aviary-deploy"
+          aviary=$(jq -r .pigeon "$d/tags.json")
+          sandbox=$(jq -r '."hermit-sandbox".digest' "$d/digests.json")
+          gateway=$(jq -r '."hermit-jarvis"' "$d/tags.json")
+          jq -n --arg r "aviary-$aviary" --arg s "ghcr.io/de0ch/hermit-sandbox@$sandbox" --arg g "jarvis-$gateway" \
+            '{release: $r, sandbox: $s, gateway: $g}' > session-image/aviary.json
+          f=k8s/cluster/tenants/chat.yaml
+          sed -i -E "s/^(    commit: \")[0-9a-f]{40}(\".*)$/\1$SHA\2/" "$f"
+          grep -q "commit: \"$SHA\"" "$f" || { echo "::error::$f names no source commit to write"; exit 1; }
+          "$d/aviary-deploy" set "$f" "$d/tags.json"
+          git diff --stat
+          if git diff --quiet; then echo "jarvis4 has this deploy already"; exit 0; fi
+          git config user.name "aviary deploy"; git config user.email "deploy@aviary.invalid"
+          git commit -qam "deploy: aviary ${SHA::12} (Jarvis chat and the sessions' release; DE0CH/aviary docs/DEPLOY.md)"
+          for attempt in 1 2 3 4 5; do
+            git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
+      - name: the site serves this app build and pigeon answers
+        env:
+          ID: ${{ secrets.JARVIS_CHAT_CHECK_ACCESS_ID }}
+          SECRET: ${{ secrets.JARVIS_CHAT_CHECK_ACCESS_SECRET }}
+        run: |
+          set -euo pipefail
+          [ -n "$ID" ] && [ -n "$SECRET" ] || { echo "::error::JARVIS_CHAT_CHECK_ACCESS_ID/_SECRET missing from environment jarvis"; exit 1; }
+          app=$(jq -r '."pigeon-app"' "$RUNNER_TEMP/deploy/tags.json")
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/pigeon-app:pull" | jq -r .token)
+          # the build's own index.html: the entry script it loads names the build
+          crane_export() { curl -sSfL -o "$RUNNER_TEMP/crane.tgz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz \
+            && echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tgz" | sha256sum -c - >/dev/null \
+            && tar -xzf "$RUNNER_TEMP/crane.tgz" -C "$RUNNER_TEMP" crane; }
+          crane_export
+          "$RUNNER_TEMP/crane" export --platform linux/amd64 "ghcr.io/de0ch/pigeon-app:$app" - | tar -x -C "$RUNNER_TEMP" app/index.html
+          want=$(grep -oE '_expo/static/js/web/[^"]+\.js' "$RUNNER_TEMP/app/index.html" | sort | head -1)
+          echo "pigeon-app:$app loads $want"
+          for i in $(seq 1 60); do
+            got=$(curl -sS -H "CF-Access-Client-Id: $ID" -H "CF-Access-Client-Secret: $SECRET" https://chat.deyaochen.com/ \
+              | grep -oE '_expo/static/js/web/[^"]+\.js' | sort | head -1 || true)
+            [ "$got" = "$want" ] && break
+            [ "$i" = 60 ] && { echo "::error::after 30 min chat.deyaochen.com still serves ${got:-nothing}, not $want"; exit 1; }
+            sleep 30
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "CF-Access-Client-Id: $ID" -H "CF-Access-Client-Secret: $SECRET" \
+            https://chat.deyaochen.com/api/jarvis/me)
+          echo "pigeon /api/jarvis/me: HTTP $code"
+          case "$code" in 2*|401|403) ;; *) echo "::error::pigeon's API answered $code"; exit 1 ;; esac
+          [ -n "$token" ]
+
+  yyc:
+    needs: [ready, jarvis]
+    if: >-
+      always() && needs.ready.outputs.go == 'true' &&
+      (needs.jarvis.result == 'success' || (github.event_name == 'schedule' && needs.jarvis.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: yyc-ai   # main only; the control nodes trust this workflow's OIDC token in this environment
+    permissions: {contents: read, id-token: write}
+    env:
+      SHA: ${{ needs.ready.outputs.sha }}
+      FOLDER: yyc/deploy
+      SEALED: yyc/deploy/sealed
+      INVENTORY: yyc-deploy/inventory-yyc-ai
+      NAMESPACES: yyc-ai,yyc-ai-fabric
+      SEALED_AS: system:serviceaccount:yyc-deploy:sealed-secrets-applier
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.ready.outputs.sha }}", fetch-depth: 0}   # trailers since the last applied commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/yyc-code, path: yyc-code, persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: deploy, path: "${{ runner.temp }}/deploy"}
+      - uses: ./yyc-code/.github/actions/k8s-tools
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: yyc-code/tools/yyc-apply}
+      - name: yyc-apply (DE0CH/yyc-code main)
+        run: |
+          (cd yyc-code/tools/yyc-apply && rustup show active-toolchain >/dev/null 2>&1 || rustup toolchain install)
+          cargo build --locked --release --manifest-path yyc-code/tools/yyc-apply/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/bin" && cp yyc-code/tools/yyc-apply/target/release/yyc-apply "$RUNNER_TEMP/bin/"
+          chmod +x "$RUNNER_TEMP/deploy/aviary-deploy" && cp "$RUNNER_TEMP/deploy/aviary-deploy" "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: this deploy's tags in the folder
+        run: aviary-deploy yyc "$FOLDER" "$RUNNER_TEMP/deploy/tags.json" && git diff --stat -- "$FOLDER"
+      - name: the catalogue against this hermit (item 7)
+        env:
+          CATALOGUE: ${{ secrets.YYC_CATALOGUE_JSON }}
+        run: |
+          set -euo pipefail
+          tag=$(jq -r .hermit "$RUNNER_TEMP/deploy/tags.json")
+          mkdir -p "$RUNNER_TEMP/hermit"
+          crane export "ghcr.io/de0ch/hermit:$tag" - | tar -x -C "$RUNNER_TEMP/hermit" usr/local/bin/hermit
+          (umask 077; printf '%s' "$CATALOGUE" > "$RUNNER_TEMP/catalogue.json")
+          code=0; "$RUNNER_TEMP/hermit/usr/local/bin/hermit" catalogue-check "$RUNNER_TEMP/catalogue.json" > "$RUNNER_TEMP/cc.txt" 2>&1 || code=$?
+          sed -E 's/[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+/<address>/g' "$RUNNER_TEMP/cc.txt"
+          rm -f "$RUNNER_TEMP/catalogue.json" "$RUNNER_TEMP/cc.txt"
+          exit "$code"
+      - name: connect
+        env:
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.YYC_DEPLOY_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.YYC_DEPLOY_ACCESS_CLIENT_SECRET }}
+        run: yyc-code/tools/yyc-apply/connect.sh
+      - name: plan
+        run: |
+          set +e
+          yyc-apply plan --folder "$FOLDER" --sealed "$SEALED" --namespaces "$NAMESPACES" --inventory "$INVENTORY" \
+            --sealed-as "$SEALED_AS" --run "${{ github.run_id }}" --out plan.md > /dev/null; code=$?
+          cat plan.md >> "$GITHUB_STEP_SUMMARY"; cat plan.md
+          exit $code
+      - name: apply
+        run: yyc-apply apply --plan plan.md --run "${{ github.run_id }}"
+      - name: YYC Drive's edge (the Worker on drive.yyc-internal.com, from the deployed image's /srv/edge)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.YYC_CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.YYC_CF_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          tag=$(jq -r '."yyc-drive"' "$RUNNER_TEMP/deploy/tags.json")
+          id=$(docker create "ghcr.io/de0ch/yyc-drive:$tag")
+          docker cp "$id:/srv/edge" "$RUNNER_TEMP/edge" && docker rm "$id" > /dev/null
+          vars=()
+          while IFS= read -r kv; do vars+=(--var "$kv"); done < <(jq -r 'to_entries[] | "\(.key):\(.value)"' "$FOLDER/drive/edge.json")
+          (cd "$RUNNER_TEMP/edge" && npx --yes wrangler@4.151.0 deploy "${vars[@]}")
+      - name: the host AMI (bakes only when the sandbox image, sandboxd, runsc or the disk differ from its tags)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.YYC_HERMIT_AMI_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.YYC_HERMIT_AMI_AWS_SECRET_ACCESS_KEY }}
+          GHCR_DOCKERCONFIGJSON: ${{ secrets.YYC_SANDBOX_GHCR_DOCKERCONFIGJSON }}
+        run: |
+          set -euo pipefail
+          auth=$(jq -r '.auths["ghcr.io"].auth' <<<"$GHCR_DOCKERCONFIGJSON" | base64 -d)
+          export GHCR_USER=${auth%%:*} GHCR_TOKEN=${auth#*:}
+          echo "::add-mask::$GHCR_TOKEN"
+          cfg=$FOLDER/hermit/hermit.json
+          if jq -e '.fabric.aws.imageBucket' "$cfg" >/dev/null; then bash fabric/aws/infra.sh --config "$cfg" publish-image; fi
+          bash fabric/aws/infra.sh --config "$cfg" sync
+          bash fabric/aws/infra.sh --config "$cfg" check
+          bash fabric/aws/infra.sh --config "$cfg" current | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: the sandbox gateway (gateway.sh setup over the jump host; nothing changes when its release is the same)
+        env:
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.YYC_DEPLOY_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.YYC_DEPLOY_ACCESS_CLIENT_SECRET }}
+          CLUSTER_SSH_KEY: ${{ secrets.YYC_CLUSTER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.yyc-cluster && (umask 077; printf '%s\n' "$CLUSTER_SSH_KEY" > ~/.yyc-cluster/admin)
+          bash yyc/infra/gateway.sh setup
+          bash yyc/infra/gateway.sh status
+
+  yyc-e2e:
+    # the live site after an applying deploy (not the 3-hourly re-apply): sign in as bot@deyaochen.com by e-mailed
+    # code, /api/jarvis/me, one chat turn answered by the model, the message box's slash commands (live_chat.py); YYC
+    # Drive's page from the edge and its file list (live_drive.py)
+    needs: [ready, yyc]
+    if: always() && needs.yyc.result == 'success' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: yyc-ai
+    concurrency: {group: yyc-ai-e2e, cancel-in-progress: false}   # one Access code at a time
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.ready.outputs.sha }}"}
+      - name: playwright
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv" && echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/venv/bin/pip" install -q playwright==1.62.0
+          "$RUNNER_TEMP/venv/bin/python" -m playwright install --with-deps chromium >/dev/null
+      - name: the browser-free pieces
+        run: python3 yyc/tests/e2e/test_live_chat.py
+      - name: sign in, one chat turn
+        env:
+          E2E_CODE_CLIENT_ID: ${{ secrets.E2E_CODE_CLIENT_ID }}
+          E2E_CODE_CLIENT_SECRET: ${{ secrets.E2E_CODE_CLIENT_SECRET }}
+        run: python3 yyc/tests/e2e/live_chat.py "$RUNNER_TEMP/e2e"
+      - name: YYC Drive (its page from the edge, its file list)
+        if: always()
+        env:
+          E2E_CODE_CLIENT_ID: ${{ secrets.E2E_CODE_CLIENT_ID }}
+          E2E_CODE_CLIENT_SECRET: ${{ secrets.E2E_CODE_CLIENT_SECRET }}
+        run: python3 yyc/tests/e2e/live_drive.py "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with: {name: e2e-screens, path: "${{ runner.temp }}/e2e", if-no-files-found: ignore}
+
+  web-install:
+    needs: [yyc]
+    if: always() && needs.yyc.result == 'success' && github.event_name != 'schedule'
+    uses: ./.github/workflows/app-web-install.yml
+
+  record:
+    # the deploys' records: pigeon-app's image keeps the app builds served within the Access session lifetime
+    # (app/scripts/pigeon-app/deployments.mjs reads these)
+    needs: [ready, jarvis, yyc]
+    if: always() && needs.ready.outputs.go == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {contents: read, deployments: write}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: deploy, path: "${{ runner.temp }}/deploy"}
+      - name: a Deployment per environment that was deployed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.ready.outputs.sha }}
+          JARVIS: ${{ needs.jarvis.result }}
+          YYC: ${{ needs.yyc.result }}
+        run: |
+          set -euo pipefail
+          for e in jarvis:$JARVIS yyc-ai:$YYC; do
+            [ "${e#*:}" = success ] || continue
+            jq -n --arg ref "$SHA" --arg env "${e%%:*}" --slurpfile t "$RUNNER_TEMP/deploy/tags.json" \
+              '{ref: $ref, environment: $env, auto_merge: false, required_contexts: [], payload: {tags: $t[0]}, description: "deploy.yml"}' \
+              | gh api "repos/$GITHUB_REPOSITORY/deployments" --input - -q '"deployment \(.id) \(.environment)"'
+          done
+
+  tell:
+    # a red deploy on main, and the first good one after it, to YYC's Discord
+    needs: [ready, jarvis, yyc, yyc-e2e]
+    if: always() && needs.ready.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: yyc-ai
+    permissions: {actions: read}
+    steps:
+      - name: tell Discord
+        env:
+          WEBHOOK: ${{ secrets.YYC_DISCORD_WEBHOOK }}
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ (needs.jarvis.result == 'failure' || needs.yyc.result == 'failure' || needs['yyc-e2e'].result == 'failure') && 'failure' || 'success' }}
+        run: |
+          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=main&status=completed&per_page=2" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})][0].conclusion" 2>/dev/null || echo unknown)
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "$STATUS" != success ]; then msg="aviary deploy: the run failed (Jarvis chat, YYC AI or its live check); what runs may not match main. $url"
+          elif [ "$prev" = failure ]; then msg="aviary deploy: runs succeed again. $url"
+          else exit 0; fi
+          [ -n "$WEBHOOK" ] && curl -s -X POST -H "Content-Type: application/json" -d "$(jq -n --arg c "$msg" '{content:$c}')" "$WEBHOOK" >/dev/null || true

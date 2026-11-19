@@ -201,7 +201,7 @@ jobs:
           cut -d' ' -f1 "$RUNNER_TEMP/pins.txt" > "$RUNNER_TEMP/seed-tags.txt"
           echo "pigeon-app (their builds stay whatever their age): YYC's pins before the monorepo, then both deployments' records"
           node app/scripts/pigeon-app/pins.mjs --repo "$RUNNER_TEMP/yyc.git" --image pigeon-app --hours 720 --margin-hours 24 | tee "$RUNNER_TEMP/app-pins.txt"
-          for env in yyc jarvis; do
+          for env in yyc-ai jarvis; do
             node app/scripts/pigeon-app/deployments.mjs --repo "$GITHUB_REPOSITORY" --environment "$env" --image pigeon-app --hours 720 --margin-hours 24 | tee -a "$RUNNER_TEMP/app-pins.txt"
           done
           : > "$RUNNER_TEMP/served-builds.txt"

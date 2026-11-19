@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // The builds of one image served within a time window, from the deploy run's records (docs/DEPLOY.md): every deploy of
-// main records a GitHub Deployment of DE0CH/aviary per environment (`yyc`, `jarvis`) whose payload names each image's
+// main records a GitHub Deployment of DE0CH/aviary per environment (`yyc-ai`, `jarvis`) whose payload names each image's
 // tag ({"tags": {"pigeon-app": "<sha12>", …}}). Since the monorepo the tags are not in git, so this replaces pins.mjs
 // for builds deployed from aviary; pins.mjs still reads DE0CH/yyc-code's pin history for the builds before it.
 //
 // A tag is served from its deployment's creation until the next deployment of that environment names another tag (or
 // now). It counts when that interval overlaps [now - hours - margin, now]; the margin covers the rollout's delay.
 //
-//   node deployments.mjs --repo OWNER/NAME --environment yyc [--image pigeon-app] [--hours 720] [--margin-hours 24]
+//   node deployments.mjs --repo OWNER/NAME --environment yyc-ai [--image pigeon-app] [--hours 720] [--margin-hours 24]
 //                        [--now ISO] [--json]
 //
 // Prints one line per tag, oldest first: `<tag> <first deployed, ISO> <last served, ISO or "now">` (pins.mjs's
