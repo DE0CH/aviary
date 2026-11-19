@@ -6,6 +6,19 @@ kind: Kustomization
 # branding.yaml: the chat's own look (DE0CH/claudecodeui paseo/packages/app src/yyc/brand.ts: the app bundle holds
 # neutral files under /branding/, pigeon mounts these over them), written by infra/branding.py from branding/
 resources: [db.yaml, magpie.yaml, pigeon.yaml, hermit.yaml, network.yaml, branding.yaml]
+# Handing the chat over to DE0CH/aviary's jarvis/deploy (Deyao, 2026-11-19: a push to aviary's main is the deploy;
+# DE0CH/jarvis4 k8s/cluster/tenants/chat.yaml applies it there): this tenant's Kustomization prunes, and these
+# objects include chat-db. With prune disabled on every object first, removing this folder later leaves them standing
+# for the new Kustomization, which takes them over. Object metadata only (no pod template changes, so nothing rolls).
+patches:
+  - target: {name: ".*"}
+    patch: |-
+      apiVersion: v1
+      kind: not-important
+      metadata:
+        name: not-important
+        annotations:
+          kustomize.toolkit.fluxcd.io/prune: disabled
 # settings.json: what is Deyao's own about the chat (its name and language, the model menu, each model's thinking
 # levels and its own level `reasoning` (required, no default: chat-settings.yml fails without it), context window and
 # OpenRouter hosts), read by hermit-jarvis at its start (HERMIT_SETTINGS; DE0CH/jarvis4
