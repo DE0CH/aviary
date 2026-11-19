@@ -87,7 +87,7 @@ fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
         | "delete_agent_request"
         | "refresh_agent_request"
         | "agent_permission_response" => str_field(m, "agentId")?,
-        "workspace.title.set.request" | "archive_workspace_request" => {
+        "workspace.title.set.request" | "workspace.pin.set.request" | "archive_workspace_request" => {
             str_field(m, "workspaceId")?.strip_prefix(WORKSPACE_PREFIX)?
         }
         _ => return None,
@@ -125,6 +125,7 @@ fn is_upstream(kind: &str) -> bool {
             | "set_agent_model_request"
             | "set_agent_thinking_request"
             | "workspace.title.set.request"
+            | "workspace.pin.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
             | "delete_agent_request"
@@ -145,6 +146,7 @@ fn view_as_refused(kind: &str) -> bool {
             | "set_agent_model_request"
             | "set_agent_thinking_request"
             | "workspace.title.set.request"
+            | "workspace.pin.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
             | "delete_agent_request"
@@ -316,6 +318,7 @@ impl Handler {
             "set_agent_model_request" => self.set_model().await,
             "set_agent_thinking_request" => self.set_thinking().await,
             "workspace.title.set.request" => self.title_set().await,
+            "workspace.pin.set.request" => self.pin_set().await,
             "archive_workspace_request" | "archive_agent_request" => self.archive().await,
             "delete_agent_request" => self.delete().await,
             "refresh_agent_request" => self.refresh().await,
@@ -1060,6 +1063,35 @@ impl Handler {
         self.reply(
             "workspace.title.set.response",
             &json!({"requestId": self.rid, "workspaceId": ws, "accepted": error.is_none(), "title": shown,
+                    "error": error}),
+        );
+    }
+
+    /// Pins the conversation to the top of the person's list or unpins it (magpie's M5 `pinned`).
+    async fn pin_set(&self) {
+        let ws = str_field(&self.m, "workspaceId").unwrap_or("").to_owned();
+        let pinned = self.m.get("pinned").and_then(Value::as_bool).unwrap_or(false);
+        let id = ws.strip_prefix(WORKSPACE_PREFIX).and_then(|s| Uuid::parse_str(s).ok());
+        let answer = match id {
+            None => Err(strings::NOT_FOUND.to_owned()),
+            Some(id) => match self
+                .calls()
+                .rename_conversation(id, &RenameRequest::pinned(pinned))
+                .await
+                .map_err(fail)
+            {
+                Ok(c) => Ok(c.pinned_at),
+                Err(Fail::NotFound) => Err(strings::NOT_FOUND.to_owned()),
+                Err(_) => Err(self.locale().unreachable().to_owned()),
+            },
+        };
+        let (accepted, pinned_at, error) = match answer {
+            Ok(at) => (true, json!(at), Value::Null),
+            Err(e) => (false, Value::Null, json!(e)),
+        };
+        self.reply(
+            "workspace.pin.set.response",
+            &json!({"requestId": self.rid, "workspaceId": ws, "accepted": accepted, "pinnedAt": pinned_at,
                     "error": error}),
         );
     }

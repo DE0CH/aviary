@@ -98,7 +98,7 @@ pub fn workspace_descriptor(c: &Conversation, v: &View<'_>) -> Value {
         "id": workspace_id(&c.id), "projectId": PROJECT_ID, "projectDisplayName": v.product,
         "projectCustomName": null, "projectCustomIconRevision": null, "projectRootPath": CWD,
         "workspaceDirectory": CWD, "setupStatus": null, "projectKind": "directory", "workspaceKind": "directory",
-        "name": name_of(c, v), "title": c.title, "pinnedAt": null, "background": false, "archivingAt": null,
+        "name": name_of(c, v), "title": c.title, "pinnedAt": c.pinned_at, "background": false, "archivingAt": null,
         "status": status, "statusEnteredAt": entered,
         "activityAt": c.updated_at, "createdAt": c.created_at, "lastUserMessageAt": last_user, "diffStat": null,
         "scripts": [], "project": project_placement(c, v),

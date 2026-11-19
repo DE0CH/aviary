@@ -62,7 +62,7 @@ pub fn server_info(product: &str, app_version: Option<&str>, protocol: u64) -> V
         "features": {"ownedSubscriptions": true, "explicitEventSubscriptions": true, "selectiveAgentTimeline": true,
             "providersSnapshot": true, "providersSnapshotCwd": true, "directorySync": true, "workspaceMultiplicity": true,
             "canonicalSubmittedPrompts": true, "agentTimelinePromptIndex": true, "workspaceSortTimes": true,
-            "stableProjectIdentity": true, "projectList": true, "creationLifecycle": true, "agentRequestReceipts": true,
+            "stableProjectIdentity": true, "projectList": true, "creationLifecycle": true, "workspacePinning": true, "agentRequestReceipts": true,
             "workspaceRequestReceipts": true},
     })
 }

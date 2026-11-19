@@ -241,6 +241,11 @@ writes the prompt (`set_max_thinking_tokens` 0 for `none`, else thinking on and 
 with no level picked, the one the models route names for the model, else Claude Code's own), so every model call of
 the turn carries it (`thinking` present or not, `output_config.effort`) and the gateway applies the level. Qwen Code
 is switched with `set_effort` to the level, `none` included, and its model calls carry it as `reasoning.effort`.
+**A pinned conversation** (Deyao, 2026-11-19): pigeon's `server_info` says `features.workspacePinning`, and
+`workspace.pin.set.request` is magpie's M5 `pinned` (`true` keeps an earlier pin's time, `false` clears it), answered
+with the conversation's `pinnedAt`; every workspace descriptor carries `pinnedAt` (magpie's `pinnedAt`, null while not
+pinned), and the app shows the pinned ones in their own section, the most recent pin first. Read-only while viewing
+as someone else.
 
 **In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
 bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:

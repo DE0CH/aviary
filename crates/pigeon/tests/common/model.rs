@@ -187,6 +187,7 @@ impl Model {
             },
             next_schedule_at: None,
             waiting_on_person: false,
+            pinned_at: None,
         }
     }
 
@@ -613,6 +614,11 @@ impl Server for Model {
             }
             if let Some(l) = &body.thinking {
                 c.picked_thinking = (!l.is_empty()).then(|| l.clone());
+            }
+            match body.pinned {
+                Some(true) => c.pinned_at = c.pinned_at.or_else(|| Some(now())),
+                Some(false) => c.pinned_at = None,
+                None => {}
             }
         });
         Ok(self.st().convs[&id].conv.clone())
