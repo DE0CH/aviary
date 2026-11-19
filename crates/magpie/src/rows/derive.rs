@@ -654,7 +654,12 @@ pub fn question_card(p: &AskPending, at: time::OffsetDateTime) -> PersonCard {
         kind: "question".into(),
         id: p.ask_id.clone(),
         input: Value::Object(p.input.clone()),
-        marker: magpie_api::sandbox::answer_marker(&p.ask_id),
+        // no marker when the asking command prints none (an older supervisor): the card stays where it was asked
+        marker: if p.marks_answers {
+            magpie_api::sandbox::answer_marker(&p.ask_id)
+        } else {
+            String::new()
+        },
         state: "open".into(),
         answer: None,
         asked_at: magpie_api::Timestamp(at),

@@ -1617,7 +1617,10 @@ async fn a_question_belongs_to_the_command_that_asked_it() {
     .unwrap();
     let q = sup
         .calls()
-        .question_open(&QuestionRequest { input: input.clone() })
+        .question_open(&QuestionRequest {
+            input: input.clone(),
+            marks_answers: true,
+        })
         .await
         .unwrap();
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();

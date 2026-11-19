@@ -32,5 +32,7 @@ pub fn of(cfg: &Config) -> Deployment {
             people_delete: true,
             ..Conversations::default()
         },
+        // the question and wait cards wait for this deployment's own go (Deyao, 2026-11-19)
+        features: hermit_api::deployment::Features::default(),
     }
 }

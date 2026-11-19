@@ -333,6 +333,9 @@ pub struct AskPending {
     pub tool_use_id: Option<String>,
     /// The tool input (Claude Code's own keys).
     pub input: Map<String, Value>,
+    /// A question of the `ask` command whose answer lines carry its marker (`QuestionRequest::marks_answers`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub marks_answers: bool,
 }
 
 /// `ask.resolved`.

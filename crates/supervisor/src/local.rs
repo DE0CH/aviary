@@ -59,7 +59,11 @@ impl LocalServer for Local {
     async fn question_open(&self, _ctx: Ctx, body: QuestionOpen) -> Answer<QuestionOpened> {
         let calls = self.agent.magpie_calls().ok_or_else(no_magpie)?;
         let r = calls
-            .question_open(&magpie_api::sandbox::QuestionRequest { input: body.input })
+            .question_open(&magpie_api::sandbox::QuestionRequest {
+                input: body.input,
+                // this binary's `ask` prints the answer's marker on every line (rule 11)
+                marks_answers: true,
+            })
             .await
             .map_err(|e| upstream(&e))?;
         Ok(QuestionOpened { ask_id: r.ask_id })

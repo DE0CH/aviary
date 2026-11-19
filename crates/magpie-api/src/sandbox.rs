@@ -845,6 +845,11 @@ pub struct PersonWaitEnd {
 pub struct QuestionRequest {
     /// The questions, in `AskUserQuestion`'s shape (`{"questions": [{question, header, options, multiSelect}]}`).
     pub input: Map<String, Value>,
+    /// The asking command prints [`answer_marker`] on every line of the answer (a supervisor from rule 11 on): only
+    /// then can the chat tell where the AI read the answer. False (an older supervisor): the card shows the answer
+    /// where it was asked, never "not read yet".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub marks_answers: bool,
 }
 
 /// The answer of `POST /v1/sandbox/questions`.
