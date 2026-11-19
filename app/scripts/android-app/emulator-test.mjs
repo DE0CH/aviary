@@ -34,7 +34,9 @@ const CONVERSATION = "季度銷售報告"; // the stand-in's first conversation 
 const TYPED = "hello fold";
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
-const adb = (...args) => execFileSync("adb", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+// every adb call has a time limit: a hung one fails its step instead of the job's two hours
+const adb = (...args) =>
+  execFileSync("adb", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 180_000 });
 const shell = (...args) => adb("shell", ...args);
 const tryShell = (...args) => {
   try {
@@ -58,7 +60,7 @@ let step = 0;
 function screenshot(name) {
   step += 1;
   const file = path.join(out, `${String(step).padStart(2, "0")}-${name}.png`);
-  const raw = execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024 });
+  const raw = execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
   // a profile with two screens (the Pixel Fold's) prints a warning ahead of the picture
   const start = raw.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   fs.writeFileSync(file, start > 0 ? raw.subarray(start) : raw);
@@ -239,7 +241,12 @@ async function main() {
     if (!check("a conversation opens from the conversation list", opened)) return;
 
     // the keyboard comes and goes, recorded
-    const recording = spawn("adb", ["shell", "screenrecord", "--time-limit", "12", "/sdcard/keyboard.mp4"]);
+    const recording = spawn("adb", ["shell", "screenrecord", "--time-limit", "20", "/sdcard/keyboard.mp4"]);
+    // its end, caught from the start: it may well be over before the steps below are
+    const recorded = new Promise((done) => {
+      recording.on("exit", done);
+      recording.on("error", done);
+    });
     await sleep(1000);
     tap(composer(dumpUi()).field);
     await checkBoxOnKeyboard("cover");
@@ -260,10 +267,10 @@ async function main() {
     }
     check("a flick down on the conversation puts the keyboard away", await waitKeyboard(false));
     screenshot("cover-keyboard-away");
-    await new Promise((done) => recording.on("exit", done));
+    await Promise.race([recorded, sleep(30_000)]);
     try {
       fs.writeFileSync(path.join(out, "keyboard-cover.mp4"),
-        execFileSync("adb", ["exec-out", "cat", "/sdcard/keyboard.mp4"], { maxBuffer: 256 * 1024 * 1024 }));
+        execFileSync("adb", ["exec-out", "cat", "/sdcard/keyboard.mp4"], { maxBuffer: 256 * 1024 * 1024, timeout: 120_000 }));
     } catch {
       console.log("::warning title=android emulator test::no screen recording");
     }
