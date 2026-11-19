@@ -2,7 +2,7 @@ import { isSentFilesCall, openConversationFile, readSentCaption, readSentFiles, 
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { PersonCardView } from "@/yyc/person-cards";
-import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
+import { cardViewWhereAsked, PERSON_CARDS, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -889,12 +889,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           // a question to the person or a wait on the person (yyc/person-cards.tsx): where it was asked until the AI
           // has read the answer, then on the call that read it
-          const asked = readPersonAsk(data.metadata);
+          const asked = PERSON_CARDS ? readPersonAsk(data.metadata) : null;
           if (asked) {
             const view = cardViewWhereAsked(asked);
             return view ? <PersonCardView card={asked} view={view} /> : null;
           }
-          const read = readPersonRead(data.metadata);
+          const read = PERSON_CARDS ? readPersonRead(data.metadata) : [];
           if (read.length > 0) {
             return (
               <>

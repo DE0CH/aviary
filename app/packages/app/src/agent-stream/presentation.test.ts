@@ -150,6 +150,26 @@ describe("whole-message Markdown presentation", () => {
   });
 });
 
+describe("question and wait cards while they are off (yyc/person-cards-text.ts)", () => {
+  it("leaves a card's own row out of the conversation; a call that read an answer stays an ordinary step", () => {
+    const card = { kind: "question", id: "q-1", input: {}, marker: "(answer to q-1)", state: "answered", askedAt: "x" };
+    const withMeta = (item: ToolCallItem, metadata: Record<string, unknown>): ToolCallItem => {
+      const payload = item.payload as { source: "agent"; data: object };
+      return { ...item, payload: { ...payload, data: { ...payload.data, metadata } } } as ToolCallItem;
+    };
+    const asked = withMeta(toolCall("q-1", "ask"), { personAsk: card });
+    const read = withMeta(toolCall("call-2", "Bash"), { personRead: [{ ...card, readBy: "call-2" }] });
+    const rendered = createStreamPresentation()({
+      ...presentationOptions,
+      display: "full",
+      tail: [toolCall("call-1", "Bash"), asked, read],
+      head: [asked],
+      transform: undefined,
+    });
+    expect(rows(rendered).map((item) => item.id)).toEqual(["tool-call-1", "tool-call-2"]);
+  });
+});
+
 describe("stream presentation through installed plugins", () => {
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
