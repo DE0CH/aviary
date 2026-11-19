@@ -88,9 +88,18 @@ def run(root=YYC_AI, get=http_get):
         # the conversation search's embedding model (`embedding.id`) sees every message too: ZDR like the others
         models_ok("new stack", {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)}
                   | ({e["embedding"]["id"]} if e.get("embedding") else set()))
-        takes = {m["id"]: (m.get("architecture") or {}).get("input_modalities") or [] for m in json.loads(get("https://openrouter.ai/api/v1/models"))["data"]}
+        listed = json.loads(get("https://openrouter.ai/api/v1/models"))["data"]
+        takes = {m["id"]: (m.get("architecture") or {}).get("input_modalities") or [] for m in listed}
+        efforts = {m["id"]: (m.get("reasoning") or {}).get("supported_efforts") or [] for m in listed}
         for m in e["models"]:
             check("image" in takes.get(m["id"], []), f"new stack: {m['id']} takes images (input: {takes.get(m['id'])})")
+        # the menu's thinking levels of a model are the ones OpenRouter's record of that model takes, never another
+        # model's list (lessons/139: a level the endpoint lacks changes nothing)
+        for m in e["models"]:
+            if m.get("thinking"):
+                lacks = [t for t in m["thinking"] if t not in efforts.get(m["id"], [])]
+                check(not lacks, f"new stack: {m['id']} takes every thinking level it lists {m['thinking']}"
+                                 f" (OpenRouter: {efforts.get(m['id'])}; lacks {lacks})")
         for m in e["models"]:
             for tag in m.get("providers", []):
                 check(tag in zdr_tags.get(m["id"], ()), f"new stack: {m['id']} pinned endpoint {tag} is a ZDR endpoint")

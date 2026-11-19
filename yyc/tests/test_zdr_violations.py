@@ -24,14 +24,19 @@ def tree():
     return root
 
 
-def fake(zdr_models, bad_sha=None, tags=None, text_only=()):
-    """tags: {model: [endpoint slugs]} listed as ZDR endpoints (the pinned providers)"""
+EFFORTS = ["max", "high", "low", "none"]
+
+
+def fake(zdr_models, bad_sha=None, tags=None, text_only=(), efforts=None):
+    """tags: {model: [endpoint slugs]} listed as ZDR endpoints (the pinned providers); efforts: {model: [levels]}
+    OpenRouter's `reasoning.supported_efforts` (EFFORTS for a model not named)"""
     def get(url):
         if url.endswith("/endpoints/zdr"):
             return json.dumps({"data": [{"model_id": m, "provider_name": "P"} for m in zdr_models]
                                + [{"model_id": m, "provider_name": "P", "tag": t} for m, ts in (tags or {}).items() for t in ts]})
         if url.endswith("/api/v1/models"):
-            return json.dumps({"data": [{"id": m, "architecture": {"input_modalities": ["text"] if m in text_only else ["text", "image"]}}
+            return json.dumps({"data": [{"id": m, "architecture": {"input_modalities": ["text"] if m in text_only else ["text", "image"]},
+                                         "reasoning": {"supported_efforts": (efforts or {}).get(m, EFFORTS)}}
                                         for m in set(zdr_models) | set(text_only)]})
         if url.startswith("https://api.github.com/repos/DE0CH/jarvis3/commits/"):
             return json.dumps({"sha": url.rsplit("/", 1)[1] + "0" * 28})
@@ -90,6 +95,14 @@ class Seeded(unittest.TestCase):
         edit(root, lambda e: e["models"].append({"id": "vendor/text-only", "label": "T", "reasoning": "high", "thinking": ["high"]}))
         fails = test_zdr.run(root, fake(models(root), tags=pins(root), text_only={"vendor/text-only"}))
         self.assertTrue(any("vendor/text-only takes images" in f for f in fails), fails)
+
+    def test_thinking_level_the_model_lacks(self):
+        # lessons/139: a list copied from another model offers levels that change nothing
+        root = tree()
+        edit(root, lambda e: e["models"].append({"id": "vendor/three-levels", "label": "L", "reasoning": "high",
+                                                 "thinking": ["none", "low", "high", "max"]}))
+        fails = test_zdr.run(root, fake(models(root), tags=pins(root), efforts={"vendor/three-levels": ["low", "high", "max"]}))
+        self.assertTrue(any("vendor/three-levels takes every thinking level" in f and "'none'" in f for f in fails), fails)
 
     def test_openrouter_route_without_model(self):
         root = tree()

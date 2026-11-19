@@ -27,6 +27,21 @@
       "providers": [
         "deepinfra/fp8"
       ]
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "label": "Kimi K3.1 Pro",
+      "harness": "qwen",
+      "reasoning": "high",
+      "thinking": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "providers": [
+        "deepinfra/bf16"
+      ]
     }
   ],
   "defaultModel": "deepseek/deepseek-v4.1-flash-1017",
