@@ -16,7 +16,8 @@ members = [
   "testing/fabric-replica",
 ]
 # throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
-exclude = ["crates/supervisor/spikes"]
+# jarvis/hermit (hermit-jarvis, aviary-gateway) is its own workspace with its own lock, on these crates by path
+exclude = ["crates/supervisor/spikes", "jarvis/hermit"]
 
 [workspace.package]
 edition = "2024"

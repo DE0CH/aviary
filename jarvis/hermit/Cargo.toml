@@ -7,15 +7,14 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 publish = false
 
-# One aviary commit for every contract crate; bumped together with the images Jarvis 4's sessions and the services
-# tenant run (aviary/README.md "Bumping aviary").
+# aviary's crates by path: this tree is deployed with them (docs/DEPLOY.md), so there is nothing to bump
 [dependencies]
-aviary-core = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
-aviary-pg = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
-hermit-api = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
-gateway-api = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
-magpie-api = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
-supervisor-api = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
+aviary-core = { path = "../../crates/aviary-core" }
+aviary-pg = { path = "../../crates/aviary-pg" }
+hermit-api = { path = "../../crates/hermit-api" }
+gateway-api = { path = "../../crates/gateway-api" }
+magpie-api = { path = "../../crates/magpie-api" }
+supervisor-api = { path = "../../crates/supervisor-api" }
 anyhow = "=1.0.104"
 axum = "=0.8.9"
 base64 = "=0.23.1"
@@ -37,7 +36,7 @@ tracing = { version = "=0.1.44", features = ["release_max_level_info"] }
 uuid = { version = "=1.29.0", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
-aviary-fakes = { git = "https://github.com/DE0CH/aviary", rev = "a14e0a9ae3311e5e0b6463e35dcb59f81c60be81" }
+aviary-fakes = { path = "../../testing/fakes" }
 
 [profile.release]
 lto = "thin"

@@ -34,8 +34,9 @@ route with a 4 KB clip; a deployment's video skill runs it first).
 an empty directory (the supervisor's FUSE mount point); `/home/sandbox/.claude` and `/home/sandbox/.qwen` link to
 `.harness/claude` and `.harness/qwen`; `/var/lib/supervisor` is root's, 0700.
 
-A new Qwen Code: push to DE0CH/qwen-code's branch `de0ch` (its workflow `de0ch-release` tests, packs and releases
-`qwen-code-de0ch.tgz` as `de0ch-<sha12>`), then put the tag and the tarball's sha256 in the Dockerfile.
+A new Qwen Code: change harness/qwen-code (upstream comes in with `git merge -X subtree=harness/qwen-code`). ci.yml's
+`qwen` job tests and packs it and releases `qwen-code.tgz` as `qwen-code-<sha12>`; the image build is given that tag
+and the tarball's sha256.
 
 The runtime starts it with the sandbox's proxy URL in `HTTP_PROXY` (the sandbox token as its password, DESIGN 12
 D1) and root's capabilities inside the sandbox (`/dev/fuse`, mounts, dockerd). Without a proxy credential the keeper
