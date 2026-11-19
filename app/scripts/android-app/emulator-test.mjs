@@ -263,10 +263,11 @@ async function main() {
     // a flick down on the conversation puts the keyboard away (agent-stream/scroll-keyboard-dismiss): what decides it
     // is the list's speed over the last 30 ms before the finger lifts (over 1.5 dp/ms). A short fast flick from the
     // middle, since a long one reaches the start of the history, where the list stops. The emulator delivers an
-    // injected swipe in uneven bursts, so a second flick is allowed, as a person flicks again; the detail says which.
+    // injected swipe in uneven bursts (on a loaded runner two in a row came too slow, 2026-11-19), so up to three
+    // flicks are allowed, as a person flicks again; the detail says how many.
     let flicks = 0;
     let away = false;
-    while (!away && flicks < 2) {
+    while (!away && flicks < 3) {
       flicks += 1;
       const list = byId(dumpUi(), "agent-chat-scroll");
       const keyboard = keyboardFrame();
@@ -319,7 +320,13 @@ async function main() {
 
     // turned to landscape on the main screen
     shell("wm", "user-rotation", "lock", "1");
-    await sleep(3000);
+    // the turn takes the loaded emulator anywhere from 1 to 10 s (2026-11-19: still portrait, 1968 x 2184, after a
+    // fixed 3 s): wait for the wide layout to be wider than tall
+    const wideNow = (n) => {
+      const b = byId(n, "wide-shell")?.box;
+      return b && b.right - b.left > b.bottom - b.top ? b : null;
+    };
+    await waitFor(wideNow, 20_000, "landscape");
     screenshot("main-landscape");
     check("turning the unfolded phone keeps the app running", appPid() === pid);
     const landscape = dumpUi("main-landscape");
