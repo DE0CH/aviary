@@ -31,7 +31,6 @@ pub const VIEW_AS_QUERY: &str = "jarvis_view_as";
 /// The fragment the view-as start redirects to (`/#jarvis-view-as=<token>`, 6.1).
 pub const VIEW_AS_FRAGMENT: &str = "jarvis-view-as=";
 
-
 /// The meta the app shell carries when nobody is signed in (5.2.2).
 pub const SIGNED_OUT_META: &str = r#"<meta name="yyc-signed-out" content="1">"#;
 
