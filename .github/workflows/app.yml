@@ -23,7 +23,7 @@ on:
     branches: ["**"]  # every branch: the gate waits for it
     paths:
       - "app/**"
-      - "public/sw.js"
+      - "app/public/sw.js"
       - "app/scripts/build-paseo-ui.mjs"
       - "app/scripts/check-chunks.mjs"
       - "app/scripts/pigeon-app/**"
@@ -305,7 +305,7 @@ jobs:
         run: |
           # --pins: the report gives the mandatory part's headroom and projects it over 744 h at the ui pin rate of the
           # last 7 days (a warning when it would go over the budget; README design gap 1)
-          args=(--dist "$RUNNER_TEMP/dist" --sw public/sw.js --commit "$PART_SHA" --out "$RUNNER_TEMP/pigeon-app" --seeds "$RUNNER_TEMP/seeds" --budget-mib 2016 --pins "$RUNNER_TEMP/pins.txt")
+          args=(--dist "$RUNNER_TEMP/dist" --sw app/public/sw.js --commit "$PART_SHA" --out "$RUNNER_TEMP/pigeon-app" --seeds "$RUNNER_TEMP/seeds" --budget-mib 2016 --pins "$RUNNER_TEMP/pins.txt")
           [ -z "$PREVIOUS" ] || args+=(--previous "$PREVIOUS")
           while read -r tag commit; do args+=(--seed "$tag=$commit"); done < "$RUNNER_TEMP/seeds.txt"
           while read -r commit; do args+=(--served-build "$commit"); done < "$RUNNER_TEMP/served-builds.txt"

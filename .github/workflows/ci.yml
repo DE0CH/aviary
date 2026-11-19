@@ -806,7 +806,10 @@ jobs:
             -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
             "https://ghcr.io/v2/de0ch/hermit-sandbox/manifests/${TAG#aviary-}" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no sandbox image for $TAG"; exit 1; }
-          printf '{\n  "release": "%s",\n  "sandbox": "%s"\n}\n' "$TAG" "ghcr.io/de0ch/hermit-sandbox@$digest" > session-image/aviary.json
+          # the release and the sandbox are this run's; the gateway (jarvis-<sha12>, its sha256) stays jarvis4's: a file
+          # of only the two left the Dockerfile's download without a tag (404 on every branch, 2026-11-19)
+          jq --arg r "$TAG" --arg s "ghcr.io/de0ch/hermit-sandbox@$digest" '.release = $r | .sandbox = $s' \
+            session-image/aviary.json > "$RUNNER_TEMP/aviary.json" && mv "$RUNNER_TEMP/aviary.json" session-image/aviary.json
           cat session-image/aviary.json
       - name: free disk space (the base image is large)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
@@ -850,3 +853,76 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: e2e-aviary-logs, path: /tmp/e2e-aviary-logs, retention-days: 7, if-no-files-found: ignore}
+  replica-fabric:
+    # The same replica on Jarvis 4's fabric (DE0CH/jarvis4 docs/PLAN-fabric.md): the session runs as a gVisor sandbox,
+    # as on the fabric's hosts, here on the runner (the fork's runsc as the fabric pins it, jarvis4 rust/e2e-kernel
+    # E2E_RUNNER=fabric with its fake hermit): boot, a turn with a tool call, a wakeup, the time machine (frozen and
+    # back), a frozen session's destroy (thawed for its final snapshot, 2026-11-19). deploy.yml moves the fabric's pin
+    # with every deploy, so this runs before each one. No Fly, no secret.
+    needs: [tags, replica]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: aviary-${{ needs.tags.outputs.aviary }}
+      SESSION: ghcr.io/de0ch/jarvis4-session:pin-aviary-${{ needs.tags.outputs.aviary }}
+      FABRIC: ghcr.io/de0ch/jarvis4-session-fabric:pin-aviary-${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
+      - name: free disk space (the session image and the fabric image, unpacked)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
+      - name: tools (crane, the Rust toolchain of jarvis4's rust/)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/crane.tgz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/crane.tgz" -C /usr/local/bin crane
+          (cd jarvis4/rust && (rustup show active-toolchain || rustup toolchain install))
+      - name: the gVisor fork the fabric pins (jarvis4 k8s/cluster/fabric/hermit.json fabric.runsc), runsc and its sidecars
+        run: |
+          set -euo pipefail
+          gv=$(jq -r .fabric.runsc jarvis4/k8s/cluster/fabric/hermit.json)
+          u=https://github.com/DE0CH/gvisor/releases/download/$gv
+          t=$(mktemp -d)
+          curl -fsSL -o "$t/gvisor.tar.zstd" "$u/gvisor.tar.zstd" && curl -fsSL -o "$t/SHA256SUMS" "$u/SHA256SUMS"
+          (cd "$t" && grep ' gvisor.tar.zstd$' SHA256SUMS | sha256sum -c --quiet)
+          mkdir -p "$t/x" && tar --zstd -xf "$t/gvisor.tar.zstd" -C "$t/x"
+          sudo install -m755 "$t/x/runsc" /usr/local/bin/
+          sudo mkdir -p /usr/local/bin/gvisor-bin && sudo install -m755 "$t/x/gvisor-bin/"* /usr/local/bin/gvisor-bin/
+          runsc --version | head -1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the candidate's fabric image (jarvis4 session-image/fabric on the replica's session image)
+        working-directory: jarvis4
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/hermit-sandbox:pull" | jq -r .token)
+          digest=$(curl -sSfI -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/de0ch/hermit-sandbox/manifests/${TAG#aviary-}" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no sandbox image for $TAG"; exit 1; }
+          sandbox="ghcr.io/de0ch/hermit-sandbox@$digest"
+          crane config "$sandbox" > session-image/fabric/aviary-sandbox.config
+          session="$SESSION@$(crane digest "$SESSION")"
+          docker buildx build . -f session-image/fabric/Dockerfile --push --tag "$FABRIC" \
+            --build-arg SESSION="$session" --build-arg SANDBOX="$sandbox" \
+            --label "org.opencontainers.image.source=https://github.com/DE0CH/jarvis4"
+      - name: the fabric replica (rust/e2e-kernel, E2E_RUNNER=fabric, E2E_HARNESS=aviary) on this release
+        working-directory: jarvis4
+        env:
+          E2E_RUNNER: fabric
+          E2E_HARNESS: aviary
+          E2E_FABRIC_IMAGE: ${{ env.FABRIC }}
+          E2E_SESSION_IMAGE: ${{ env.SESSION }}
+          E2E_LOGS: /tmp/e2e-fabric-logs
+        run: |
+          (cd rust && cargo build --release --locked -p e2e-kernel)
+          rust/target/release/e2e-kernel
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: e2e-fabric-logs, path: /tmp/e2e-fabric-logs, retention-days: 7, if-no-files-found: ignore}

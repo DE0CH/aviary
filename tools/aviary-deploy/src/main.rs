@@ -61,6 +61,8 @@ fn ready(sha: &str, workflows: &str) -> Result<()> {
             workflow: r["name"].as_str().unwrap_or_default().to_string(),
             status: r["status"].as_str().unwrap_or_default().to_string(),
             conclusion: r["conclusion"].as_str().map(String::from),
+            on_main: r["head_branch"].as_str() == Some("main")
+                && matches!(r["event"].as_str(), Some("push" | "workflow_dispatch" | "schedule")),
         }));
         if n < 100 {
             break;

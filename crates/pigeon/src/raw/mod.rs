@@ -18,8 +18,8 @@
 //!   admin's first read per conversation and day in the view-as log).
 //! - `GET <compat::SESSIONS><id>/transcript?after=<ord>&<compat::VIEW_AS_QUERY>=…`: the same cells for a view-as
 //!   identity, from magpie's `GET /v1/conversations/{id}/transcript`.
-//! - The shell carries a small script ([`toggle_script`]) that shows a "Raw transcript" button in a view-as tab whose
-//!   address names a conversation; nothing shows in a normal tab.
+//! - The way in is the app's own "Raw transcript" chip in a view-as tab's header, which opens
+//!   `/raw/<id>?back=<the page>`.
 
 pub mod cells;
 pub mod qwen;
@@ -41,13 +41,9 @@ pub const PAGE_PREFIX: &str = "/raw/";
 /// The page (static; data comes from the transcript route).
 const PAGE_TEMPLATE: &str = include_str!("page.html");
 
-/// The script the shell carries before `</body>` (signed-in variant): the raw view's button in a view-as tab.
-const TOGGLE_TEMPLATE: &str = include_str!("toggle.html");
-
 /// A template with the app's wire names filled in (they live in `paseo::compat` only).
 fn fill(t: &str) -> String {
-    t.replace("{{STORAGE_KEY}}", compat::VIEW_AS_STORAGE)
-        .replace("{{HASH_KEY}}", compat::VIEW_AS_FRAGMENT.trim_end_matches('='))
+    t.replace("{{HASH_KEY}}", compat::VIEW_AS_FRAGMENT.trim_end_matches('='))
         .replace("{{SESSIONS}}", compat::SESSIONS)
         .replace("{{VIEW_AS_QUERY}}", compat::VIEW_AS_QUERY)
 }
@@ -57,13 +53,6 @@ fn fill(t: &str) -> String {
 pub fn page_html() -> &'static str {
     static P: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| fill(PAGE_TEMPLATE));
     &P
-}
-
-/// The shell's button script.
-#[must_use]
-pub fn toggle_script() -> &'static str {
-    static T: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| fill(TOGGLE_TEMPLATE).trim_end().to_owned());
-    &T
 }
 
 fn not_available() -> Response {
@@ -267,15 +256,12 @@ mod tests {
 
     #[test]
     fn every_placeholder_is_filled() {
-        for t in [page_html(), toggle_script()] {
-            assert!(!t.contains("{{"), "a placeholder left");
-        }
+        assert!(!page_html().contains("{{"), "a placeholder left");
         assert!(page_html().contains("/lines"), "the page reads the lines route");
         assert!(
             !page_html().contains(compat::VIEW_AS_QUERY),
             "and needs no view-as token"
         );
-        assert!(toggle_script().contains(compat::VIEW_AS_STORAGE));
     }
 
     #[test]

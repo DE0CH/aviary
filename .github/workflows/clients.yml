@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       clients:
-        description: "builds to add: <claudecodeui commit, 40 hex>:<web|ios>, space-separated"
+        description: "builds to add: <aviary (or claudecodeui) commit, 40 hex>:<web|ios>, space-separated"
         required: true
       attempt:
         description: "set by a re-dispatch after a stale list"
@@ -94,16 +94,21 @@ jobs:
       - name: the contract server test/pigeon.test.mjs runs (the new builds drive a running pigeon)
         working-directory: .
         run: cargo test --locked -p pigeon --test contract_server --no-run
-      - name: the commits are on claudecodeui main
+      - name: the commits are on main (aviary's, or claudecodeui's for the builds before the monorepo)
         env:
           CLIENTS: ${{ steps.list.outputs.clients }}
         run: |
-          git init -q --bare "$RUNNER_TEMP/ccui-history"
-          # every commit of main, no trees or blobs
-          git -C "$RUNNER_TEMP/ccui-history" fetch -q --filter=tree:0 https://github.com/DE0CH/claudecodeui.git main
+          set -euo pipefail
+          for repo in aviary claudecodeui; do
+            git init -q --bare "$RUNNER_TEMP/$repo-history"
+            # every commit of main, no trees or blobs
+            git -C "$RUNNER_TEMP/$repo-history" fetch -q --filter=tree:0 "https://github.com/DE0CH/$repo.git" main:refs/heads/main
+          done
           for item in $CLIENTS; do
-            git -C "$RUNNER_TEMP/ccui-history" merge-base --is-ancestor "${item%%:*}" FETCH_HEAD \
-              || { echo "claudecodeui ${item%%:*} is not on main" >&2; exit 1; }
+            c=${item%%:*}
+            git -C "$RUNNER_TEMP/aviary-history" merge-base --is-ancestor "$c" main 2>/dev/null \
+              || git -C "$RUNNER_TEMP/claudecodeui-history" merge-base --is-ancestor "$c" main 2>/dev/null \
+              || { echo "$c is on neither aviary's nor claudecodeui's main" >&2; exit 1; }
           done
       - name: insert the builds (the script checks each hash, kind and that the commit is a client build)
         env:
