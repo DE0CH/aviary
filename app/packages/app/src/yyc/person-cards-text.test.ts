@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cardsMetadata,
   cardAnswers,
   cardQuestions,
   cardViewWhereAsked,
@@ -46,6 +47,19 @@ describe("where a card shows", () => {
     expect(isPersonCardCall({ personAsk: question })).toBe(true);
     expect(isPersonCardCall({ background: true })).toBe(false);
   });
+
+  it("follows the deployment's switch: off hides a card's row and strips the read copies", () => {
+    expect(cardsMetadata({ personAsk: question }, false)).toBe("hide");
+    expect(cardsMetadata({ personRead: [question] }, false)).toBe("strip");
+    expect(cardsMetadata({ background: true }, false)).toBe("keep");
+    expect(cardsMetadata({ personAsk: question }, true)).toBe("keep");
+  });
+
+  it("shows a card from an older supervisor (no marker) answered where it was asked, never not read yet", () => {
+    const unmarked = { ...question, marker: "" };
+    expect(cardViewWhereAsked(unmarked)).toBe("waiting");
+    expect(cardViewWhereAsked({ ...unmarked, state: "answered" })).toBe("read");
+  });
 });
 
 describe("what a card says", () => {
@@ -85,7 +99,9 @@ describe("what a card says", () => {
 
   it("says when it was asked only when it moved a while after", () => {
     expect(moved({ ...question, answeredAt: "2026-11-18T10:03:00Z" })).toBe(false);
-    expect(moved({ ...question, answeredAt: "2026-11-18T14:15:00Z" })).toBe(true);
+    expect(moved({ ...question, answeredAt: "2026-11-18T14:15:00Z", readBy: "toolu_cat" })).toBe(true);
+    // shown where it was asked (never read by a result): it did not move
+    expect(moved({ ...question, answeredAt: "2026-11-18T14:15:00Z" })).toBe(false);
     expect(moved(question)).toBe(false);
   });
 });

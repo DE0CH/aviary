@@ -10,6 +10,8 @@ import {
 } from "@/tool-calls/detail-level/projection";
 import type { StreamItem, UserMessageItem } from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
+import { cardsMetadata } from "@/yyc/person-cards-text";
+import { oneItemPerId } from "./one-item-per-id";
 
 interface PresentationInput {
   tail: StreamItem[];
@@ -19,6 +21,8 @@ interface PresentationInput {
   /** User messages whose collapsed turn the reader opened. */
   expandedTurnHostIds: ReadonlySet<string>;
   isTurnActive: boolean;
+  /** The deployment shows the question and wait cards (yyc/me.ts `personCards`). */
+  personCards: boolean;
 }
 
 export interface StreamPresentation extends ToolCallDetailProjection {
@@ -53,6 +57,7 @@ export function createStreamPresentation() {
 
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
+  let historyCards = false;
   let historyRows: StreamItem[] = [];
   let preparedTail: StreamItem[] | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
@@ -62,7 +67,17 @@ export function createStreamPresentation() {
   let collapsedExpandedHostIds: ReadonlySet<string> | undefined;
   let collapsed: TurnCollapse | undefined;
 
-  function presentRows(item: StreamItem): StreamItem[] {
+  function presentRows(item: StreamItem, cards: boolean): StreamItem[] {
+    // the question and wait cards as the deployment shows them (yyc/person-cards-text.ts cardsMetadata)
+    if (item.kind === "tool_call" && item.payload.source === "agent") {
+      const metadata = item.payload.data.metadata;
+      const shown = cardsMetadata(metadata, cards);
+      if (shown === "hide") return [];
+      if (shown === "strip" && metadata) {
+        const { personRead: _, ...rest } = metadata;
+        return [{ ...item, payload: { ...item.payload, data: { ...item.payload.data, metadata: rest } } }];
+      }
+    }
     return [item.kind === "user_message" ? presentUserMessage(item) : item];
   }
 
@@ -99,28 +114,31 @@ export function createStreamPresentation() {
   return (input: PresentationInput): StreamPresentation => {
     const level: ToolCallDetailLevel = input.display === "full" ? "detailed" : "overview";
     // Retained history is not reprojected or regrouped on each live text update.
-    if (historySource !== input.tail || historyTransform !== input.transform) {
-      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) => presentRows(item),
+    if (historySource !== input.tail || historyTransform !== input.transform || historyCards !== input.personCards) {
+      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>((item) =>
+        presentRows(item, input.personCards),
       );
       historySource = input.tail;
       historyTransform = input.transform;
+      historyCards = input.personCards;
     }
     const head: StreamItem[] = [];
     for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
-      const blocks = presentRows(item);
+      const blocks = presentRows(item, input.personCards);
       head.push(...blocks);
     }
-    if (preparedTail !== historyRows || preparedLevel !== level) {
-      preparedHistory = prepareToolCallHistory(level, historyRows);
-      preparedTail = historyRows;
+    // one item per id, however a second copy came about (one-item-per-id.ts)
+    const unique = oneItemPerId(historyRows, head);
+    if (preparedTail !== unique.tail || preparedLevel !== level) {
+      preparedHistory = prepareToolCallHistory(level, unique.tail);
+      preparedTail = unique.tail;
       preparedLevel = level;
     }
     return collapse(
       projectToolCallDetailLevel({
         level,
-        tail: historyRows,
-        head,
+        tail: unique.tail,
+        head: unique.head,
         preparedHistory,
         isTurnActive: input.isTurnActive,
       }),
