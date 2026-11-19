@@ -50,13 +50,16 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: this commit's tags in the folder
         # the images of a part that changed on this branch are built by the part's workflow, which may still run:
-        # wait for them (a part that did not change has its images already)
+        # wait for them (a part that did not change has its images already). pigeon-app is built on main only
+        # (app.yml's image job lists each build in main's clients.txt): not waited for, and the check below lets it
+        # be missing; deploy.yml deploys only once app.yml is green on main.
         run: |
           set -euo pipefail
           aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
           cat "$RUNNER_TEMP/tags.json"
+          jq 'del(."pigeon-app")' "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/branch-tags.json"
           for i in $(seq 1 90); do
-            if aviary-deploy digests "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; then break; fi
+            if aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; then break; fi
             [ "$i" = 90 ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
             echo "waiting for: $(cat "$RUNNER_TEMP/digests.err")"; sleep 60
           done
@@ -69,7 +72,7 @@ jobs:
           yq ea -o=json -I=0 '[.]' render.yaml > render.json
           kubeconform -strict -summary -kubernetes-version 1.36.5 -schema-location default -schema-location "$CRDS" render.yaml
       - name: switches, zero-downtime shape, pins, policies, gateway config, placement, sizes, one cluster (2-4, 6, 8, 13)
-        run: python3 yyc/tests/check_deploy.py --folder "$FOLDER" --render render.json --online
+        run: python3 yyc/tests/check_deploy.py --folder "$FOLDER" --render render.json --online --main-only pigeon-app
       - name: the checks catch their planted violations
         env: {RENDER: render.json}
         run: |

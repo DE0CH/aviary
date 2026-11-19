@@ -17,7 +17,8 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      none, 9.3), its grace period at least 9.3's, a PDB minAvailable 1, replicas >= 2 or an HPA minReplicas >= 2 (and
      then no replicas), the hostname spread DoNotSchedule
   4  pins: pigeon, magpie, hermit, sandboxd one aviary sha12; hermit.json fabric.sandboxd = aviary-<that sha12>; the
-     sandbox image pinned by digest; --online: each pinned image and the digest exist (anonymous `crane digest`), the
+     sandbox image pinned by digest; --online: each pinned image (an image named by --main-only may be missing) and
+     the digest exist (anonymous `crane digest`), the
      sandbox image's dev.de0ch.aviary.speaks in the pinned magpie's and hermit's accepts, the aviary release exists
   6  every NetworkPolicy's and CiliumNetworkPolicy's app label and every Service selector match a workload
   8  egress.json: routes model and tools, the rest sandbox routes (platform 3.11.8, WP-61) each with allowPaths and
@@ -600,7 +601,7 @@ def crane_config(ref, tries=6):
     return r
 
 
-def check_pins(folder, objs, online):
+def check_pins(folder, objs, online, main_only=()):
     k = open(os.path.join(folder, "kustomization.yaml")).read()
     tags = dict(re.findall(r"\{name: ([a-z0-9-]+), newName: [^,]+, newTag: \"?([0-9a-f]+)\"?\}", k))
     aviary = {tags.get(n) for n in ("pigeon", "magpie", "hermit", "sandboxd")}
@@ -620,6 +621,9 @@ def check_pins(folder, objs, online):
     for n in ("pigeon", "magpie", "hermit", "sandboxd", "pigeon-app", "egress"):
         ref = f"ghcr.io/de0ch/{n}:{tags[n]}"
         r = crane_config(ref)
+        if r.returncode and n in main_only:
+            print(f"{ref}: not in the registry yet; built on main only (deploy.yml waits for it)")
+            continue
         if r.returncode:
             fail(4, ref, f"not pullable anonymously: {r.stderr.strip()[:200]}")
             continue
@@ -685,6 +689,9 @@ def main():
     ap.add_argument("--folder", required=True)
     ap.add_argument("--render", required=True)
     ap.add_argument("--online", action="store_true")
+    # an image whose workflow builds it on main only (pigeon-app: app.yml's image job lists each build in main's
+    # clients.txt): on a branch that changed its part, its tag is not in the registry yet
+    ap.add_argument("--main-only", action="append", default=[])
     a = ap.parse_args()
     folder = os.path.join(ROOT, a.folder)
     objs = [o for o in json.load(open(a.render)) if o]
@@ -718,7 +725,7 @@ def main():
     check_disk(objs)
     check_branding(folder, objs)
     check_catalogue(folder, objs)
-    check_pins(folder, objs, a.online)
+    check_pins(folder, objs, a.online, a.main_only)
     check_wal()
     for f in FAIL:
         print(f"::error::{f}")

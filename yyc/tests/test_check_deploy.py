@@ -28,7 +28,7 @@ class OnlineLookups(unittest.TestCase):
     """--online's registry lookups ride out a network blip (2026-11-17: the runner's DNS timed out on ghcr.io for 90 s
     and every pin failed as "not pullable"); a refusal by the registry is still a failure at once"""
 
-    def online(self, crane_body):
+    def online(self, crane_body, *extra):
         with tempfile.TemporaryDirectory() as d:
             # stand-ins on PATH: crane per crane_body (a counter file per ref), curl answers 200
             open(os.path.join(d, "crane"), "w").write("#!/bin/bash\n" + crane_body)
@@ -39,7 +39,7 @@ class OnlineLookups(unittest.TestCase):
                 json.dump(RENDER, f)
             env = dict(os.environ, PATH=d + ":" + os.environ["PATH"], CHECK_DEPLOY_RETRY_PAUSE="0", STATE=d)
             return subprocess.run([sys.executable, "-I", os.path.join(HERE, "check_deploy.py"), "--folder", FOLDER,
-                                   "--render", f.name, "--online"], capture_output=True, text=True, env=env)
+                                   "--render", f.name, "--online", *extra], capture_output=True, text=True, env=env)
 
     # the config of every image: a sandbox image that speaks what magpie and hermit accept
     CONFIG = ('''echo '{"config":{"Labels":{"dev.de0ch.aviary.speaks":"{\\"magpie-sandbox\\":2,\\"hermit-sandbox\\":1}",'''
@@ -56,6 +56,24 @@ class OnlineLookups(unittest.TestCase):
         r = self.online('echo "MANIFEST_UNKNOWN: manifest unknown" >&2; exit 1\n')
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("not pullable anonymously: MANIFEST_UNKNOWN", r.stdout)
+
+
+    # pigeon-app's tag is not in the registry, every other image is
+    APP_MISSING = ('case "$2" in *pigeon-app:*) echo "MANIFEST_UNKNOWN: manifest unknown" >&2; exit 1;; esac\n')
+
+    def test_an_image_built_on_main_only_may_be_missing_on_a_branch(self):
+        # app.yml builds pigeon-app on main only (its image job lists the build in main's clients.txt): a branch that
+        # changed app/ has no image yet, and deploy.yml waits for app.yml on main before it deploys
+        r = self.online(self.APP_MISSING + self.CONFIG, "--main-only", "pigeon-app")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("not pullable", r.stdout)
+        self.assertIn("pigeon-app", r.stdout)  # said, not silent
+
+    def test_a_main_only_image_is_still_required_without_the_flag(self):
+        r = self.online(self.APP_MISSING + self.CONFIG)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("pigeon-app", r.stdout)
+        self.assertIn("not pullable anonymously", r.stdout)
 
 
 class Seeded(unittest.TestCase):
