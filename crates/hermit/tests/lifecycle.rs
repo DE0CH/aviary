@@ -438,6 +438,40 @@ async fn silence_releases_only_after_two_unanswered_checks_and_never_while_the_g
     assert_eq!(gone.release_code.as_deref(), Some("sandbox_lost"));
 }
 
+/// `sandbox.silenceSeconds` moves the silence rule (Deyao, 2026-11-20): Jarvis 4's fabric hermit gets no activity
+/// reports (its sessions' supervisors report to another hermit), so its sandboxes are always "silent", and a session
+/// whose supervisor is stopped for its final snapshot was ended `unhealthy` mid-snapshot. Set past any sandbox's life,
+/// a sandbox whose health goes unanswered is not judged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn silence_seconds_moves_the_silence_rule() {
+    let h = Harness::with(
+        "lifecycle_silence_seconds",
+        common::config(|v| v["sandbox"]["silenceSeconds"] = 3600.into()),
+        common::timings(),
+    )
+    .await;
+    let r = h.replica("hermit-a").await;
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    // silent for 5 minutes, health unanswered: within its hour, nothing judged
+    h.sql(&format!(
+        "update sandboxes set last_heartbeat_at = now() - interval '5 minutes', ready_at = now() - interval '5 minutes' where id = '{}'",
+        s.id
+    ))
+    .await;
+    h.fabric.silence(s.ip.unwrap());
+    assert_eq!(janitor::pass(r.core()).await.unwrap().unhealthy, Vec::<Uuid>::new());
+    assert_eq!(row(&h, cid).await.status, SandboxState::Ready);
+    // past its hour: the rule as before
+    h.sql(&format!(
+        "update sandboxes set last_heartbeat_at = now() - interval '2 hours' where id = '{}'",
+        s.id
+    ))
+    .await;
+    assert_eq!(janitor::pass(r.core()).await.unwrap().unhealthy, vec![s.id]);
+    let gone = wait_state(&h, cid, SandboxState::Gone).await;
+    assert_eq!(gone.release_reason.as_deref(), Some("unhealthy"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_release_resumes_on_another_replica_after_a_kill() {
     let h = Harness::new("lifecycle_release_takeover").await;

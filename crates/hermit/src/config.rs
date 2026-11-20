@@ -115,6 +115,12 @@ pub struct SandboxJson {
     pub supervisor_wait_seconds: u32,
     pub start_deadline_seconds: u32,
     pub pool_victim_idle_seconds: u32,
+    /// How long a ready sandbox may go without an activity report before the silence rule's two health checks
+    /// (hermit 12 step 3), and half of it for a `PUT`'s early check. Absent = the timings' own (90 s and 45 s). A
+    /// deployment whose supervisors report to another hermit (Jarvis 4's fabric hermit) sets it past any sandbox's
+    /// life.
+    #[serde(default)]
+    pub silence_seconds: Option<u32>,
     pub reserve_seconds: u32,
     pub activity_every_seconds: u32,
     pub workspace: WorkspaceJson,
@@ -414,6 +420,9 @@ impl Config {
             if v == 0 {
                 return Err(invalid(format!("sandbox.{name} must be positive")));
             }
+        }
+        if s.silence_seconds == Some(0) {
+            return Err(invalid("sandbox.silenceSeconds must be positive"));
         }
         by_person_rules(&s.max_active_by_person)?;
         person_names("notifyPersonLimit", &s.notify_person_limit)?;
