@@ -135,7 +135,15 @@ async function topOf(maestro, udid, id, label) {
 async function main() {
   const appId = plist("CFBundleIdentifier");
   const scheme = plist("CFBundleURLTypes.0.CFBundleURLSchemes.0");
-  const standIn = await startStandIn({ appDir: path.join(here, "../../packages/app/public"), port: PORT, appScheme: scheme, quiet: true });
+  // what reached the stand-in, and when (the app's requests and its socket): out/stand-in.log
+  const requests = fs.createWriteStream(path.join(out, "stand-in.log"));
+  const standIn = await startStandIn({
+    appDir: path.join(here, "../../packages/app/public"),
+    port: PORT,
+    appScheme: scheme,
+    quiet: true,
+    onRequest: (line) => requests.write(`${new Date().toISOString()} ${line}\n`),
+  });
   const maestro = maestroBin();
   const udid = bootSimulator();
   try {
@@ -157,6 +165,14 @@ async function main() {
     try {
       run("xcrun", ["simctl", "io", udid, "screenshot", path.join(out, "final.png")]);
     } catch {}
+    // the app's own log (React Native's console and the system's network lines for its process): out/app.log
+    try {
+      const executable = plist("CFBundleExecutable");
+      fs.writeFileSync(path.join(out, "app.log"), run("xcrun", ["simctl", "spawn", udid, "log", "show", "--last", "30m",
+        "--style", "compact", "--predicate", `process == "${executable}"`]));
+    } catch (e) {
+      fs.writeFileSync(path.join(out, "app.log"), String(e));
+    }
     try {
       run("xcrun", ["simctl", "shutdown", udid]);
       run("xcrun", ["simctl", "delete", udid]);
