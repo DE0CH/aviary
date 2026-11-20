@@ -28,7 +28,7 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     # the wait for this commit's images (up to 90 min, while ci builds them) and the checks after it
-    timeout-minutes: 120
+    timeout-minutes: 180  # the wait below for this commit's images and release (ci.yml), then the checks
     # the catalogue (people's addresses) is the `checks` environment's secret, never a file in git
     environment: checks
     steps:
@@ -52,7 +52,9 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: this commit's tags in the folder
         # the images of a part that changed on this branch are built by the part's workflow, which may still run:
-        # wait for them (a part that did not change has its images already). pigeon-app is built on main only
+        # wait for them (a part that did not change has its images already), and for the gateway's release
+        # (gateway.release, ci.yml's publish, after every test job: the check below read it before its sandboxd was
+        # uploaded and failed main's 5b06648e24, 2026-11-20). One deadline for both. pigeon-app is built on main only
         # (app.yml's image job lists each build in main's clients.txt): not waited for, and the check below lets it
         # be missing; deploy.yml deploys only once app.yml is green on main.
         run: |
@@ -60,12 +62,17 @@ jobs:
           aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
           cat "$RUNNER_TEMP/tags.json"
           jq 'del(."pigeon-app")' "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/branch-tags.json"
-          for i in $(seq 1 90); do
-            if aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; then break; fi
-            [ "$i" = 90 ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
+          deadline=$((SECONDS + 150 * 60))
+          until aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; do
+            [ "$SECONDS" -ge "$deadline" ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
             echo "waiting for: $(cat "$RUNNER_TEMP/digests.err")"; sleep 60
           done
           aviary-deploy yyc "$FOLDER" "$RUNNER_TEMP/tags.json"
+          rel=$(cat "$FOLDER/hermit/gateway.release")
+          until curl -fsS -o /dev/null -I "https://github.com/DE0CH/aviary/releases/download/$rel/sandboxd"; do
+            [ "$SECONDS" -ge "$deadline" ] && { echo "::error::release $rel has no sandboxd binary"; exit 1; }
+            echo "waiting for release $rel's sandboxd (ci.yml publish)"; sleep 60
+          done
           git diff --stat -- "$FOLDER"
       - name: render and validate (item 1)
         run: |
