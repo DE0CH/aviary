@@ -158,11 +158,22 @@ server (`server/`) serves no deployment.
   that name (`yyc/product.ts`: the translations through an i18next post-processor).
 - **Activity** (Deyao, 2026-11-12; `yyc/activity.tsx`, the approved mock): what a conversation runs beside its reply
   (a background command, a subagent, a workflow, a monitor). A chip in the header (「n running」, a still icon; absent
-  until the conversation has run one) opens a 340 px panel docked beside the chat as the schedules panel is (full
-  screen with a back arrow on a phone): one section per task with its type, how long it has run, what it does now, a
+  until the conversation has run one) opens the conversation's side panel: one section per task with its type, how long it has run, what it does now, a
   subagent's step count and Stop; the finished ones below with their result. Nothing in it moves except the clock.
   Data: `GET /api/jarvis/sessions/<id>/tasks`, `POST …/tasks/<taskId>/stop` (aviary's pigeon); a server without the
   route shows no chip.
+- **The side panel** (Activity, Schedules; `yyc/side-panel.tsx`, `yyc/conversation-side-panel.tsx`; Deyao,
+  2026-11-20): content of upstream's right-hand panel frame (`screens/workspace/explorer-sidebar/frame.tsx`, whose
+  explorer is off), docked and resizable beside the chat on a wide screen, sliding over it on a phone (its swipe and
+  backdrop close it; folding with a panel open slides it over the chat). The frame keeps the column's top clear of the
+  status bar in both layouts, so a panel has no safe area of its own: its header is the app's (`CompactHeader` behind
+  the chat's fade on a phone, `ScreenHeader` beside the chat, both `framed`). A shell of our own once left room for the
+  status bar only on a phone, and the docked Activity on the unfolded Fold sat under it.
+- **The conversation list on the phone apps** (Deyao, 2026-11-20): a finger on a row shows the theme's
+  `interactionHighlight` at once (drawn by `PressHighlight` on the UI thread); the tapped row is selected before the
+  conversation opens (`stores/navigation-active-workspace-store/tapped-selection.ts`: it stands until the route moves,
+  and the conversation opens a frame later); a long press opens the row's menu at the row with a tap of the phone, and
+  on a pinned row holding still opens it while holding and moving drags (`useRowLongPressMenu`).
 - **Slash commands**: a message that starts with `/` opens a list over the message box of what the server answers
   to `list_commands_request` (aviary: the commands and skills the conversation's Claude Code names, known once its
   first reply has started), narrowed as the name is typed; ↑/↓ move, Enter, Tab or a click write the name into the
@@ -202,7 +213,7 @@ go through the chat):
   like sent-file cards it is never folded into a group or a finished turn's summary (isScheduleCallDetail);
 - a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
   (ScheduledMessage);
-- 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
+- 「n 個排程」 in the conversation's header, opening the conversation's side panel (beside the chat, over it on a phone)
   from `GET /api/jarvis/sessions/<id>/schedules` (pigeon answers it).
 
 Claude Code's own CronCreate, CronList, CronDelete and ScheduleWakeup are disallowed in Jarvis mode

@@ -9,14 +9,17 @@ export interface TappedSelection {
   to: ActiveWorkspaceSelection;
 }
 
-function sameSelection(a: ActiveWorkspaceSelection | null, b: ActiveWorkspaceSelection | null): boolean {
+function sameSelection(
+  a: ActiveWorkspaceSelection | null,
+  b: ActiveWorkspaceSelection | null
+): boolean {
   return a?.serverId === b?.serverId && a?.workspaceId === b?.workspaceId;
 }
 
 /** The tapped row stands until the route moves, wherever it moves to; then the route is the selection again. */
 export function shownSelection(
   route: ActiveWorkspaceSelection | null,
-  tapped: TappedSelection | null,
+  tapped: TappedSelection | null
 ): ActiveWorkspaceSelection | null {
   return tapped && sameSelection(route, tapped.from) ? tapped.to : route;
 }

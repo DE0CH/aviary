@@ -194,14 +194,14 @@ async function hold([x, y], ms, during) {
 
 const contextMenuOpen = (n) => n.find((m) => m.id.includes("sidebar-workspace-context-menu-"));
 
-/** A panel's header button sits below the status bar on this screen. */
-async function checkPanelBelowStatusBar(posture, buttonId) {
-  const button = await waitFor((n) => byId(n, buttonId), 15_000, `${posture}-${buttonId}`);
+/** The Activity panel's header (its title) sits below the status bar on this screen. */
+async function checkPanelBelowStatusBar(posture) {
+  const title = await waitFor((n) => byId(n, "activity-title"), 15_000, `${posture}-activity`);
   screenshot(`${posture}-activity`);
   const bar = insetFrame("statusBars");
-  if (!check(`${posture}: the Activity panel opens`, button)) return;
-  check(`${posture}: the Activity panel's header is below the status bar`, bar && button.box.top >= bar.bottom,
-    bar ? `button top ${button.box.top}, status bar bottom ${bar.bottom}` : "no status bar inset");
+  if (!check(`${posture}: the Activity panel opens`, title)) return;
+  check(`${posture}: the Activity panel's header is below the status bar`, bar && title.box.top >= bar.bottom,
+    bar ? `title top ${title.box.top}, status bar bottom ${bar.bottom}` : "no status bar inset");
 }
 
 async function waitKeyboard(shown, timeoutMs = 10_000) {
@@ -444,10 +444,10 @@ async function main() {
     const chip = await waitFor((n) => byId(n, "activity-chip"), 30_000, "activity-chip");
     if (check("a conversation that ran tasks shows the Activity chip", chip)) {
       tap(chip);
-      await checkPanelBelowStatusBar("main", "activity-close");
+      await checkPanelBelowStatusBar("main");
       setScreen(COVER);
       await sleep(3000);
-      await checkPanelBelowStatusBar("cover", "activity-back");
+      await checkPanelBelowStatusBar("cover");
       shell("input", "keyevent", "KEYCODE_BACK");
       await sleep(1000);
     }

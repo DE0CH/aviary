@@ -5,8 +5,8 @@
  *   - the AI's API call as a card in the chat: 「已設定排程：每個工作日 08:30」 and the next time (ScheduleToolCard);
  *   - a fired message (`<scheduled-message rule="…">…</scheduled-message>`) as a 排程訊息 bubble under a divider
  *     「排程 · 時間」 (ScheduledMessage);
- *   - a clock chip in the conversation's header, 「n 個排程」 (ScheduleChip), opening a panel beside the chat that
- *     pushes it narrower (full screen with a back arrow on a phone; SchedulesPanel): each schedule open, its rule and
+ *   - a clock chip in the conversation's header, 「n 個排程」 (ScheduleChip), opening a side panel (yyc/side-panel.tsx:
+ *     beside the chat, over it on a phone; SchedulesPanel): each schedule open, its rule and
  *     重複/單次, the next time large, the message, the conditions (時區, 結束, 設定) and the last runs, then the grey
  *     line 「在對話中告訴 YYC AI 即可修改或取消。」.
  * The panel reads GET /api/jarvis/sessions/<id>/schedules (the same shape on both stacks). Staff text is Chinese for
@@ -18,7 +18,7 @@ import { useProductName, withProductName } from "@/yyc/product";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Clock } from "lucide-react-native";
-import { SidePanel } from "@/yyc/side-panel";
+import { SidePanelPage, useSidePanelToggle } from "@/yyc/side-panel";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { api } from "@/yyc/api";
@@ -53,13 +53,6 @@ export function useConversationSchedules(sessionId: string | null) {
   });
 }
 
-/** Which conversation's panel is open. */
-export const useSchedulesPanel = create<{ openFor: string | null; toggle: (sessionId: string) => void; close: () => void }>((set) => ({
-  openFor: null,
-  toggle: (sessionId) => set((s) => ({ openFor: s.openFor === sessionId ? null : sessionId })),
-  close: () => set({ openFor: null }),
-}));
-
 const isLive = (s: Schedule) => s.state === "active" || s.state === "paused";
 
 // ---- the chip ----
@@ -73,8 +66,7 @@ const accentColor = (theme: Theme) => ({ color: theme.colors.scheduleAccent });
 /** 「n 個排程」 in the conversation's header (nothing when it has none); opens the panel. */
 export function ScheduleChip({ sessionId }: { sessionId: string | null }) {
   const { data } = useConversationSchedules(sessionId);
-  const open = useSchedulesPanel((s) => (sessionId ? s.openFor === sessionId : false));
-  const toggle = useSchedulesPanel((s) => s.toggle);
+  const { open, toggle } = useSidePanelToggle(sessionId, "schedules");
   const all = data ?? [];
   const count = all.filter(isLive).length;
   // a one-off that fired stays in the panel for a day (its run): the chip stays too, without a count
@@ -86,7 +78,7 @@ export function ScheduleChip({ sessionId }: { sessionId: string | null }) {
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
       accessibilityLabel={label}
-      onPress={() => toggle(sessionId)}
+      onPress={toggle}
       style={styles.chipTarget}
     >
       <View style={[styles.chip, open ? styles.chipOpen : null]}>
@@ -140,39 +132,21 @@ function ScheduleSection({ s, name }: { s: Schedule; name: string | null }) {
   );
 }
 
-/**
- * The panel beside the chat (it takes its width from the chat column, which gets narrower); on a phone it covers the
- * chat, with a back arrow. Its shell, the safe area included, is `SidePanel`.
- */
+/** A conversation's schedules in its side panel (yyc/side-panel.tsx: beside the chat, over it on a phone). */
 export function SchedulesPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
-  const open = useSchedulesPanel((s) => (sessionId ? s.openFor === sessionId : false));
-  const close = useSchedulesPanel((s) => s.close);
-  const { data } = useConversationSchedules(open ? sessionId : null);
+  const { data } = useConversationSchedules(sessionId);
   const name = useFirstName();
   const product = useProductName();
-  useEffect(() => {
-    // a conversation left with its panel open: closed, so the next one starts without it
-    return () => {
-      if (useSchedulesPanel.getState().openFor === sessionId) useSchedulesPanel.getState().close();
-    };
-  }, [sessionId]);
-  if (!open || !sessionId) return null;
+  if (!sessionId) return null;
   const schedules = data ?? [];
   return (
-    <SidePanel
-      id="schedules"
-      title="排程"
-      compact={compact}
-      onClose={close}
-      backLabel="返回"
-      closeLabel="關閉"
-    >
+    <SidePanelPage id="schedules" title="排程" compact={compact} closeLabel="關閉">
       {schedules.length === 0 ? <Text style={styles.runNone}>這個對話沒有排程。</Text> : null}
       {schedules.map((s) => (
         <ScheduleSection key={s.id} s={s} name={name ?? null} />
       ))}
       <Text style={styles.footer}>{withProductName("在對話中告訴 YYC AI 即可修改或取消。", product)}</Text>
-    </SidePanel>
+    </SidePanelPage>
   );
 }
 
