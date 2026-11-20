@@ -868,16 +868,49 @@ async fn insert_block(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, mid: &str, b: de
     Ok(())
 }
 
-/// Rule 9 (`by`: the retract event's seq).
-/// A card's row (rule 11) after a retract of one of its sources (only the line that read it can leave): unread
-/// again, without that source. `None` for any other row.
-fn person_unread(mut item: ToolItem, sources: &[i64], gone: &HashSet<i64>) -> Option<(ToolItem, Vec<i64>)> {
-    let card = item.person.as_mut()?;
-    card.read_by = None;
-    let surviving = sources.iter().copied().filter(|s| !gone.contains(s)).collect();
-    Some((item, surviving))
+/// Rule 11 after a retract: the cards a rebuilt call still reads, the ones of `old` its new result still carries the
+/// marker of (a rewritten line with the same result took the retracted one's place).
+fn keep_reads(old: &ToolItem, item: &mut ToolItem) {
+    let text = item.result.as_ref().map_or("", |r| r.text.as_str());
+    let kept: Vec<PersonCard> = old
+        .person_read
+        .iter()
+        .flatten()
+        .filter(|c| derive::carries(text, &c.marker))
+        .cloned()
+        .collect();
+    item.person_read = (!kept.is_empty()).then_some(kept);
 }
 
+/// Rule 11 after a retract of one of a card's sources (only the line that read it can leave): the card is read while
+/// the call that read it still carries it ([`keep_reads`], done before), else unread again where it was asked.
+/// `(item, its surviving sources, whether the item changed)`.
+async fn person_after_retract(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    mut item: ToolItem,
+    sources: &[i64],
+    gone: &HashSet<i64>,
+) -> Result<(ToolItem, Vec<i64>, bool)> {
+    let surviving = sources.iter().copied().filter(|s| !gone.contains(s)).collect();
+    let Some(card) = item.person.as_mut() else {
+        return Ok((item, surviving, false));
+    };
+    let still_read = match card.read_by.as_deref() {
+        Some(reader) => tool_row(tx, conversation, reader)
+            .await?
+            .is_some_and(|r| r.item.person_read.iter().flatten().any(|c| c.id == card.id)),
+        None => true,
+    };
+    if still_read {
+        return Ok((item, surviving, false));
+    }
+    card.read_by = None;
+    Ok((item, surviving, true))
+}
+
+/// Rule 9 (`by`: the retract event's seq). The cards' rows come after every other row, so a card reads what the
+/// rebuilt calls carry.
 async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result<()> {
     if seqs.is_empty() {
         return Ok(());
@@ -900,29 +933,28 @@ async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result
         return Ok(());
     }
     let mut changed = false;
+    let mut cards = Vec::new();
     for r in touched {
         let row_id: i64 = r.get(0);
         let kind: String = r.get(1);
         let sources: Vec<i64> = r.get(3);
         let gone = gone_among(tx, w.conversation, &sources).await?;
         let identifying_gone = sources.first().is_none_or(|s| gone.contains(s));
-        if kind == "tool"
-            && let Some((item, surviving)) = person_unread(tool_of(r.get(2))?, &sources, &gone)
-        {
-            // rule 11: the result that carried the answer left the transcript; the card is unread again where it
-            // was asked (the reading row, rebuilt from its line below, no longer carries it)
-            w.update(tx, row_id, &item, &surviving).await?;
-            changed = true;
-            continue;
-        }
         let rebuilt = if identifying_gone || kind != "tool" {
             None
         } else {
             let old = tool_of(r.get(2))?;
+            if old.person.is_some() {
+                cards.push((row_id, old, sources, gone));
+                continue;
+            }
             let block_index = u32::try_from(r.get::<_, Option<i32>>(4).unwrap_or(0)).unwrap_or(0);
             rebuild_tool(tx, w.conversation, &old.call_id, block_index, &sources, &gone)
                 .await?
-                .map(|x| (old, x))
+                .map(|(mut item, surviving)| {
+                    keep_reads(&old, &mut item);
+                    (old, (item, surviving))
+                })
         };
         match rebuilt {
             Some((old, (item, surviving))) if item == old => {
@@ -938,6 +970,15 @@ async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result
                 w.delete(tx, row_id).await?;
                 changed = true;
             }
+        }
+    }
+    for (row_id, old, sources, gone) in cards {
+        match person_after_retract(tx, w.conversation, old, &sources, &gone).await? {
+            (item, surviving, true) => {
+                w.update(tx, row_id, &item, &surviving).await?;
+                changed = true;
+            }
+            (_, surviving, false) => w.set_sources(tx, row_id, &surviving).await?,
         }
     }
     if changed {
