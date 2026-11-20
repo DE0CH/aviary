@@ -39,9 +39,21 @@ jobs:
       go: ${{ steps.r.outputs.go }}
       sha: ${{ steps.r.outputs.sha }}
     steps:
+      # main's head, whatever finished: a part's run of an older commit (a rerun) or of a head with no part runs (a
+      # docs commit) deploys the head, with the images its tags name (2026-11-20: evaluating the run's own commit left
+      # such a head to the 3-hourly schedule, which skips the Jarvis job)
+      - id: head
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY/branches/main" | jq -r .commit.sha)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::main's head: '$sha'"; exit 1; }
+          echo "main's head: $sha (this run: ${{ github.event.workflow_run.head_sha || github.sha }})"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ steps.head.outputs.sha }}
           fetch-depth: 0
           filter: "blob:none"
       - name: toolchain (rust-toolchain.toml, exactly)
@@ -52,7 +64,7 @@ jobs:
       - id: r
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SHA: ${{ steps.head.outputs.sha }}
         run: |
           set -euo pipefail
           out=$(tools/aviary-deploy/target/release/aviary-deploy ready "$SHA" "$PARTS")
