@@ -2446,7 +2446,7 @@ async fn the_hook_passes_descriptors_and_magpie_keeps_the_files() {
 }
 
 /// A person wait with a card (magpie rule 11): its first call opens the card with magpie, once; calling again while it
-/// waits opens nothing more; the end with an outcome passes the outcome; an end without one (a cancelled command)
+/// waits opens nothing more; the end with an outcome passes the outcome before it answers; an end without one (a cancelled command)
 /// leaves the card waiting; a call with no body (an older command) opens none.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_person_waits_card_opens_once_and_ends_with_its_outcome() {
@@ -2495,11 +2495,9 @@ async fn a_person_waits_card_opens_once_and_ends_with_its_outcome() {
         (waits["inbox-r1"].0.marker.as_str(), waits["inbox-r1"].1.as_deref()),
         ("(Inbox r1)", None)
     );
+    // the outcome is magpie's when the end answers: the command prints it only then, so no result can carry it
+    // before the card is settled
     assert_eq!(delete("/v1/person-waits/inbox-r1?outcome=approved".into()).await, 204);
-    until("the outcome reached magpie", || {
-        w.magpie.person_waits(w.cid)["inbox-r1"].1.is_some()
-    })
-    .await;
     assert_eq!(w.magpie.person_waits(w.cid)["inbox-r1"].1.as_deref(), Some("approved"));
     // ended without an outcome: the card keeps waiting
     assert_eq!(post("inbox-r2", Some(card.clone())).await, 204);
