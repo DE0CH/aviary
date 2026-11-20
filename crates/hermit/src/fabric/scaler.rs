@@ -685,14 +685,18 @@ async fn push_mesh_and_egress(g: &Gvisor, core: &Core) {
 }
 
 /// How long an image stays in the bucket after it was put there, used or not (a pin follows its publish by minutes).
-const IMAGE_FRESH: Duration = Duration::from_secs(24 * 3600);
+const IMAGE_FRESH: Duration = Duration::from_hours(24);
 /// Images of sandboxes started this recently are kept (a replica of a rollout may still start on the image before).
-const IMAGE_RECENT_STARTS: Duration = Duration::from_secs(7 * 24 * 3600);
+const IMAGE_RECENT_STARTS: Duration = Duration::from_hours(7 * 24);
 
 /// The image objects to delete: `images/<64 hex>.tar.zst` whose digest (`sha256:<hex>`) is not in `keep` and that were
 /// written before `fresh_before` (unix ms). Any other key is left alone.
 #[must_use]
-pub fn unused_images(objects: &[(String, i64)], keep: &HashSet<String>, fresh_before: i64) -> Vec<String> {
+pub fn unused_images<S: std::hash::BuildHasher>(
+    objects: &[(String, i64)],
+    keep: &HashSet<String, S>,
+    fresh_before: i64,
+) -> Vec<String> {
     objects
         .iter()
         .filter(|(k, at)| {
