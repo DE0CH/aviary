@@ -120,3 +120,18 @@ describe("Android app on a foldable", () => {
     expect(later).toBeLessThanOrEqual(2_100_000_000);
   }, 30_000);
 });
+
+describe("iOS app's server", () => {
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    for (const [key, value] of Object.entries(originalEnv)) process.env[key] = value;
+  });
+
+  // the iPhone walk's build (app-ios-walk.yml) talks to the stand-in over plain HTTP; a deployment's never does
+  it("may load a plain-HTTP server, and only that build", async () => {
+    process.env.YYC_SITE = "http://127.0.0.1:8787";
+    expect((await resolveAndroidConfig()).ios.infoPlist.NSAppTransportSecurity).toEqual({ NSAllowsArbitraryLoads: true });
+    process.env.YYC_SITE = "https://chat.deyaochen.com";
+    expect((await resolveAndroidConfig()).ios.infoPlist.NSAppTransportSecurity).toBeUndefined();
+  }, 30_000);
+});
