@@ -393,14 +393,21 @@ async function main() {
     screenshot("main-keyboard");
 
     // turned to landscape on the main screen
-    shell("wm", "user-rotation", "lock", "1");
     // the turn takes the loaded emulator anywhere from 1 to 10 s (2026-11-19: still portrait, 1968 x 2184, after a
-    // fixed 3 s): wait for the wide layout to be wider than tall
+    // fixed 3 s), and on the two-screen foldable profile a lone `wm user-rotation lock 1` sometimes never takes
+    // (2026-11-20, twice in a day: still 1968 x 2184 after 20 s). Turn display 0 itself, with the system's rotation
+    // settings behind it, and turn again until the wide layout is wider than tall.
     const wideNow = (n) => {
       const b = byId(n, "wide-shell")?.box;
       return b && b.right - b.left > b.bottom - b.top ? b : null;
     };
-    await waitFor(wideNow, 20_000, "landscape");
+    for (let turn = 0; turn < 4; turn += 1) {
+      shell("settings", "put", "system", "accelerometer_rotation", "0");
+      shell("settings", "put", "system", "user_rotation", "1");
+      tryShell("wm", "user-rotation", "-d", "0", "lock", "1");
+      tryShell("wm", "user-rotation", "lock", "1");
+      if (await waitFor(wideNow, 10_000, turn === 3 ? "landscape" : undefined)) break;
+    }
     screenshot("main-landscape");
     check("turning the unfolded phone keeps the app running", appPid() === pid);
     const landscape = dumpUi("main-landscape");
@@ -411,7 +418,9 @@ async function main() {
     check("turning keeps the typed text", turned?.field.text.includes(TYPED), turned?.field.text ?? "no box");
     if (!keyboardFrame() && turned) tap(turned.field);
     await checkBoxOnKeyboard("main landscape");
-    shell("wm", "user-rotation", "lock", "0");
+    shell("settings", "put", "system", "user_rotation", "0");
+    tryShell("wm", "user-rotation", "-d", "0", "lock", "0");
+    tryShell("wm", "user-rotation", "lock", "0");
     await sleep(2000);
 
     // ---- fold again: back to the cover screen ----
