@@ -453,9 +453,10 @@ async fn health(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Resp
 }
 
 /// `POST /jarvis/deliver`: a prompt from Jarvis into the session's conversation, as its person. While a turn runs
-/// it joins that turn (magpie's `joinRunning`: Claude Code takes it in after its next tool result); a refusal
-/// magpie still makes (409 `turn_running` from one that predates `joinRunning`) goes back as it is, and Jarvis's
-/// inbox delivers it again later.
+/// it joins that turn (magpie's `joinRunning`: Claude Code takes it in after its next tool result), or, when the
+/// delivery says `interrupt` (the memory and disk watchdog: the running tool call may be what fills the machine),
+/// stops it and runs next (magpie's `interruptRunning`); a refusal magpie still makes (409 `turn_running`) goes back
+/// as it is, and Jarvis delivers it again later.
 async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
     let (_, row) = match sandbox_of(&app, &headers).await {
         Ok(x) => x,
@@ -481,9 +482,10 @@ async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Res
                         .collect(),
                     files: vec![],
                 },
-                // Jarvis's message joins a turn that runs, as Deyao's own mid-reply messages do: a warning (the
-                // pressure watchdog), an Inbox outcome or a wakeup must not wait for a long turn to end
+                // Jarvis's message joins a turn that runs at its next tool result, as Deyao's own mid-reply
+                // messages do; the memory and disk watchdog's interrupts it
                 join_running: true,
+                interrupt_running: d.interrupt,
             },
         )
         .await;

@@ -126,6 +126,11 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   (same headers, body and answer). A message the deployment sends as the person (`/v1/hermit/conversations/{id}/turns`)
   attaches it by `images[].uploadId` as the app does, so a deployment's prompt with screenshots shows them as the
   turn's images instead of paths in its text.
+- `POST /v1/hermit/conversations/{id}/turns` with `interruptRunning` (Deyao, 2026-11-20): while a turn runs it is
+  stopped as by the person's stop (M8) and the message waits, held, then runs as a turn of its own once the stop
+  has ended it (the app's "send now" on a queued message, done by the deployment): Jarvis 4's memory and disk
+  warning, which must not wait even for the running tool call. With `joinRunning` the message joins the running
+  turn at Claude Code's next tool result instead; with neither, 409 `turn_running`.
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not
   `{deletedAt}` (magpie 9.6).
 - The applied migrations are recorded in aviary-pg's `_migrations`, not `schema_migrations` (platform 4.3).

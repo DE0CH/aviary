@@ -9,7 +9,9 @@
 //! - `POST /jarvis/upload`: an image of a prompt Jarvis delivers (the first prompt's attachments), uploaded to magpie
 //!   for the session's person (magpie's M13 headers, body and answer); the delivery names it by its `uploadId`.
 //! - `POST /jarvis/deliver`: a prompt Jarvis delivers into the session's conversation (the first prompt, wakeups,
-//!   watches, peer messages): a turn as the session's person, with the images uploaded for it.
+//!   watches, peer messages): a turn as the session's person, with the images uploaded for it. It joins a running
+//!   turn at Claude Code's next tool result, or, said `interrupt` (the memory and disk watchdog), stops it and runs
+//!   next.
 //! - `POST /jarvis/account`: a model call names a Claude account ("Opus 5.5 · chendeyao-uk" in the chat's menu): the
 //!   session switched to it, when the conversation's pick names it (settings.rs `split_account`).
 //! - `ANY /magpie/<path>`, `ANY /hermit/<path>`: the sandbox's fixed names, forwarded as the contract's gateway does.
@@ -160,4 +162,8 @@ pub struct DeliverRequest {
     /// The turn's images: the `uploadId`s `POST /jarvis/upload` answered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<Uuid>,
+    /// It interrupts: a running turn is stopped and this runs next (magpie's `interruptRunning`; Jarvis's memory and
+    /// disk watchdog). Without it, it joins a running turn at Claude Code's next tool result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interrupt: bool,
 }

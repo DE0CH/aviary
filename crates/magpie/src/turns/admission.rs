@@ -83,6 +83,9 @@ pub enum WhileRunning {
     /// The deployment's send that says `joinRunning`: the message joins the running turn as a person's does; a
     /// closed conversation takes it.
     JoinAsDeployment,
+    /// The deployment's send that says `interruptRunning`: the running turn is stopped and the message runs next,
+    /// as a turn of its own ([`super::midturn::interrupt`]); a closed conversation takes it.
+    InterruptAsDeployment,
 }
 
 /// M7.
@@ -131,9 +134,12 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest, runn
             .await?
             .get(0);
         if matches!(state.as_str(), "admitted" | "preparing" | "running" | "stopping") {
-            if running != WhileRunning::Refuse
-                && let Some(r) = super::midturn::join(t, id, person, req).await?
-            {
+            let joined = match running {
+                WhileRunning::Refuse => None,
+                WhileRunning::InterruptAsDeployment => super::midturn::interrupt(t, id, person, req).await?,
+                WhileRunning::Join | WhileRunning::JoinAsDeployment => super::midturn::join(t, id, person, req).await?,
+            };
+            if let Some(r) = joined {
                 return Ok(Admitted::New(r));
             }
             return Err(Error::code(ErrorCode::TurnRunning, "a turn is already running"));

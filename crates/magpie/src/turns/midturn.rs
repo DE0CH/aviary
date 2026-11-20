@@ -25,6 +25,10 @@
 //! by then, or, in an idle conversation, is admitted as a turn of its own exactly as a typed message is. Held
 //! messages start in the order they were sent, one turn each.
 //!
+//! A deployment's message that says `interruptRunning` (Jarvis 4's memory or disk warning) stops the running turn
+//! and waits, held, for it to end, then runs as a turn of its own ([`interrupt`]): it must not wait even for the
+//! running tool call, which may be what fills the machine.
+//!
 //! An admin's view-as send is refused as before (409 `turn_running`): the view-as log records a send by the event
 //! it made, and a waiting message makes none until it is taken in.
 
@@ -142,6 +146,45 @@ pub async fn join(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequ
         )
         .await?;
     }
+    changes::upserted(tx, &person.email, conversation).await?;
+    Ok(Some(SendResponse {
+        turn: TurnStarted {
+            id: turn.id,
+            started_at: Timestamp(turn.created_at),
+        },
+        mid_turn: true,
+    }))
+}
+
+/// The deployment's message that interrupts (`interruptRunning`): the running turn gets the person's stop
+/// ([`super::cancel::stop`]) and the message waits, held (`hold`: never written into the turn being stopped), until
+/// that turn has ended; then [`pass`] admits it as a turn of its own, as the app's "send now" on a queued message
+/// runs it. `None` when no turn row runs (the caller refuses it as busy).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn interrupt(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    person: &Person,
+    m: &SendRequest,
+) -> Result<Option<SendResponse>> {
+    let Some(turn) = active(tx, conversation).await?.filter(|t| !t.state.is_ended()) else {
+        return Ok(None);
+    };
+    tx.execute(
+        "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id, request, hold)
+         values ($1, $2, $3, 'redeliver', $4, $5, true)",
+        &[
+            &conversation,
+            &m.client_message_id,
+            &m.text,
+            &turn.id,
+            &serde_json::to_value(m)?,
+        ],
+    )
+    .await?;
+    super::cancel::stop(tx, person, conversation).await?;
     changes::upserted(tx, &person.email, conversation).await?;
     Ok(Some(SendResponse {
         turn: TurnStarted {
