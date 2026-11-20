@@ -795,7 +795,8 @@ mod tests {
             edit(&mut v);
             Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
         };
-        // 7Gi on the fallback host (15.5Gi - 1Gi, 4 CPUs x 3): 2 sandboxes; 2 x 100 + 16 = 216 GiB
+        // 7Gi on the fallback host (15.5Gi - 1Gi, 4 CPUs x 3): 2 sandboxes; 2 x 100 + 32 = 232 GiB (the system and the
+        // sandbox image with the agent's tools, two of them while a pin changes)
         let sized = |disk: u32| {
             load(&move |v| {
                 v["sandbox"]["memory"] = "7Gi".into();
@@ -806,10 +807,10 @@ mod tests {
                 v["fabric"]["aws"]["diskGiB"] = disk.into();
             })
         };
-        let c = sized(216).unwrap();
-        assert_eq!((c.tmp_bytes, c.file.fabric.aws.disk_gib), (100 << 30, Some(216)));
-        let e = sized(215).unwrap_err().to_string();
-        assert!(e.contains("2 sandboxes") && e.contains("216 GiB"), "{e}");
+        let c = sized(232).unwrap();
+        assert_eq!((c.tmp_bytes, c.file.fabric.aws.disk_gib), (100 << 30, Some(232)));
+        let e = sized(231).unwrap_err().to_string();
+        assert!(e.contains("2 sandboxes") && e.contains("232 GiB"), "{e}");
         // no disk named: nothing to check (the template keeps fabric-aws's default)
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 100.into()).is_ok());
         // sandboxd refuses a scratch outside [1 GiB, 1 TiB]
