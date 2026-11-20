@@ -97,7 +97,7 @@ pub async fn pass(core: &Arc<Core>) -> Result<Pass, aviary_pg::Error> {
     }
     // 3. silence: only while the gateway is answering and settled
     if core.providers.fabric.gateway_settled() {
-        let silence = ms(core.timings.silence);
+        let silence = ms(core.silence());
         for r in rows(
             core,
             &format!(

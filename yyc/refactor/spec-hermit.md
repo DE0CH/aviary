@@ -1214,6 +1214,9 @@ start (205 s).
    (`sandbox_lost`). The same check runs at once, in the background, for a sandbox a `PUT` found silent for 45 s
    (3.6.2). While the gateway is down, or within 120 s of its return, the silence rule does not run at all: the
    supervisors cannot reach hermit and hermit cannot reach :7070, so silence proves nothing (13.7, 14.7).
+   `sandbox.silenceSeconds` (optional, positive) replaces the 90 s, and half of it the `PUT`'s 45 s: Jarvis 4's fabric
+   hermit, whose sandboxes report to another hermit and whose final snapshot stops the supervisor, sets it past any
+   sandbox's life. YYC AI names none.
 4. **Not allowed**: live rows whose person the catalogue no longer allows -> forced release `not_allowed` (A17.F17).
 5. **Pending releases**: retry soft releases that are due (13.12); finish forced ones whose claim lapsed (the takeover
    sweep normally does it first).

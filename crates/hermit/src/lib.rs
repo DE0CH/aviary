@@ -177,6 +177,25 @@ impl std::fmt::Debug for Core {
 }
 
 impl Core {
+    /// How long a ready sandbox may go without an activity report before the silence rule's health checks: hermit.json
+    /// `sandbox.silenceSeconds`, else the timings' own.
+    #[must_use]
+    pub fn silence(&self) -> Duration {
+        self.cfg
+            .sandbox()
+            .silence_seconds
+            .map_or(self.timings.silence, Config::secs)
+    }
+
+    /// The `PUT`'s early silence check: half of `sandbox.silenceSeconds`, else the timings' own.
+    #[must_use]
+    pub fn put_silence(&self) -> Duration {
+        self.cfg
+            .sandbox()
+            .silence_seconds
+            .map_or(self.timings.put_silence, |s| Config::secs(s) / 2)
+    }
+
     #[must_use]
     pub fn is_draining(&self) -> bool {
         *self.draining.borrow()
