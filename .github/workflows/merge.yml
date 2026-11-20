@@ -6,7 +6,7 @@
 name: merge
 on:
   workflow_run:
-    workflows: [branch, ci]
+    workflows: [branch, ci, app, app-tests, app-android]
     types: [completed]
 permissions: { contents: read, pull-requests: write, statuses: write, actions: read }
 concurrency: { group: "merge-${{ github.event.workflow_run.head_branch }}", cancel-in-progress: false }
@@ -41,5 +41,5 @@ jobs:
           GATE_BRANCH: ${{ github.event.workflow_run.head_branch }}
           GATE_SHA: ${{ github.event.workflow_run.head_sha }}
           GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GATE_WORKFLOWS: "branch, ci"
+          GATE_WORKFLOWS: "branch, ci, app, app-tests, app-android"
           MERGE_DEPLOY_KEY: ${{ secrets.MERGE_DEPLOY_KEY }}
