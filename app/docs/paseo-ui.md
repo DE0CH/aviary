@@ -491,8 +491,12 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
 (`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there
 and taps Sign in up to iOS's sign-in prompt,
 an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
-`YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first
-exercised on TestFlight.
+`YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so that build's chat is first
+exercised on TestFlight. The chat itself is walked on every branch by `.github/workflows/app-ios-walk.yml`
+(Deyao, 2026-11-20: CI walks the Fold and the iPhone): Jarvis Chat built for the simulator with the stand-in for
+pigeon as its server (`scripts/touch-targets/stand-in.mjs`), signed in through iOS's prompt and walked with Maestro by
+`scripts/ios-app/simulator-walk.mjs` (`ios/maestro/walk-*.yaml`): a long press on a plain and a pinned conversation
+opens its menu, and the Activity panel's title sits where the chat's does (artifact `ios-simulator-walk`).
 
 ## The Android app
 
