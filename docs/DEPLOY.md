@@ -23,9 +23,20 @@ GitHub environment `checks`, open to every branch; nothing in `checks` can deplo
 as a gVisor sandbox on the runner as the fabric runs it (jarvis4 `rust/e2e-kernel`, `E2E_RUNNER=fabric`), since step
 2 below moves the fabric's pin with every deploy.
 
+Only a branch's newest commit is checked (Deyao, 2026-11-20): every workflow that runs on branches has a
+`concurrency` group per branch with `cancel-in-progress` off main, so a push that starts a workflow cancels that
+workflow's run on the branch's older commit. A workflow the newer push does not start (its paths untouched) keeps its
+run: the gate carries that result to the newer commit (jarvis4 `rust/gate` `decide::latest`), so cancelling it would
+leave the branch red. main cancels nothing: its runs build what the deploy ships.
+
 ## main: one deploy run
 
-`deploy.yml` runs on every push to main. It waits until every part's run on that commit is over and green, then:
+`deploy.yml` runs whenever a part's run on main finishes. It deploys the newest commit main has pointed at whose every
+part's newest run is over and green, if that commit is newer than what runs (the `deploy-<sha12>` tags say what runs;
+`aviary-deploy ready`, its rule in `tools/aviary-deploy/src/decide.rs`). The deploy is the pipeline's last stage: a newer
+commit still in its checks, or red, never holds back an older one that passed them (Deyao, 2026-11-20: main moves every
+10-20 min and its ci takes 2 h, so waiting for main's head deployed nothing for 7 h), and nothing older than what runs
+deploys. Then:
 
 1. **Images.** Each image is tagged by the last commit that changed its inputs (`deploy/images.json` lists each
    image's paths): an unchanged part keeps its tag, so its pods are not rolled. The part's workflow builds that tag on

@@ -944,6 +944,9 @@ pods keep serving).
 }
 ```
 
+- `fabric.aws.pruneImages` (default `false`): the image bucket's images no one uses are deleted with the EC2 reconcile
+  (all but the configured image, the images of sandboxes not gone or started in the last 7 days, and objects put there
+  in the last day); Jarvis 4's fabric sets it, YYC AI keeps every image.
 - `aws.emptyMinutes` (accepted and unused today, A3.F28) is gone. `aws.instance` (`"ai.yyc.deyaochen.com"`, an EC2
   tag, gap-1 5.7) is replaced by the explicit `tags` map; new hosts are tagged `app=hermit-host`, `hermit=yyc-ai`,
   `Name=hermit-host-<name>` (instance and volume).

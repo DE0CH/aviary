@@ -777,6 +777,43 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/ci/release.sh dist "${PART_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
 
+  fabric-host:
+    # aviary's own fabric replica (testing/fabric-replica, Jarvis 4's PLAN-fabric): the runner becomes one fabric host
+    # by the deployment's recipe (fabric/host/setup.sh burst with this release's sandboxd, Jarvis 4's fabric image and
+    # gVisor fork as it pins them, hermit's own user data from a metadata stand-in), with moto's S3/STS for frozen
+    # images, then the checks through sandboxd's API: egress by name, pause, freeze to S3 and thaw, delete paused. It
+    # ran by hand on Hetzner runners before (2026-11-18); here every change to sandboxd's freeze runs it.
+    needs: [tags, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TAG: aviary-${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
+      - name: free disk space (the sandbox image, unpacked)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {key: fabric-host}
+      - run: cargo build --release --locked -p fabric-replica
+      - name: hermit.json for this release (the fabric's, Jarvis 4's, with this release's sandboxd)
+        # the fabric's own image: its first process (the session's keeper) keeps running and logs each try, which the
+        # checks read; YYC AI's sandbox image exits at once without a conversation to serve
+        run: |
+          set -euo pipefail
+          jq --arg t "$TAG" '.fabric.sandboxd = $t' jarvis4/k8s/cluster/fabric/hermit.json > "$RUNNER_TEMP/hermit.json"
+          jq -c '{image: .sandbox.image, sandboxd: .fabric.sandboxd, runsc: .fabric.runsc, memory: .sandbox.memory}' "$RUNNER_TEMP/hermit.json"
+      - name: the runner as a fabric host (fabric-replica up)
+        run: sudo target/release/fabric-replica up --hermit-json "$RUNNER_TEMP/hermit.json" --aviary .
+      - name: the checks (egress, pause, freeze to S3 and thaw, delete paused)
+        run: sudo target/release/fabric-replica check
+      - if: failure()
+        name: the host's journal (sandboxd, the stand-ins)
+        run: sudo journalctl --no-pager -n 400 -u 'sandboxd*' -u 'fabric-replica*' -u 'sbx-*' || true
+
   replica:
     # Jarvis 4's replica on these images, before the merge (Deyao, 2026-11-16 and 2026-11-19; it was DE0CH/jarvis4's
     # aviary-pin.yml): Jarvis 4's session image with this release (DE0CH/jarvis4 at main, session-image/aviary.json
