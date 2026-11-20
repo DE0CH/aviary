@@ -80,22 +80,27 @@ impl Drop for StmtGuard<'_> {
     }
 }
 
-/// The body of one statement method: prepare (cached) and run on `$self.stmt_client()`, and on an error ask
-/// `$self.recover` whether to try once more (a stale statement; for a [`crate::Conn`] also a lost connection, which it
-/// replaces).
+/// The body of one statement method: prepare (cached) and run on `$self.stmt_client()` within `$self.deadline()`, and
+/// on an error ask `$self.recover` whether to try once more (a stale statement; for a [`crate::Conn`] also a lost
+/// connection, which it replaces). No answer within the deadline is `$self.timed_out()`: the connection is never used
+/// again and the statement is not run again (it may have run).
 macro_rules! statement {
     ($self:ident, $guard:ident, $sql:ident, $params:ident, $method:ident) => {{
         loop {
             let outcome = {
                 let client = $self.stmt_client().await?;
-                match client.prepare_cached($sql).await {
-                    Ok(st) => client.$method(&st, $params).await,
-                    Err(e) => Err(e),
-                }
+                let run = async {
+                    match client.prepare_cached($sql).await {
+                        Ok(st) => client.$method(&st, $params).await,
+                        Err(e) => Err(e),
+                    }
+                };
+                tokio::time::timeout($self.deadline(), run).await
             };
             match outcome {
-                Ok(v) => return Ok($guard.ok(v)),
-                Err(e) => $self.recover(&mut $guard, e).await?,
+                Ok(Ok(v)) => return Ok($guard.ok(v)),
+                Ok(Err(e)) => $self.recover(&mut $guard, e).await?,
+                Err(_) => return Err($self.timed_out().await),
             }
         }
     }};

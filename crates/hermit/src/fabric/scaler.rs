@@ -109,22 +109,6 @@ pub fn gateway_ip(url: &str) -> Option<IpAddr> {
     host.trim_start_matches('[').trim_end_matches(']').parse().ok()
 }
 
-/// A replica that does not lead: reads the gateway's "answering since" from its row, for the silence rule.
-///
-/// # Errors
-/// A database error.
-pub async fn follow(g: &Gvisor, core: &Core) -> Result<(), FabricError> {
-    let name = core.cfg.file.fabric.gateway.name.clone();
-    let row = hosts::get(&core.pool, &name).await?;
-    let fresh = Config::secs(core.cfg.file.fabric.host_dead_seconds);
-    let since = row
-        .filter(|h| h.fresh(OffsetDateTime::now_utc(), fresh))
-        .and_then(|h| h.info.and_then(|i| i.up_since))
-        .unwrap_or(0);
-    g.gateway_up_since.store(since, Ordering::Release);
-    Ok(())
-}
-
 /// One heartbeat's outcome.
 struct Beat {
     host: HostRow,
@@ -283,38 +267,9 @@ async fn steps(g: &Gvisor, core: &Arc<Core>) -> Result<Report, FabricError> {
             listed.insert(h.name.clone(), info);
         }
     }
-    // the gateway's "answering since", kept on its row for every replica (12 step 3)
-    let since = if gateway_up {
-        let prev = g.gateway_up_since.load(Ordering::Acquire);
-        if prev > 0 { prev } else { now_ms() }
-    } else {
-        0
-    };
-    g.gateway_up_since.store(since, Ordering::Release);
+    // the gateway's "answering since" is this replica's own hearing (12 step 3), never a row
+    g.heard_gateway(gateway_up);
     report.gateway_up = gateway_up;
-    {
-        let name = f.gateway.name.clone();
-        let v = (since > 0).then_some(since);
-        core.pool
-            .get()
-            .await?
-            .execute(
-                "update hosts set info = jsonb_set(coalesce(info, '{}'::jsonb), '{upSince}', to_jsonb($2::bigint))
-                 where name = $1 and status <> 'gone' and $2::bigint is not null",
-                &[&name, &v],
-            )
-            .await?;
-        if v.is_none() {
-            core.pool
-                .get()
-                .await?
-                .execute(
-                    "update hosts set info = info - 'upSince' where name = $1 and info is not null",
-                    &[&name],
-                )
-                .await?;
-        }
-    }
 
     // 3. vanished sandboxes: a ready row its reachable host does not list, or lists as not alive
     report.vanished = vanished(core, &listed, t0).await?;

@@ -22,6 +22,10 @@
 //! - [`Pool::get`] gives a [`Conn`] for statements outside a transaction.
 //! - While the database is away for a moment (a planned switchover), connections are waited for and cut statements
 //!   and transactions run again ([`retry`]).
+//! - No answer is waited for longer than the pool's deadline, its `statement_timeout` plus [`DEADLINE_MARGIN`]: a
+//!   statement, a `BEGIN`, `COMMIT` or `ROLLBACK` sent to a database that stopped answering without closing anything
+//!   (a primary whose storage stalled, a connection the network dropped silently) fails with [`Error::Timeout`], its
+//!   connection is closed, and it is not run again (its outcome is unknown).
 
 mod error;
 mod leader;
@@ -42,7 +46,7 @@ pub use leader::Leader;
 pub use listen::{Listener, Waiter};
 pub use lock::LockKey;
 pub use migrate::{MIGRATIONS_TABLE, Migration, migrate};
-pub use pool::{Conn, Pool, connect, connect_read_only};
+pub use pool::{Conn, DEADLINE_MARGIN, Pool, connect, connect_read_only};
 pub use tokio_postgres::types::ToSql;
 pub use tokio_postgres::{Row, Statement};
 #[doc(hidden)]

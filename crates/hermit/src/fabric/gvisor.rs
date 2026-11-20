@@ -95,9 +95,13 @@ pub struct Gvisor {
     pub(crate) host_secrets: Option<HostSecrets>,
     control: Arc<dyn ControlUrl>,
     pub(crate) freeze_key: Option<crate::fabric::freezekey::FreezeKey>,
-    /// Since when the gateway has answered every heartbeat (unix ms), 0 while it does not: the leader's own view,
-    /// and every other replica's copy of it from the gateway's row.
+    /// Since when the gateway has answered every heartbeat of this replica (unix ms), 0 while it does not. Every
+    /// replica asks the gateway itself ([`Gvisor::beat_gateway`], each tick, before any database work): whether the
+    /// gateway answers is what this replica hears from it, never a row (YYC, 2026-11-20: a stalled Postgres stopped
+    /// the scaler's writes and every replica called a gateway that answered all along "not answering" for 19 min).
     pub(crate) gateway_up_since: AtomicI64,
+    /// When this replica last heard the gateway answer (unix ms), 0 never.
+    pub(crate) gateway_heard_at: AtomicI64,
     /// The gateway's loss is reported once per outage.
     pub(crate) gateway_lost_reported: AtomicBool,
     /// When the last EC2 reconcile and orphan sweep ran (at most every [`crate::Timings::reconcile`]).
@@ -129,6 +133,7 @@ impl Gvisor {
             control: d.control,
             freeze_key: d.freeze_key,
             gateway_up_since: AtomicI64::new(0),
+            gateway_heard_at: AtomicI64::new(0),
             gateway_lost_reported: AtomicBool::new(false),
             last_reconcile: Mutex::new(None),
             fresh_migrations: Mutex::default(),
@@ -206,6 +211,32 @@ impl Gvisor {
     /// Sets the gateway's "answering since" (tests use it to skip the settle time).
     pub fn set_gateway_up_since(&self, unix_ms: i64) {
         self.gateway_up_since.store(unix_ms, Ordering::Release);
+    }
+
+    /// Records one heartbeat of the gateway as this replica heard it: an answer starts or continues "answering
+    /// since"; no answer ends it.
+    pub(crate) fn heard_gateway(&self, answered: bool) {
+        if answered {
+            let now = now_ms();
+            self.gateway_heard_at.store(now, Ordering::Release);
+            let _ = self
+                .gateway_up_since
+                .compare_exchange(0, now, Ordering::AcqRel, Ordering::Acquire);
+        } else {
+            self.gateway_up_since.store(0, Ordering::Release);
+        }
+    }
+
+    /// Asks the configured gateway for its state and records whether it answered ([`Gvisor::heard_gateway`]). Needs
+    /// no database: the gateway's name and address are the configuration's.
+    pub async fn beat_gateway(&self, core: &Core) -> bool {
+        let gw = &core.cfg.file.fabric.gateway;
+        let answered = match scaler::gateway_ip(&gw.url).map(|ip| self.clients.get(&gw.name, ip)) {
+            Some(Ok(c)) => c.host().await.is_ok(),
+            _ => false,
+        };
+        self.heard_gateway(answered);
+        answered
     }
 }
 
@@ -531,16 +562,21 @@ impl Fabric for Gvisor {
 
     fn tick<'a>(&'a self, core: &'a Arc<Core>, leader: bool) -> Fut<'a, ()> {
         Box::pin(async move {
+            // first, and on every replica: the gateway itself, with no database in the way
+            self.beat_gateway(core).await;
             if leader {
                 match scaler::pass(self, core).await {
                     Ok(r) if !r.is_quiet() => tracing::info!(?r, "scaler pass"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "scaler pass failed"),
                 }
-            } else if let Err(e) = scaler::follow(self, core).await {
-                tracing::warn!(error = %e, "gateway state not read");
             }
         })
+    }
+
+    fn gateway_heard(&self) -> Option<(bool, i64)> {
+        let at = self.gateway_heard_at.load(Ordering::Acquire);
+        Some((self.gateway_up_since.load(Ordering::Acquire) > 0, at))
     }
 
     fn ops(&self) -> Fut<'_, Result<crate::fabric::FabricOps, String>> {

@@ -158,6 +158,11 @@ pub trait Fabric: Send + Sync + 'static {
     /// Whether the gateway has answered every heartbeat for the last `gatewaySettleSeconds` (hermit 12 step 3,
     /// 13.12 step 4): while it is down or settling, silence proves nothing and nothing is judged lost.
     fn gateway_settled(&self) -> bool;
+    /// What this replica last heard from the gateway itself: whether it answers now, and when it last answered (unix
+    /// ms, 0 never). `None` for a fabric with no gateway of its own to ask (the snapshot then shows the row).
+    fn gateway_heard(&self) -> Option<(bool, i64)> {
+        None
+    }
     /// Called once the replica's core exists (the fabric reads the database and the configuration through it).
     fn attach(&self, _core: &Arc<crate::Core>) {}
     /// One scaler tick (every [`crate::Timings::scaler`]): the pass of hermit 13.4 when `leader` (this replica holds
