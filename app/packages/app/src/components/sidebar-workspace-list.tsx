@@ -27,8 +27,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { router, usePathname, type Href } from "expo-router";
 import {
-  navigateToWorkspace,
-  useActiveWorkspaceSelection,
+  openWorkspaceFromList,
+  useShownWorkspaceSelection,
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -97,6 +97,7 @@ import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels"
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  useRowLongPressMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
@@ -1023,9 +1024,17 @@ function WorkspaceRowInner({
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
+  const sharing = useSharingAvailable();
+  const hasMenu = conversationMenuHasItems({
+    onTogglePin,
+    onRename,
+    canShare: sharing && Boolean(workspace.serverId && workspace.workspaceId),
+    onArchive,
+  });
+  const rowMenu = useRowLongPressMenu(Boolean(drag) && hasMenu);
   const interaction = useLongPressDragInteraction({
     drag,
-    menuController,
+    menuController: menuController ?? rowMenu.menuController,
   });
   const {
     role: _dragRole,
@@ -1100,7 +1109,9 @@ function WorkspaceRowInner({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowPressed}
+              highlightStyle={styles.workspaceRowHighlight}
+              longPressOpens={hasMenu && !drag}
+              openerRef={rowMenu.openerRef}
               onPressIn={handleWorkspacePressIn}
               onTouchMove={interaction.handleTouchMove}
               onPressOut={handleWorkspacePressOut}
@@ -1354,7 +1365,7 @@ function WorkspaceRowItem({
     if (!workspace.serverId) {
       return;
     }
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    openWorkspaceFromList({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
   }, [workspace.serverId, workspace.workspaceId]);
 
   return (
@@ -2103,7 +2114,7 @@ function ProjectModeList({
     [pathname],
   );
   const selectionEnabled = isWorkspaceRoute;
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const activeWorkspaceSelection = useShownWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
   const {
     visibleItems: visiblePinnedChats,
@@ -2662,6 +2673,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  // the phone apps' finger-down (PressHighlight): the shared overlay, which shows on any ground (surface2 was the
+  // light sidebar's own, so a touch showed nothing; Deyao, 2026-11-20)
+  workspaceRowHighlight: {
+    backgroundColor: theme.colors.interactionHighlight,
   },
   workspaceRowDragging: {
     backgroundColor: theme.colors.surface2,

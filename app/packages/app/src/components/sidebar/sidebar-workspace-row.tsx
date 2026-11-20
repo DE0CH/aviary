@@ -23,6 +23,7 @@ import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  useRowLongPressMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import {
   SidebarWorkspaceRowFrame,
@@ -238,9 +239,16 @@ function WorkspaceRowBody({
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const draggable = Boolean(drag);
+  const sharing = useSharingAvailable();
+  const hasMenu = conversationMenuHasItems({
+    onRename,
+    canShare: sharing && Boolean(workspace.serverId && workspace.workspaceId),
+    onArchive,
+  });
+  const rowMenu = useRowLongPressMenu(draggable && hasMenu);
   const interaction = useLongPressDragInteraction({
     drag,
-    menuController: null,
+    menuController: rowMenu.menuController,
   });
   const {
     role: _dragRole,
@@ -315,7 +323,9 @@ function WorkspaceRowBody({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowPressed}
+              highlightStyle={styles.workspaceRowHighlight}
+              longPressOpens={hasMenu && !draggable}
+              openerRef={rowMenu.openerRef}
               onPressIn={handleWorkspacePressIn}
               onTouchMove={draggable ? interaction.handleTouchMove : undefined}
               onPressOut={handleWorkspacePressOut}
@@ -509,6 +519,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  // the phone apps' finger-down (PressHighlight): the shared overlay, which shows on any ground (surface2 was the
+  // light sidebar's own, so a touch showed nothing; Deyao, 2026-11-20)
+  workspaceRowHighlight: {
+    backgroundColor: theme.colors.interactionHighlight,
   },
   workspaceRowDragging: {
     backgroundColor: theme.colors.surface2,

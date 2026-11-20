@@ -3,6 +3,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
+import { isNative } from "@/constants/platform";
 import {
   createLastWorkspaceSelectionStore,
   LAST_WORKSPACE_SELECTION_STORAGE_KEY,
@@ -16,6 +17,7 @@ import {
   type NavigateToWorkspaceDeps,
   type NavigateToWorkspaceInput,
 } from "./navigation";
+import { shownSelection, type TappedSelection } from "./tapped-selection";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
@@ -120,3 +122,36 @@ export function useIsLastWorkspaceSelectionHydrated(): boolean {
 }
 
 void hydrateLastWorkspaceSelection();
+
+// A conversation tapped in the list is selected at once (tapped-selection.ts). On the phone apps the conversation
+// opens a frame later, so the row is drawn selected before the new conversation's render holds the JS thread; the
+// web opens it in the same task, as before.
+let tapped: TappedSelection | null = null;
+let routeSelection: ActiveWorkspaceSelection | null = null;
+const tappedListeners = new Set<() => void>();
+function subscribeTapped(listener: () => void): () => void {
+  tappedListeners.add(listener);
+  return () => tappedListeners.delete(listener);
+}
+const getTapped = (): TappedSelection | null => tapped;
+
+/** The list's selection: the route's, or the conversation just tapped while the route has not moved yet. */
+export function useShownWorkspaceSelection(): ActiveWorkspaceSelection | null {
+  const route = useActiveWorkspaceSelection();
+  const current = useSyncExternalStore(subscribeTapped, getTapped, getTapped);
+  useEffect(() => {
+    routeSelection = route;
+  }, [route]);
+  return shownSelection(route, current);
+}
+
+/** Opens a conversation tapped in the list. */
+export function openWorkspaceFromList(input: NavigateToWorkspaceInput): void {
+  if (!isNative) {
+    navigateToWorkspace(input);
+    return;
+  }
+  tapped = { from: routeSelection, to: { serverId: input.serverId, workspaceId: input.workspaceId } };
+  tappedListeners.forEach((listener) => listener());
+  requestAnimationFrame(() => navigateToWorkspace(input));
+}

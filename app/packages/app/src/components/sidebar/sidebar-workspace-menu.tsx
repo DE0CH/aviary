@@ -1,6 +1,16 @@
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type MutableRefObject,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
+import * as Haptics from "expo-haptics";
 import { useTranslation } from "react-i18next";
-import { type PressableStateCallbackType } from "react-native";
+import { type GestureResponderEvent, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
@@ -12,7 +22,7 @@ import {
   PinOff,
   Tag,
 } from "lucide-react-native";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -33,6 +43,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  useContextMenu,
 } from "@/components/ui/context-menu";
 import {
   CONVERSATION_MENU_WIDTH,
@@ -287,6 +298,43 @@ type ContextTriggerProps = Omit<
   "children" | "enabledOnMobile" | "highlightStyle"
 >;
 
+/** What opens a row's menu from outside it: the long press of a row that can be dragged. */
+export type RowMenuOpener = Pick<ReturnType<typeof useContextMenu>, "setAnchorRect" | "setOpen">;
+
+function RowMenuOpenerBridge({ openerRef }: { openerRef: MutableRefObject<RowMenuOpener | null> }): null {
+  const menu = useContextMenu();
+  useEffect(() => {
+    openerRef.current = menu;
+    return () => {
+      openerRef.current = null;
+    };
+  }, [menu, openerRef]);
+  return null;
+}
+
+/**
+ * A row's long-press menu (Deyao, 2026-11-20: hold opens the menu at the row, hold and move drags): a row that can be
+ * dragged hands `menuController` to its drag's long press, which opens the menu when the finger has not moved;
+ * `openerRef` goes to the row's SidebarWorkspaceContextMenu.
+ */
+export function useRowLongPressMenu(draggable: boolean): {
+  openerRef: MutableRefObject<RowMenuOpener | null>;
+  menuController: RowMenuOpener | null;
+} {
+  const openerRef = useRef<RowMenuOpener | null>(null);
+  const menuController = useMemo<RowMenuOpener>(
+    () => ({
+      setAnchorRect: (rect) => openerRef.current?.setAnchorRect(rect),
+      setOpen: (open) => openerRef.current?.setOpen(open),
+    }),
+    [],
+  );
+  return { openerRef, menuController: draggable ? menuController : null };
+}
+
+// a long press opens the menu after as long as on a row that can be dragged (use-long-press-drag-interaction)
+const LONG_PRESS_MENU_DELAY_MS = 450;
+
 export function SidebarWorkspaceContextMenu({
   children,
   contextMenuOpen,
@@ -311,6 +359,9 @@ export function SidebarWorkspaceContextMenu({
   openInFileManagerPath,
   accessibilityLabel,
   highlightStyle,
+  longPressOpens = false,
+  openerRef,
+  onLongPress,
   ...triggerProps
 }: PropsWithChildren<
   SidebarWorkspaceMenuItemsProps &
@@ -322,6 +373,12 @@ export function SidebarWorkspaceContextMenu({
       hostBadgeLabel?: string | null;
       serviceSummary?: WorkspaceServiceSummary | null;
       highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
+      /**
+       * On the phone apps a long press opens the menu at the row, like ⋯ (Deyao, 2026-11-20). A row that can be
+       * dragged opens it from its own long press instead (`openerRef`), so that holding and then moving drags it.
+       */
+      longPressOpens?: boolean;
+      openerRef?: MutableRefObject<RowMenuOpener | null>;
     }
 >) {
   const {
@@ -354,12 +411,26 @@ export function SidebarWorkspaceContextMenu({
     [workspace],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const handleLongPress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (longPressOpens && isNative) void Haptics.selectionAsync().catch(() => {});
+      onLongPress?.(event);
+    },
+    [longPressOpens, onLongPress],
+  );
 
   return (
-    <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
+    <ContextMenu
+      open={contextMenuOpen}
+      onOpenChange={onContextMenuOpenChange}
+      compactMode={isNative ? "popover" : "sheet"}
+    >
+      {openerRef ? <RowMenuOpenerBridge openerRef={openerRef} /> : null}
       <ContextMenuTrigger
         {...triggerProps}
-        enabledOnMobile={false}
+        enabledOnMobile={longPressOpens}
+        longPressDelayMs={LONG_PRESS_MENU_DELAY_MS}
+        onLongPress={handleLongPress}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
         highlightStyle={highlightStyle}
       >
