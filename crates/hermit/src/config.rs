@@ -421,15 +421,13 @@ impl Config {
             ("activityEverySeconds", s.activity_every_seconds),
             ("startDeadlineSeconds", s.start_deadline_seconds),
             ("supervisorWaitSeconds", s.supervisor_wait_seconds),
+            ("silenceSeconds", s.silence_seconds.unwrap_or(1)), // optional: positive when set
             ("pids", s.pids),
             ("openFiles", s.open_files),
         ] {
             if v == 0 {
                 return Err(invalid(format!("sandbox.{name} must be positive")));
             }
-        }
-        if s.silence_seconds == Some(0) {
-            return Err(invalid("sandbox.silenceSeconds must be positive"));
         }
         by_person_rules(&s.max_active_by_person)?;
         person_names("notifyPersonLimit", &s.notify_person_limit)?;
