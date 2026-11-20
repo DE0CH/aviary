@@ -45,7 +45,9 @@ import {
   PanelLeft,
   MessageSquare,
   ChevronRight,
+  LogOut,
 } from "lucide-react-native";
+import { signOut } from "@/yyc/sign-out";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
@@ -981,6 +983,16 @@ function SettingsSidebar({
             onSelect={onSelectSection}
           />
         ))}
+      </SidebarGroup>
+      {/* 登出 is the list's last row, a group of its own (Deyao, 2026-11-20): the sidebar footer holds only 設定. */}
+      <SidebarGroup>
+        <SidebarHeaderRow
+          variant="compact"
+          icon={LogOut}
+          label={t("conversation.signOut")}
+          onPress={signOut}
+          testID="settings-sign-out"
+        />
       </SidebarGroup>
       {!SHOW_HOST_SETTINGS ? null : hasHosts ? (
         <SidebarGroup label={t("settings.groups.host")}>

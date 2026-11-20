@@ -3,14 +3,11 @@ import {
   CircleGauge,
   FolderPlus,
   GitBranch,
-  LogOut,
   Server,
   Settings,
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { saveAccessToken } from "@/yyc/access-token";
-import { isWeb } from "@/constants/platform";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
@@ -429,8 +426,6 @@ function SidebarFooter({
   onBeforeNavigate?: () => void;
 }) {
   const settingsKeys = useShortcutKeys("toggle-settings");
-  const { t } = useTranslation();
-  const signOutLabel = t("conversation.signOut");
 
   // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
   return (
@@ -438,14 +433,8 @@ function SidebarFooter({
       <View style={styles.footerContainer} testID="sidebar-footer">
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
-          {/* One server, one project, no plugins: sign out and Settings are all this line has. */}
+          {/* One server, one project, no plugins: Settings is all this line has (登出 is in the settings list). */}
           <View style={styles.footerSpacer} />
-          <FooterIconButton
-            onPress={signOut}
-            testID="sidebar-sign-out"
-            label={signOutLabel}
-            icon={LogOut}
-          />
           <FooterIconButton
             onPress={handleSettings}
             testID="sidebar-settings"
@@ -457,18 +446,6 @@ function SidebarFooter({
       </View>
     </UsageSidebarRoot>
   );
-}
-
-/**
- * Ends the Cloudflare Access session; Access shows its sign-in again (to switch account, or leave). The iOS app
- * forgets its token and shows its sign-in screen (yyc/access-gate.tsx).
- */
-function signOut(): void {
-  if (isWeb) {
-    window.location.assign("/cdn-cgi/access/logout");
-    return;
-  }
-  void saveAccessToken(null);
 }
 
 function SidebarUsageIcon({ label }: { label: string }) {

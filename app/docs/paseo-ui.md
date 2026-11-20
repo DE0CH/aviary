@@ -96,7 +96,8 @@ server (`server/`) serves no deployment.
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
   settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
   `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
-  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. Signed-out shell, share
+  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. 登出 is the settings list's last row, in a group of its own under 通用 / 外觀 / 聊天 (`settings-sign-out`;
+  Deyao, 2026-11-20); the sidebar's footer holds only 設定. Signed-out shell, share
   page, 最近刪除 and the loading skeleton take the same values as the screens they stand for.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
@@ -184,8 +185,10 @@ server (`server/`) serves no deployment.
   magpie's M5 `pinned`), offered while `server_info` has `features.workspacePinning`, so it follows the person to
   every device. The touch-target walk pins and unpins through both menus and checks the section.
 - **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
-  `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
-  entry; an agent's `closed` (a sentence the deployment sets through magpie's hermit route) makes the message box read-only with that sentence
+  `/api/jarvis/me` `conversationDelete: false` removes the Delete item (from the header's ⋯ menu and the list row's) and
+  the Recently deleted entry. The row's ⋯ stays whenever its menu has any item (`conversationMenuHasItems`): it once
+  came only with Delete, and Jarvis chat's list had no ⋯ at all (2026-11-20; the touch-target walk opens it with
+  `noDelete`). An agent's `closed` (a sentence the deployment sets through magpie's hermit route) makes the message box read-only with that sentence
   as its placeholder and nothing can be sent. A conversation the deployment ended just leaves the list.
 
 ## Schedules (Deyao, 2026-11-06)

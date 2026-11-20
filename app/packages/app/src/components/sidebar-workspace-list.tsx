@@ -1,5 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useConversationDeleteAvailable } from "@/yyc/me";
+import { useConversationDeleteAvailable, useSharingAvailable } from "@/yyc/me";
+import { conversationMenuHasItems } from "@/components/sidebar/conversation-menu";
 import {
   View,
   Text,
@@ -646,6 +647,13 @@ function WorkspaceRowRightGroup({
   const { t } = useTranslation();
   const trailing = useSidebarWorkspaceTrailing();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
+  const sharing = useSharingAvailable();
+  const hasMenu = conversationMenuHasItems({
+    onTogglePin,
+    onRename,
+    canShare: sharing && Boolean(workspace.serverId && workspace.workspaceId),
+    onArchive,
+  });
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
@@ -655,7 +663,7 @@ function WorkspaceRowRightGroup({
   } = resolveTrailingActionVisibility({
     workspace,
     trailing,
-    hasArchiveAction: Boolean(onArchive),
+    hasMenu,
     isHovered,
     isTouchPlatform,
     showShortcut,
@@ -676,7 +684,7 @@ function WorkspaceRowRightGroup({
             visible={kebab.showKebab}
             scrimBackdrop={showScrim ? backdrop : undefined}
           >
-            {onArchive ? (
+            {hasMenu ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
                 workspaceKey={workspace.workspaceKey}

@@ -33,6 +33,8 @@ import {
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
+import { conversationMenuHasItems } from "@/components/sidebar/conversation-menu";
+import { useSharingAvailable } from "@/yyc/me";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
@@ -401,6 +403,12 @@ function WorkspaceRowTrailingActions({
 }) {
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
+  const sharing = useSharingAvailable();
+  const hasMenu = conversationMenuHasItems({
+    onRename,
+    canShare: sharing && Boolean(workspace.serverId && workspace.workspaceId),
+    onArchive,
+  });
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
@@ -410,7 +418,7 @@ function WorkspaceRowTrailingActions({
   } = resolveTrailingActionVisibility({
     workspace,
     trailing,
-    hasArchiveAction: Boolean(onArchive),
+    hasMenu,
     isHovered,
     isTouchPlatform,
     showShortcut,
@@ -431,7 +439,7 @@ function WorkspaceRowTrailingActions({
             visible={kebab.showKebab}
             scrimBackdrop={showScrim ? backdrop : undefined}
           >
-            {onArchive ? (
+            {hasMenu ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
                 workspaceKey={workspace.workspaceKey}

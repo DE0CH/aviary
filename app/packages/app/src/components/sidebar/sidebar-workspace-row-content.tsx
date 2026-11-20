@@ -248,14 +248,14 @@ export type SidebarWorkspaceTrailingPresentation = "visible" | "hidden" | "absen
 export function resolveTrailingActionVisibility({
   workspace,
   trailing,
-  hasArchiveAction,
+  hasMenu,
   isHovered,
   isTouchPlatform,
   showShortcut,
 }: {
   workspace: SidebarWorkspaceEntry;
   trailing: SidebarWorkspaceTrailing;
-  hasArchiveAction: boolean;
+  hasMenu: boolean;
   isHovered: boolean;
   isTouchPlatform: boolean;
   showShortcut: boolean;
@@ -267,10 +267,10 @@ export function resolveTrailingActionVisibility({
   reserveSlotWidth: boolean;
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
-  const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
+  const showKebab = Boolean(hasMenu && (isHovered || isTouchPlatform)) && !showShortcut;
   // Touch permanently replaces the stats with the menu. Only temporary shortcut hints
   // conceal content while retaining its width, so desktop rows do not shift.
-  const hasContent = hasTrailing && !(hasArchiveAction && isTouchPlatform);
+  const hasContent = hasTrailing && !(hasMenu && isTouchPlatform);
   let trailingPresentation: SidebarWorkspaceTrailingPresentation = "absent";
   if (hasContent) trailingPresentation = showShortcut ? "hidden" : "visible";
   return {
@@ -280,12 +280,12 @@ export function resolveTrailingActionVisibility({
     // row — over an unhovered one the gradient fades to the wrong color. That is also why
     // touch, which shows the kebab without ever hovering, never gets one.
     showScrim: showKebab && isHovered,
-    renderSlot: hasArchiveAction || hasTrailing,
+    renderSlot: hasMenu || hasTrailing,
     // The slot only holds width for something that permanently sits in it. Trailing content
     // does; the kebab only does on touch, where there is no hover for it to appear on and so
     // no scrim to let it overlay the title. Everywhere else the width goes back to the title
     // and the kebab fades in over its tail.
-    reserveSlotWidth: hasContent || (hasArchiveAction && isTouchPlatform),
+    reserveSlotWidth: hasContent || (hasMenu && isTouchPlatform),
   };
 }
 
