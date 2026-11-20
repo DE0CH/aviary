@@ -9,7 +9,7 @@
 // stand-in (scripts/touch-targets/stand-in.mjs); the simulator shares the Mac's network. OUT gets Maestro's
 // screenshots, the UI trees and results.json. Exit 0: every check passed; 1: some failed (a GitHub annotation per
 // failure); 2: setup.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startStandIn } from "../touch-targets/stand-in.mjs";
@@ -72,23 +72,39 @@ function bootSimulator() {
   return udid;
 }
 
-/** Runs a flow; false when it failed (its log and screenshots are in OUT). */
+/**
+ * Runs a flow; false when it failed (its log and screenshots are in OUT). Maestro runs beside this process, never
+ * blocking it: the stand-in that answers the app lives in this process's event loop (a synchronous run left the
+ * app's sign-in page with "the server stopped responding").
+ */
 function flow(maestro, udid, name, env) {
   const args = ["--device", udid, "test", "--test-output-dir", path.join(out, name)];
   for (const [k, v] of Object.entries(env)) args.push("-e", `${k}=${v}`);
   args.push(path.join(flows, `${name}.yaml`));
-  try {
-    fs.writeFileSync(path.join(out, `${name}.log`), run(maestro, args, { env: { ...process.env, MAESTRO_DRIVER_STARTUP_TIMEOUT: "600000" } }));
-    return true;
-  } catch (e) {
-    fs.writeFileSync(path.join(out, `${name}.log`), `${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-    return false;
-  }
+  return new Promise((done) => {
+    execFile(
+      maestro,
+      args,
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, env: { ...process.env, MAESTRO_DRIVER_STARTUP_TIMEOUT: "600000" } },
+      (error, stdout, stderr) => {
+        fs.writeFileSync(path.join(out, `${name}.log`), `${stdout ?? ""}\n${stderr ?? ""}`);
+        done(!error);
+      },
+    );
+  });
+}
+
+/** Maestro's UI tree, read beside this process as a flow is (the stand-in keeps answering). */
+function hierarchy(maestro, udid) {
+  return new Promise((done, fail) => {
+    execFile(maestro, ["--device", udid, "hierarchy"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 300_000 },
+      (error, stdout) => (error ? fail(error) : done(stdout)));
+  });
 }
 
 /** The top edge of the element whose identifier is `id` in Maestro's UI tree, or null. */
-function topOf(maestro, udid, id, label) {
-  const tree = JSON.parse(run(maestro, ["--device", udid, "hierarchy"]).replace(/^[^{]*/, ""));
+async function topOf(maestro, udid, id, label) {
+  const tree = JSON.parse((await hierarchy(maestro, udid)).replace(/^[^{]*/, ""));
   fs.writeFileSync(path.join(out, `tree-${label}.json`), JSON.stringify(tree, null, 1));
   const stack = [tree];
   while (stack.length) {
@@ -111,15 +127,15 @@ async function main() {
   const udid = bootSimulator();
   try {
     const env = { APP_ID: appId, ...TEXTS };
-    const listed = flow(maestro, udid, "walk-list", env);
+    const listed = await flow(maestro, udid, "walk-list", env);
     check("sign-in, the list, and a long press on a plain and a pinned conversation opening its menu", listed,
       "walk-list.log names the step that failed");
     if (!listed) return;
-    const chatTop = topOf(maestro, udid, "workspace-header-title", "conversation");
-    const opened = flow(maestro, udid, "walk-activity", env);
+    const chatTop = await topOf(maestro, udid, "workspace-header-title", "conversation");
+    const opened = await flow(maestro, udid, "walk-activity", env);
     check("the Activity panel opens", opened);
     if (!opened) return;
-    const panelTop = topOf(maestro, udid, "activity-title", "activity");
+    const panelTop = await topOf(maestro, udid, "activity-title", "activity");
     // both headers are the app's phone header below the status bar: the panel's title where the chat's is
     check("the Activity panel's header is below the status bar, where the chat's is",
       chatTop !== null && panelTop !== null && panelTop >= chatTop - 4,

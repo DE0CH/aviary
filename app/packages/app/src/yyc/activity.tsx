@@ -10,6 +10,7 @@
  * pigeon). A server without the route has no chip.
  */
 import { TOUCH_TARGET } from "@/components/ui/control-geometry";
+import { HeaderChip } from "@/yyc/header-chip";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -82,19 +83,13 @@ export function ActivityChip({ sessionId }: { sessionId: string | null }) {
   if (!sessionId || tasks.length === 0) return null;
   const label = chipLabel(tasks, locale);
   return (
-    <Pressable
+    <HeaderChip
       testID="activity-chip"
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      accessibilityLabel={label}
+      icon={<ThemedList size={13} uniProps={mutedColor} />}
+      label={label}
+      open={open}
       onPress={toggle}
-      style={styles.chipTarget}
-    >
-      <View style={[styles.chip, open ? styles.chipOpen : null]}>
-        <ThemedList size={13} uniProps={mutedColor} />
-        <Text style={styles.chipText}>{label}</Text>
-      </View>
-    </Pressable>
+    />
   );
 }
 
@@ -145,9 +140,11 @@ function TaskSection({
             onPress={handleStop}
             style={styles.stopTarget}
           >
-            <View style={styles.stop}>
-              <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
-            </View>
+            {({ pressed }) => (
+              <View style={[styles.stop, pressed && styles.stopPressed]}>
+                <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
+              </View>
+            )}
           </Pressable>
         ) : null}
       </View>
@@ -256,30 +253,6 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // the tap target: a finger's 44 px tall on a phone around the drawn pill, the pill itself from md up
-  chipTarget: {
-    minHeight: { xs: TOUCH_TARGET, md: 0 },
-    justifyContent: "center",
-    marginVertical: { xs: -10, md: 0 },
-  },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[0.5],
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-  },
-  chipOpen: {
-    backgroundColor: theme.colors.surface3,
-  },
-  chipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
   section: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
@@ -322,6 +295,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  stopPressed: {
+    backgroundColor: theme.colors.surface3,
   },
   stopText: {
     color: theme.colors.foreground,

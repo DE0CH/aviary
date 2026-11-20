@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext } from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Image, Text, View } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Download, FileText } from "lucide-react-native";
@@ -110,11 +111,12 @@ function SentFileCard({
     );
   }, [file, toast, urlFor]);
   return (
-    <Pressable
+    <PressHighlight
       onPress={open}
       accessibilityRole="link"
       accessibilityLabel={t("conversation.files.download", { name: file.name })}
       style={({ hovered }) => [styles.card, hovered && styles.cardHovered]}
+      highlightStyle={styles.cardPressed}
       testID="sent-file-card"
     >
       {file.isImage ? (
@@ -137,7 +139,7 @@ function SentFileCard({
         </View>
         <ThemedDownload size={16} uniProps={mutedColorMapping} />
       </View>
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -172,6 +174,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  // a finger on the card (the phone apps, PressHighlight): the shared overlay, in the card's corners (its style is a
+  // function, whose corners the highlight cannot read)
+  cardPressed: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.md,
   },
   preview: {
     width: "100%",

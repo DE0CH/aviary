@@ -19,12 +19,19 @@ const CONVS = [
   { n: 10, title: "年終晚會場地", min: -400 },
   { n: 11, title: "供應商報價整理", min: -500 },
 ];
-// Nothing running: a running conversation's ring turns on a frame clock, and Android's uiautomator never sees a screen
+// Nothing running: a running conversation's ring (and a running task's clock) turns on a frame clock, and Android's uiautomator never sees a screen
 // with one go idle, so the Android app's emulator test (scripts/android-app) asks for a list where nothing runs.
 export function quiet() {
   for (const c of CONVS) {
     c.running = false;
     c.attention = false;
+  }
+  // the Activity panel's clock ticks while a task runs: the tasks are finished (the panel and its chip still show)
+  for (const t of TASKS) {
+    if (t.status !== "running") continue;
+    t.status = "completed";
+    t.endedAt = iso(20);
+    t.summary = t.now;
   }
 }
 export const wid = (n) => `wks_${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
