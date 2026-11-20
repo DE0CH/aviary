@@ -18,6 +18,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Duration;
 
 use deadpool_postgres::Object;
 
@@ -52,6 +53,10 @@ pub struct Tx<'env> {
     doubt: AtomicBool,
     /// The connection was lost (the database away for a moment): [`__run_tx`] runs the closure again.
     lost: AtomicBool,
+    /// An answer did not come within the deadline: nothing more is sent on this connection, and Drop closes it.
+    dead: AtomicBool,
+    /// The pool's [`Pool::deadline`].
+    deadline: Duration,
     _env: PhantomData<&'env ()>,
 }
 
@@ -77,7 +82,27 @@ impl Tx<'_> {
 
     #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] // the shape `statement!` expects (Conn's awaits)
     async fn stmt_client(&self) -> Result<&Object, Error> {
+        if self.dead.load(Ordering::SeqCst) {
+            return Err(Error::Timeout(self.deadline));
+        }
         self.client()
+    }
+
+    /// The deadline of one answer ([`Pool::deadline`]).
+    fn deadline(&self) -> Duration {
+        self.deadline
+    }
+
+    /// An answer did not come within the deadline: the transaction sends nothing more (no `ROLLBACK` either, which
+    /// would wait the same way) and its connection is closed when it is dropped; it is not run again.
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] // the shape `statement!` expects (Conn's awaits)
+    async fn timed_out(&self) -> Error {
+        self.dead.store(true, Ordering::SeqCst);
+        tracing::warn!(
+            deadline_s = self.deadline.as_secs(),
+            "postgres: no answer within the deadline (transaction)"
+        );
+        Error::Timeout(self.deadline)
     }
 
     /// Notes a lost connection, so the whole transaction runs again ([`crate::retry`]).
@@ -154,11 +179,15 @@ impl Tx<'_> {
     /// When a statement fails, or [`Error::TransactionControl`] when one is `begin`, `commit` or the like.
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
         let g = self.guard(sql)?;
-        if let Err(e) = self.client()?.batch_execute(sql).await {
-            self.note(&e);
-            return Err(e.into());
+        let client = self.stmt_client().await?;
+        match tokio::time::timeout(self.deadline, client.batch_execute(sql)).await {
+            Ok(Ok(())) => g.ok(Ok(())),
+            Ok(Err(e)) => {
+                self.note(&e);
+                Err(e.into())
+            }
+            Err(_) => Err(self.timed_out().await),
         }
-        g.ok(Ok(()))
     }
 
     /// `pg_notify(channel, payload)`, delivered to listeners when the transaction commits.
@@ -172,12 +201,16 @@ impl Tx<'_> {
 
     /// Ends the transaction (`commit` or `rollback`) and hands the connection back to the pool.
     async fn finish(mut self, sql: &str) -> Result<(), Error> {
-        let res = self.client()?.batch_execute(sql).await;
+        let client = self.stmt_client().await?;
+        let res = match tokio::time::timeout(self.deadline, client.batch_execute(sql)).await {
+            Ok(r) => r.map_err(Error::from),
+            Err(_) => Err(self.timed_out().await),
+        };
         if res.is_ok() {
             // back to the pool only once the transaction is over; on failure Drop closes it
             drop(self.client.take());
         }
-        Ok(res?)
+        res
     }
 
     /// Commits. When a statement failed or was cancelled, first asks the server whether the transaction is aborted
@@ -189,7 +222,11 @@ impl Tx<'_> {
     async fn commit(self) -> Result<(), (Error, bool)> {
         if self.doubt.load(Ordering::SeqCst) {
             let lost = self.lost.load(Ordering::SeqCst);
-            match self.client().map_err(|e| (e, lost))?.simple_query("select 1").await {
+            let client = self.stmt_client().await.map_err(|e| (e, false))?;
+            let Ok(asked) = tokio::time::timeout(self.deadline, client.simple_query("select 1")).await else {
+                return Err((self.timed_out().await, false));
+            };
+            match asked {
                 Ok(_) => {}
                 Err(e) if e.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) => {
                     self.finish("rollback").await.map_err(|e| (e, false))?;
@@ -262,15 +299,23 @@ where
         started: AtomicU32::new(0),
         doubt: AtomicBool::new(false),
         lost: AtomicBool::new(false),
+        dead: AtomicBool::new(false),
+        deadline: pool.deadline(),
         _env: PhantomData,
     };
     let begun = match tx.client() {
-        Ok(c) => c.batch_execute("begin").await,
+        Ok(c) => tokio::time::timeout(tx.deadline, c.batch_execute("begin")).await,
         Err(e) => return (Err(e.into()), false),
     };
-    if let Err(e) = begun {
-        let again = crate::error::transient_db(&e);
-        return (Err(Error::from(e).into()), again);
+    match begun {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let again = crate::error::transient_db(&e);
+            return (Err(Error::from(e).into()), again);
+        }
+        // nothing ran: the database stopped answering before the transaction began; not run again here (the
+        // caller sees the deadline error, as for a statement)
+        Err(_) => return (Err(tx.timed_out().await.into()), false),
     }
     match f(&tx).await {
         Ok(v) => match tx.commit().await {
@@ -279,6 +324,10 @@ where
         },
         Err(e) => {
             let again = tx.lost.load(Ordering::SeqCst);
+            if tx.dead.load(Ordering::SeqCst) {
+                // no rollback on a connection that does not answer: dropping the Tx closes it (the server rolls back)
+                return (Err(e), false);
+            }
             if let Err(rb) = tx.finish("rollback").await
                 && !again
             {
