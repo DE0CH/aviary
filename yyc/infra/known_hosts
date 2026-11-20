@@ -1,0 +1,5 @@
+# The sandbox gateway's SSH host keys (yyc/infra/gateway.sh: the jump host yyc-master1 10.0.0.30 on network yyc, and
+# yyc-sbx-gw1 10.0.0.8 behind it), pinned: deploy.yml's runner starts with no known_hosts. Read 2026-11-20 through the
+# deploy tunnel; a rebuilt server gets a new key here.
+10.0.0.30 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOJL3A3A2EX15YnT5XNwcDTVjRdy0LVw6KyBrXGkzcpe
+10.0.0.8 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIEDPtd4Ne2mSO1ZUa9oxTC46cRXXZrRSUuWKHEaBYFf

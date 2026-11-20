@@ -263,6 +263,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.yyc-cluster && (umask 077; printf '%s\n' "$CLUSTER_SSH_KEY" > ~/.yyc-cluster/admin)
+          # the jump host's and the gateway's host keys, pinned (the inner hop has no accept-new: "Host key verification
+          # failed" on the first deploy, 2026-11-20)
+          grep -v '^#' yyc/infra/known_hosts > ~/.yyc-cluster/known_hosts
           bash yyc/infra/gateway.sh setup
           bash yyc/infra/gateway.sh status
 
