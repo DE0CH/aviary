@@ -826,6 +826,29 @@ async fn only_admins_get_the_page_the_monitor_only_the_snapshot() {
     assert!(a.body["sandboxes"]["list"].is_array());
 }
 
+/// A hermit with no chat beside it (Jarvis 4's fabric: `ops.chat` false) reads neither magpie nor egress: its snapshot
+/// has no "could not read" for people, View as, egress, the budget or recent (2026-11-20: every one of them would have
+/// been a finding, the page's status "can't see" for good)
+#[tokio::test]
+async fn a_hermit_with_no_chat_reads_neither_magpie_nor_egress() {
+    let h = Harness::with(
+        "ops_no_chat",
+        common::config(|v| v["ops"]["chat"] = json!(false)),
+        common::timings(),
+    )
+    .await;
+    let r = h.replica("hermit-a").await;
+    let a = h
+        .client(Caller::Monitor)
+        .call(&r.url, "GET", "/ops/snapshot", None, &[])
+        .await;
+    assert_eq!(a.status, 200);
+    for k in ["people", "viewAs", "egress", "budget", "recent"] {
+        assert!(a.body["errors"][k].is_null(), "{k}: {}", a.body["errors"]);
+    }
+    assert!(a.body["sandboxes"]["list"].is_array());
+}
+
 async fn events(h: &Harness) -> Vec<(String, String, Option<String>, Value)> {
     h.pool()
         .get()

@@ -129,6 +129,8 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
     let (tz, day, month) = day_and_month(tz, OffsetDateTime::now_utc());
     let cfg = &core.cfg.file;
     let up = &core.ops.up;
+    // a hermit with no chat beside it (ops.chat false) asks neither magpie nor egress: nothing to read, no error
+    let chat = cfg.ops.chat;
     let (
         service,
         hosts,
@@ -154,26 +156,44 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         section(&errors, "hostsGone", hosts_gone(core)),
         section(&errors, "events", events_section(core)),
         section(&errors, "starts", starts_section(core)),
-        section(&errors, "egress", async {
-            up.egress_summary(&tz, RECENT_MINUTES).await
-        }),
-        section(&errors, "people", async {
-            up.magpie
-                .service(None)
-                .ops_people(&magpie_api::ops::PeopleQuery { tz: Some(tz.clone()) })
-                .await
-                .map_err(s)
-        }),
-        section(&errors, "viewAs", async {
-            up.magpie
-                .service(None)
-                .ops_view_as(&magpie_api::ops::ViewAsLogQuery {
-                    limit: Some(VIEW_AS_SHOWN),
-                    before: None,
-                })
-                .await
-                .map_err(s)
-        }),
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "egress", async {
+                up.egress_summary(&tz, RECENT_MINUTES).await
+            })
+            .await
+        },
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "people", async {
+                up.magpie
+                    .service(None)
+                    .ops_people(&magpie_api::ops::PeopleQuery { tz: Some(tz.clone()) })
+                    .await
+                    .map_err(s)
+            })
+            .await
+        },
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "viewAs", async {
+                up.magpie
+                    .service(None)
+                    .ops_view_as(&magpie_api::ops::ViewAsLogQuery {
+                        limit: Some(VIEW_AS_SHOWN),
+                        before: None,
+                    })
+                    .await
+                    .map_err(s)
+            })
+            .await
+        },
         section(&errors, "controls", controls_section(core)),
         section(&errors, "replicas", replicas_section(core)),
         section(&errors, "fabricOps", core.providers.fabric.ops()),
@@ -315,6 +335,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         "scaler": scaler,
         "recent": recent,
         "budget": budget,
+        "chat": chat,
         "openrouter": openrouter,
         // history
         "hostsGone": hosts_gone,
