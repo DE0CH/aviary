@@ -296,7 +296,7 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   `gateway_settled()` (the silence rule, the soft release's settle time) and the ops snapshot's `reachable` and
   `lastSeenAt` for the gateway come from that, never from the gateway row's `last_seen_at`: on 2026-11-20 a Postgres
   whose commits hung stopped the leader's writes, and every replica called a gateway that answered all along "not
-  answering" for 19 minutes (YYC's lessons/154). A replica that just started waits its own settle time. AWS hosts
+  answering" for 19 minutes (YYC's lessons/156). A replica that just started waits its own settle time. AWS hosts
   are judged once the gateway has answered for `hostDeadSeconds` (13.4 step 4 says 30 s, YYC's `hostDeadSeconds`).
 - **Every database call has a deadline** (aviary-pg, `statement_timeout` + 5 s): a primary that stops answering fails
   a pass or a replica report with `Error::Timeout` in seconds and the next tick goes on, instead of hanging there.
