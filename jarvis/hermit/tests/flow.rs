@@ -1,8 +1,9 @@
 //! hermit-jarvis end to end against a real Postgres (`HERMIT_TEST_DATABASE_URL`: a server URL; TLS, as aviary-pg
 //! requires; each test makes its own database), aviary's FakeMagpie and a stand-in router: a machine boots its
 //! sandbox, the descriptor carries the boot, the supervisor's health makes it ready, magpie's get-or-start answers it,
-//! Jarvis's delivery becomes magpie's turn, a fixed-name call gets the identity headers, a pause ends the sandbox, and
-//! the next turn resumes the session and adopts its new machine's boot.
+//! Jarvis's delivery becomes magpie's turn, a fixed-name call gets the identity headers, a pause ends the sandbox and
+//! leaves the conversation open, and the next message resumes the session (asked again when the router refused it
+//! while the pause ran) and adopts its new machine's boot.
 
 #![allow(clippy::unwrap_used, clippy::too_many_lines)]
 
@@ -89,7 +90,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         "hermit_send_turn",
         Reply::error(409, "turn_running", "a turn is running"),
     );
-    // the chat follows the session: closed while it is paused, open when it is up, gone when it is destroyed
+    // the chat follows the session: open while it exists, paused or not; gone when it is destroyed, back if it was not
     for route in [
         "hermit_close_conversation",
         "hermit_delete_conversation",
@@ -159,7 +160,12 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                     let jr = jr4.clone();
                     async move {
                         jr.resumes.lock().unwrap().push(id);
-                        *jr.state.lock().unwrap() = "resuming".into();
+                        let mut state = jr.state.lock().unwrap();
+                        // as the router: a session whose pause still runs can't resume yet
+                        if *state == "pausing" {
+                            return (axum::http::StatusCode::CONFLICT, Json(json!({"error": "session s1 is pausing, so it can't resume now"})));
+                        }
+                        *state = "resuming".into();
                         (axum::http::StatusCode::ACCEPTED, Json(json!({"ok": true})))
                     }
                 }),
@@ -466,34 +472,21 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .unwrap();
     assert_eq!(r.status(), 403);
 
-    // 6. Jarvis pauses the session: the next pass ends the sandbox (idle) and its token no longer works
-    *jr.state.lock().unwrap() = "paused".into();
+    // 6. Jarvis pauses the session: the next pass (while the pause runs) ends the sandbox (idle) and its token no
+    // longer works
+    *jr.state.lock().unwrap() = "pausing".into();
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
     let s: Value = get_sandbox().await.json().await.unwrap();
     assert_eq!(s["state"], "gone");
     assert_eq!(s["release"]["reason"], "idle");
-    // and its conversation takes no message from its person, saying why
-    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
-    assert_eq!(closes.len(), 1, "open until now: nothing was told");
-    assert_eq!(closes[0].params["id"], cid.to_string());
-    assert_eq!(
-        closes[0].body,
-        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
-    );
-    // the conversation as it pauses has no schedule left: the router hears it once
-    assert_eq!(
-        jr.chat.lock().unwrap().last().cloned(),
-        Some(("s1".to_owned(), Value::Null))
-    );
-    // a second pass tells magpie nothing new
+    // and its conversation stays open to its person's messages: magpie is told nothing
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
-    assert_eq!(
+    assert!(
         magpie
             .fake
             .script()
             .calls_to("hermit_close_conversation")
-            .len(),
-        1
+            .is_empty()
     );
     let r = c
         .post(format!("{gw}/jarvis/health"))
@@ -504,7 +497,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .unwrap();
     assert_eq!(r.status(), 403);
 
-    // 7. a turn for a paused session resumes it, and its new machine's boot is that sandbox
+    // 7. a message while the pause still runs: the router refuses the resume, the start waits (nothing ended), and the
+    // first pass that finds the session paused resumes it; its new machine's boot is that sandbox
     let put = c
         .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
         .header("aviary-protocol", "hermit-core=1")
@@ -522,8 +516,21 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(*jr.resumes.lock().unwrap(), vec!["s1".to_owned()]);
+    let s: Value = get_sandbox().await.json().await.unwrap();
+    assert_eq!(s["state"], "starting", "a refused resume ends nothing: {s}");
+    // still pausing: the pass waits for the pause
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    assert_eq!(jr.resumes.lock().unwrap().len(), 1);
+    *jr.state.lock().unwrap() = "paused".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    assert_eq!(
+        *jr.resumes.lock().unwrap(),
+        vec!["s1".to_owned(), "s1".to_owned()]
+    );
+    assert_eq!(*jr.state.lock().unwrap(), "resuming");
     // a reconcile pass while the resume is in flight leaves it alone
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    assert_eq!(jr.resumes.lock().unwrap().len(), 2);
     *jr.state.lock().unwrap() = "started".into();
     let b2: BootReply = boot("m2").await.json().await.unwrap();
     assert_eq!(b2.sandbox_id.to_string(), waiting["id"].as_str().unwrap());
@@ -551,11 +558,15 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     );
     assert_eq!(*states.last().unwrap(), "starting");
 
-    // 9. the session is up again: its conversation is open; destroyed: it leaves the chat, once
+    // 9. the session is up again: its conversation was open all along; destroyed: it leaves the chat, once
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
-    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
-    assert_eq!(closes.len(), 2);
-    assert_eq!(closes[1].body, Some(json!({"reason": null})));
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_close_conversation")
+            .is_empty()
+    );
     assert!(
         magpie
             .fake
@@ -578,7 +589,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     );
 
     // 10. the session was not destroyed after all (the router's list had left it out): its conversation comes back
-    // into the chat, once, in the state the session is in
+    // into the chat, once, open (magpie's restore brings it back as it was; the open says so), and the router hears
+    // its next schedule
     *jr.state.lock().unwrap() = "paused".into();
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
@@ -586,16 +598,22 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].params["id"], cid.to_string());
     let closes = magpie.fake.script().calls_to("hermit_close_conversation");
-    assert_eq!(closes.len(), 3);
+    assert_eq!(closes.len(), 1);
+    assert_eq!(closes[0].body, Some(json!({"reason": null})));
     assert_eq!(
-        closes[2].body,
-        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+        jr.chat.lock().unwrap().last().cloned(),
+        Some(("s1".to_owned(), Value::Null))
     );
     *jr.state.lock().unwrap() = "started".into();
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
-    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
-    assert_eq!(closes.len(), 4);
-    assert_eq!(closes[3].body, Some(json!({"reason": null})));
+    assert_eq!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_close_conversation")
+            .len(),
+        1
+    );
     assert_eq!(
         magpie
             .fake

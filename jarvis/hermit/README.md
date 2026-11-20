@@ -25,7 +25,8 @@ Jarvis 4 session machine (harness aviary)                                     �
 
 - One session is one conversation. A session starts in the Jarvis 4 app, or from the chat's New chat (Deyao,
   2026-11-18: start one and type at once; hermit's `/v1/deployment` `conversations.peopleCreate: true`): see "A
-  conversation begun in the chat" below.
+  conversation begun in the chat" below. A message to a paused session resumes it (Deyao, 2026-11-20): "A session's
+  life", step 5.
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
 - The chat's iPhone app, Jarvis Chat (DE0CH/claudecodeui docs/paseo-ui.md "The iOS app", the same app as the site
@@ -169,13 +170,19 @@ makes none (`central::do_boot`); its title is magpie's, from the first message. 
    `POST /v1/hermit/persons/{person}/uploads` and names the `uploadId`s in the delivery's `images`; magpie writes
    them to `/workspace/uploads/` and hands them to Claude Code as image blocks. One the gateway refuses goes in as a
    `~/uploads/…` path in the text instead.
-5. **Pause**: Jarvis 4 pauses an idle session itself (its idle hour); hermit's next pass over `/api/remotes?harness=
-   aviary` ends that sandbox (`idle`) and closes the conversation to Deyao's messages (magpie's
-   `PUT /v1/hermit/conversations/{id}/closed`): the chat's message box says the session is paused and takes nothing
-   until the session is up again, when the same pass opens it (Deyao, 2026-11-12: a session is resumed in the
-   Jarvis 4 app). A turn magpie admitted just before the close still resumes the session
-   (`POST /api/sessions/:id/start`) and the new machine's boot takes the waiting sandbox; Jarvis's crons and watches
-   resume the session in the router, as for every harness. A wakeup is magpie's (Deyao, 2026-11-17: dogfooding YYC
+5. **Pause, and a message that resumes it** (Deyao, 2026-11-20): Jarvis 4 pauses an idle session itself (its idle
+   hour); hermit's next pass over `/api/remotes?harness=aviary` ends that sandbox (`idle`). The conversation stays
+   open: Deyao types in it as in any other, and the message brings the session back. magpie holds the message and asks
+   hermit for a sandbox; hermit makes a start (phase `host`, the chip "Preparing the workspace…") and asks the router to
+   resume the session (`POST /api/sessions/:id/start`, the Jarvis 4 app's Resume with no prompt: no Face ID, no kernel
+   change); the new machine's boot takes the waiting sandbox and magpie delivers the message once it is ready. The
+   rule is `src/reconcile.rs` `verdict` (a pure function): a start whose session the router lists `paused` asks for
+   the resume, every pass, so a resume refused while the pause still ran (`pausing`) is asked again once it ends; a
+   start no machine boots within ten minutes ends `start_timed_out`. The router sends a resume to Deyao's Inbox only
+   for a session whose harness never came up on its image (it goes onto the newest image): the start waits in phase
+   `approval` ("Waiting for your approval…") and ends `not_allowed` when he denies it, so a denial is never asked
+   again. A failed session resumes the same way; a frozen one thaws. Jarvis's crons and watches resume the session in
+   the router, as for every harness. A wakeup is magpie's (Deyao, 2026-11-17: dogfooding YYC
    AI's schedules): `schedule-wakeup` in the sandbox arms a schedule through `http://magpie/v1/sandbox/schedules`
    (session-image/tools/src/aviary.rs: a UTC cron rule from the first time, the name in the prompt), the chat's list
    shows a clock on the conversation, magpie's fire is a turn like any other, and hermit's pass tells the router the
@@ -185,7 +192,8 @@ makes none (`central::do_boot`); its title is magpie's, from the first message. 
    A session the router lists again after its conversation left the chat was not destroyed (its list had left it
    out): the same pass puts the conversation back (`POST /v1/hermit/conversations/{id}/restore`) in the state the
    session is in.
-   `sessions.chat` records what magpie was last told (`open`, `closed`, `ended`). The conversation (Claude Code's `~/.claude`) is magpie's, so nothing of it rides in the snapshot; the
+   `sessions.chat` records what magpie was last told (`open`, `ended`; a conversation recorded `closed`, from when a
+   pause closed it, is opened by the next pass). The conversation (Claude Code's `~/.claude`) is magpie's, so nothing of it rides in the snapshot; the
    harness copies its transcripts into `~/.claude/projects/-home-claude-workspace/` every 30 s for live sync,
    archives and transcript search.
 6. **Release** (magpie's `release_sandbox`): hermit sets it pending; the supervisor gets it in its next activity reply

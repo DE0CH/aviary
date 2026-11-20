@@ -1,6 +1,6 @@
 //! hermit-jarvis's calls to Jarvis 4's router, with its own Access service token (admitted by client id on the "Jarvis 4 devices"
 //! app, router/devices.go): whose machine signed a boot, which aviary sessions exist and in what state, resuming a
-//! paused one when its conversation gets a turn, and proposing a new one for a conversation begun in the chat (Deyao,
+//! paused one when its conversation gets a message, and proposing a new one for a conversation begun in the chat (Deyao,
 //! 2026-11-18), which starts only once Deyao approves it in the Inbox as any New session.
 
 use std::time::Duration;
@@ -275,7 +275,8 @@ impl Jarvis {
         }
     }
 
-    /// Resumes a paused session (no prompt, no Face ID, as the Jarvis 4 Chat app did).
+    /// Resumes a paused or failed session with no prompt, which needs no approval (the router sends one to Deyao's
+    /// Inbox only for a session whose harness never came up on its image: it goes onto the newest).
     ///
     /// # Errors
     /// The router unreachable or refusing.
