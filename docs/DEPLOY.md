@@ -25,7 +25,12 @@ as a gVisor sandbox on the runner as the fabric runs it (jarvis4 `rust/e2e-kerne
 
 ## main: one deploy run
 
-`deploy.yml` runs on every push to main. It waits until every part's run on that commit is over and green, then:
+`deploy.yml` runs whenever a part's run on main finishes. It deploys the newest commit main has pointed at whose every
+part's newest run is over and green, if that commit is newer than what runs (the `deploy-<sha12>` tags say what runs;
+`aviary-deploy ready`, its rule in `tools/aviary-deploy/src/decide.rs`). The deploy is the pipeline's last stage: a newer
+commit still in its checks, or red, never holds back an older one that passed them (Deyao, 2026-11-20: main moves every
+10-20 min and its ci takes 2 h, so waiting for main's head deployed nothing for 7 h), and nothing older than what runs
+deploys. Then:
 
 1. **Images.** Each image is tagged by the last commit that changed its inputs (`deploy/images.json` lists each
    image's paths): an unchanged part keeps its tag, so its pods are not rolled. The part's workflow builds that tag on

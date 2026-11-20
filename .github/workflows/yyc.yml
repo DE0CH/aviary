@@ -43,6 +43,8 @@ jobs:
         with: {workspaces: "tools/aviary-deploy\nyyc-code/tools/yyc-apply"}
       - name: aviary-deploy and yyc-apply
         run: |
+          # its own tests first: the deploy run's decisions (which commit deploys, the tags) are this binary's
+          cargo test --locked --manifest-path tools/aviary-deploy/Cargo.toml
           cargo build --locked --release --manifest-path tools/aviary-deploy/Cargo.toml
           cargo build --locked --release --manifest-path yyc-code/tools/yyc-apply/Cargo.toml
           mkdir -p "$RUNNER_TEMP/bin"
