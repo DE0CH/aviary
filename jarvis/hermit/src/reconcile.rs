@@ -9,10 +9,16 @@
 //! or its approval lapsed), which also takes its conversation, held message and all, out of the chat. [`verdict`] is
 //! that rule; [`pass`] carries it out.
 //!
+//! A message to a paused session resumes it (Deyao, 2026-11-20): magpie's get-or-start makes a start, and this pass
+//! asks the router to resume its session for as long as the router lists it paused (a resume refused while the pause
+//! still ran is asked again once it ends). The router's resume with no prompt needs no approval; one it sends to
+//! Deyao's Inbox (a session whose harness never came up on its image goes onto the newest) puts the start in phase
+//! `approval`, and a denial ends the start rather than asking again.
+//!
 //! The same pass keeps each session's conversation in the chat in step (Deyao, 2026-11-12: the lifecycle is managed
-//! in Jarvis 4, not in the chat): a session that is not up has its conversation closed to its person's messages, with
-//! a sentence saying where to resume it; one that is up again is opened; a destroyed one's conversation leaves the
-//! chat. magpie's calls are idempotent, so two replicas doing the same one agree too.
+//! in Jarvis 4, not in the chat): a session takes its person's messages for as long as it exists, paused or not; a
+//! destroyed one's conversation leaves the chat. magpie's calls are idempotent, so two replicas doing the same one
+//! agree too.
 //!
 //! A conversation that left the chat comes back when its session is in the router's list again: the session was not
 //! destroyed, the list had left it out (2026-11-16: the router hid a paused session while its resume waited for
@@ -82,6 +88,10 @@ pub async fn pass(app: &App) -> anyhow::Result<()> {
                 tracing::info!(sandbox = %row.id, session = %row.session_id, phase = phase.as_str(), "start moved on");
                 continue;
             }
+            Verdict::Resume => {
+                app.resume(&row.session_id).await;
+                continue;
+            }
             Verdict::End(reason, message) => (reason, message),
         };
         let machine = row.machine.clone();
@@ -119,14 +129,10 @@ pub async fn pass(app: &App) -> anyhow::Result<()> {
             }
         }
         let done = match want {
+            // open (a conversation a pause closed before 2026-11-20 is opened by the first pass that sees it)
             Chat::Open => {
                 magpie
                     .hermit_close_conversation(session.conversation_id, None)
-                    .await
-            }
-            Chat::Closed(why) => {
-                magpie
-                    .hermit_close_conversation(session.conversation_id, Some(why))
                     .await
             }
             Chat::Ended => {
@@ -136,7 +142,7 @@ pub async fn pass(app: &App) -> anyhow::Result<()> {
             }
         };
         match done {
-            // the state the session pauses with: its next schedule, for the router
+            // its next schedule, for the router
             Ok(c) => {
                 app.report_chat_schedule(&session.session_id, c.next_schedule_at)
                     .await
@@ -161,19 +167,23 @@ pub enum Verdict {
     Keep,
     /// Its start (no machine has booted it yet) is now in this phase.
     Phase(SandboxPhase),
+    /// Its start asks the router to resume its paused session.
+    Resume,
     /// It ends.
     End(ReleaseReason, &'static str),
 }
 
-/// The sentence a sandbox ends with when the session proposed for its conversation is gone before it was approved.
-pub const NOT_APPROVED: &str = "the new session was not approved";
+/// The sentence a start ends with when Deyao did not approve its session: a new one proposed for its conversation, or a
+/// resume the router sent to his Inbox.
+pub const NOT_APPROVED: &str = "the session's start was not approved";
 
 /// What becomes of a live sandbox whose session the router lists in `state` (`None`: not in its list) at `now`.
 ///
-/// A booted one lives while its session is up. One no machine has booted yet is a start: of a new session waiting
-/// for its approval (phase `approval` while the router says so, on to `host` once approved, ended when the session is
-/// gone), or of a resume; either ends `start_timed_out` when no machine boots within [`RESUME_DEADLINE`] of the start
-/// leaving the wait for its approval.
+/// A booted one lives while its session is up. One no machine has booted yet is a start: it waits in phase `approval`
+/// while the router says the session waits for Deyao's approval (a new session, or a resume onto a new image), goes on
+/// to `host` once approved and ends when he did not approve (the session gone, or back to paused or failed); a start
+/// whose session is paused asks for its resume. Either ends `start_timed_out` when no machine boots within
+/// [`RESUME_DEADLINE`] of the start leaving the wait for its approval.
 #[must_use]
 pub fn verdict(row: &SandboxRow, state: Option<&str>, now: OffsetDateTime) -> Verdict {
     if row.machine.is_some() {
@@ -190,14 +200,17 @@ pub fn verdict(row: &SandboxRow, state: Option<&str>, now: OffsetDateTime) -> Ve
     match state {
         Some(APPROVAL) if approval => Verdict::Keep,
         Some(APPROVAL) => Verdict::Phase(SandboxPhase::Approval),
-        None if approval => Verdict::End(ReleaseReason::NotAllowed, NOT_APPROVED),
+        None | Some("paused" | "failed") if approval => {
+            Verdict::End(ReleaseReason::NotAllowed, NOT_APPROVED)
+        }
         None => Verdict::End(ReleaseReason::Vanished, "the session is no longer running"),
         Some(_) if approval => Verdict::Phase(SandboxPhase::Host),
         Some(_) if overdue(row, now) => Verdict::End(
             ReleaseReason::StartTimedOut,
             "the session's machine did not boot after the resume",
         ),
-        // a resume in flight: its session is still paused for a moment
+        Some("paused") => Verdict::Resume,
+        // a resume in flight, or a pause still running (its resume follows once it is paused)
         Some(_) => Verdict::Keep,
     }
 }
@@ -224,8 +237,6 @@ pub fn start_phase(state: &str) -> SandboxPhase {
 pub enum Chat {
     /// Its person can message it.
     Open,
-    /// The message box shows this sentence and takes nothing.
-    Closed(&'static str),
     /// Gone from the chat.
     Ended,
 }
@@ -236,27 +247,19 @@ impl Chat {
     pub fn name(self) -> &'static str {
         match self {
             Self::Open => "open",
-            Self::Closed(_) => "closed",
             Self::Ended => "ended",
         }
     }
 }
 
-/// The sentence in the message box of a paused session's conversation.
-pub const PAUSED: &str = "This session is paused. Resume it in the Jarvis 4 app to go on.";
-/// The same for a session that is not running for another reason (a failed start or pause).
-pub const NOT_RUNNING: &str = "This session is not running. Start it in the Jarvis 4 app to go on.";
-
-/// What a session in the router's `state` (`None`: not in its list any more) shows in the chat.
+/// What a session in the router's `state` (`None`: not in its list any more) shows in the chat: open for as long as
+/// the session exists. A message to one that is not up brings it up (hermit's get-or-start: a paused or failed
+/// session resumes, a frozen one thaws, a new one's first message waits for its approval).
 #[must_use]
 pub fn chat_of(state: Option<&str>) -> Chat {
     match state {
-        // a new session waiting for its approval: its conversation's first message waits with it, and more may join; a
-        // frozen one takes messages too, and the first thaws it (hermit's get-or-start resumes it through the router)
-        Some(s) if is_up(s) || s == APPROVAL || s == FROZEN => Chat::Open,
-        Some("paused" | "pausing") => Chat::Closed(PAUSED),
         None | Some("destroyed" | "destroying") => Chat::Ended,
-        Some(_) => Chat::Closed(NOT_RUNNING),
+        Some(_) => Chat::Open,
     }
 }
 
@@ -265,7 +268,7 @@ mod tests {
     use hermit_api::sandbox::{ReleaseReason, SandboxPhase, SandboxState};
     use time::OffsetDateTime;
 
-    use super::{Chat, NOT_APPROVED, NOT_RUNNING, PAUSED, Verdict, chat_of, start_phase, verdict};
+    use super::{Chat, NOT_APPROVED, Verdict, chat_of, start_phase, verdict};
     use crate::db::SandboxRow;
 
     fn row(machine: Option<&str>, phase: SandboxPhase, started: OffsetDateTime) -> SandboxRow {
@@ -354,19 +357,69 @@ mod tests {
         ));
     }
 
+    /// A session takes its person's messages for as long as it exists (Deyao, 2026-11-20): a message to a paused,
+    /// failed or frozen session brings it up (hermit's get-or-start), so its conversation is never closed.
     #[test]
-    fn a_sessions_state_decides_its_conversation() {
-        for up in ["started", "starting", "resuming"] {
-            assert_eq!(chat_of(Some(up)), Chat::Open);
+    fn a_session_takes_messages_until_it_is_destroyed() {
+        for state in [
+            "started", "starting", "resuming", "approval", "frozen", "pausing", "paused", "failed",
+        ] {
+            assert_eq!(chat_of(Some(state)), Chat::Open, "{state}");
         }
-        assert_eq!(chat_of(Some("paused")), Chat::Closed(PAUSED));
-        assert_eq!(chat_of(Some("pausing")), Chat::Closed(PAUSED));
-        assert_eq!(chat_of(Some("failed")), Chat::Closed(NOT_RUNNING));
-        // a new session waiting for its approval: its conversation takes more messages behind the first
-        assert_eq!(chat_of(Some("approval")), Chat::Open);
-        // one in the time machine takes messages: the first thaws it
-        assert_eq!(chat_of(Some("frozen")), Chat::Open);
+        assert_eq!(chat_of(Some("destroying")), Chat::Ended);
         assert_eq!(chat_of(Some("destroyed")), Chat::Ended);
         assert_eq!(chat_of(None), Chat::Ended);
+    }
+
+    /// A message to a paused session (Deyao, 2026-11-20): its start asks the router to resume the session for as long
+    /// as the router lists it paused (a resume refused while the pause still ran, `pausing`, is asked again), and
+    /// leaves a resume in flight alone; the start's ten minutes end it if no machine boots.
+    #[test]
+    fn a_start_resumes_its_paused_session() {
+        let now = OffsetDateTime::now_utc();
+        let start = row(None, SandboxPhase::Host, now);
+        assert_eq!(verdict(&start, Some("paused"), now), Verdict::Resume);
+        assert_eq!(
+            verdict(&start, Some("pausing"), now),
+            Verdict::Keep,
+            "the pause ends first"
+        );
+        assert_eq!(verdict(&start, Some("resuming"), now), Verdict::Keep);
+        let late = row(None, SandboxPhase::Host, now - time::Duration::minutes(11));
+        assert!(matches!(
+            verdict(&late, Some("paused"), now),
+            Verdict::End(ReleaseReason::StartTimedOut, _)
+        ));
+    }
+
+    /// A resume that needs Deyao's approval (the router's: a session whose harness never came up on its image goes
+    /// onto the newest one) waits for it, and ends when he denies it (the router puts the session back to paused):
+    /// it is never asked again, so no second Inbox item follows a denial.
+    #[test]
+    fn a_denied_resume_ends_its_start() {
+        let now = OffsetDateTime::now_utc();
+        let start = row(None, SandboxPhase::Host, now);
+        assert_eq!(
+            verdict(&start, Some("approval"), now),
+            Verdict::Phase(SandboxPhase::Approval)
+        );
+        let waiting = row(None, SandboxPhase::Approval, now);
+        assert_eq!(
+            verdict(&waiting, Some("paused"), now),
+            Verdict::End(ReleaseReason::NotAllowed, NOT_APPROVED)
+        );
+        // a new session's start again that was denied stays as a failed session
+        assert_eq!(
+            verdict(&waiting, Some("failed"), now),
+            Verdict::End(ReleaseReason::NotAllowed, NOT_APPROVED)
+        );
+        // approved: on to the machine's boot, whatever the router calls its way up
+        for up in ["starting", "resuming", "initialising", "started"] {
+            assert_eq!(
+                verdict(&waiting, Some(up), now),
+                Verdict::Phase(SandboxPhase::Host),
+                "{up}"
+            );
+        }
     }
 }

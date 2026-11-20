@@ -4,7 +4,8 @@
 //! its machine first boots (`central::boot`); a conversation begun in the chat gets its session at its first
 //! get-or-start, which proposes one through the router (Deyao, 2026-11-18: the chat's New chat; it waits in Deyao's
 //! Inbox, `reconcile`). A sandbox is one boot of that machine. Get-or-start answers the live boot, or resumes the paused
-//! session through the router and waits for its machine to boot; a release rides on the supervisor's next activity
+//! session through the router and waits for its machine to boot (Deyao, 2026-11-20: any message to a paused session
+//! brings it up; `reconcile` asks again while the router still lists it paused); a release rides on the supervisor's next activity
 //! reply (hermit never calls into a machine); the router's session list ends a sandbox whose machine is gone
 //! (`reconcile`). People: Deyao alone, an admin. Workspaces live on the session machine (its `~/workspace`), so the
 //! workspace routes answer 501, as the contract allows.
@@ -139,7 +140,9 @@ impl Server for App {
             self.thaw_if_frozen(&session.session_id);
             return Ok(answer(row.sandbox()));
         }
-        // the session's machine is not up: resume it, and wait for its boot (central::boot adopts this row)
+        // the session's machine is not up: resume it, and wait for its boot (central::boot adopts this row); a refusal
+        // ends nothing (a pause still running refuses it): reconcile asks again while the session is paused, and ends
+        // the start when no machine boots in time
         let row = db::start(
             &self.pool,
             &session,
@@ -150,23 +153,8 @@ impl Server for App {
         )
         .await
         .map_err(internal)?;
-        let app = self.clone();
-        let sid = session.session_id.clone();
-        let id = row.id;
-        tokio::spawn(async move {
-            if let Err(e) = app.jarvis.resume(&sid).await {
-                tracing::warn!(session = %sid, error = %e, "resume refused");
-                let msg = format!("the session could not be resumed: {e}");
-                let _ = db::update(&app.pool, id, |r| {
-                    if r.state != SandboxState::Starting {
-                        return false;
-                    }
-                    db::end(r, ReleaseReason::StartFailed, &msg);
-                    true
-                })
-                .await;
-            }
-        });
+        let (app, sid) = (self.clone(), session.session_id.clone());
+        tokio::spawn(async move { app.resume(&sid).await });
         Ok(PutSandbox::Starting(row.sandbox()))
     }
 
@@ -398,6 +386,17 @@ pub fn liveness(row: &SandboxRow, owner: &str) -> TokenLiveness {
 }
 
 impl App {
+    /// Asks the router to resume `session` (no prompt: no approval) for a start waiting on it. A refusal is logged and
+    /// changes nothing: the start's own clock decides when it ends (`reconcile`).
+    pub async fn resume(&self, session: &str) {
+        match self.jarvis.resume(session).await {
+            Ok(()) => tracing::info!(session, "resume asked for a message"),
+            Err(e) => {
+                tracing::warn!(session, error = %e, "resume refused; asked again while the session is paused")
+            }
+        }
+    }
+
     /// When the router lists `session` as frozen (the time machine), resumes it, which thaws it; in the background:
     /// the use (a turn, an answer) is answered with the live sandbox and goes in once the supervisor is back.
     fn thaw_if_frozen(&self, session: &str) {

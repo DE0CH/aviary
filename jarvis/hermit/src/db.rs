@@ -84,7 +84,8 @@ pub async fn session_of_conversation(
         .map(SessionRow::of))
 }
 
-/// Every session with what magpie was last told about its conversation (`open`, `closed` or `ended`).
+/// Every session with what magpie was last told about its conversation (`open` or `ended`; `closed` from before
+/// 2026-11-20, when a pause closed it).
 ///
 /// # Errors
 /// A statement error.
