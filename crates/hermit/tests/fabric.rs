@@ -1296,6 +1296,68 @@ async fn one_host(rig: &Rig, g: &Gvisor, r: &Replica) -> String {
     a
 }
 
+/// The gateway of `snap`'s live hosts.
+fn gateway_of(snap: &serde_json::Value) -> serde_json::Value {
+    snap["hosts"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["gateway"] == true)
+        .cloned()
+        .unwrap_or_else(|| panic!("no gateway in {}", snap["hosts"]))
+}
+
+/// The findings of `snap`'s verdict about the gateway.
+fn gateway_findings(snap: &serde_json::Value) -> Vec<String> {
+    snap["health"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["about"] == "gateway")
+        .map(|r| r["text"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// YYC, 2026-11-20 08:28-08:47 UTC: the gateway answered all along, but hermit's Postgres stopped committing, the
+/// scaler could not write the gateway row's `last_seen_at`, and every replica reported "Gateway hermit-gw not
+/// answering" for 19 minutes. Whether the gateway answers is what each replica last heard from it (the leader and
+/// every other replica alike), never what a row says, in both directions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_gateway_answering_is_heard_from_it_not_read_from_a_row() {
+    let rig = Rig::new("fabric_gw_heard", |_| {}, manual()).await;
+    let (lead, g) = rig.replica("hermit-a").await;
+    let (other, g2) = rig.replica("hermit-b").await;
+    assert!(pass(&g, &lead).await.gateway_up);
+    // the database's copy goes stale, as when the scaler cannot write
+    rig.sql("update hosts set last_seen_at = now() - interval '10 minutes' where kind = 'gateway'")
+        .await;
+    for (r, g) in [(&lead, &g), (&other, &g2)] {
+        g.tick(r.core(), false).await; // a tick that does not lead: it writes nothing
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
+        assert_eq!(
+            gateway_of(&snap)["reachable"],
+            true,
+            "{}: the gateway answers this replica",
+            r.core().pod
+        );
+        assert_eq!(gateway_findings(&snap), Vec::<String>::new(), "{}", r.core().pod);
+    }
+    // and the other way: a gateway that stops answering is not answering, however fresh its row
+    rig.fleet.host(GATEWAY).down();
+    rig.sql("update hosts set last_seen_at = now() where kind = 'gateway'")
+        .await;
+    for (r, g) in [(&lead, &g), (&other, &g2)] {
+        g.tick(r.core(), false).await;
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
+        assert_eq!(gateway_of(&snap)["reachable"], false, "{}", r.core().pod);
+        assert!(
+            !g.gateway_settled(),
+            "{}: a silent gateway is not settled",
+            r.core().pod
+        );
+    }
+}
+
 /// hermit 13.7 and `vm.test.ts` "a host that stops answering loses its sandboxes and is terminated": not while the
 /// gateway has only just come back, then `gone`/`sandbox_lost` within 10 s of the host's death with the scaler
 /// running on its own; a gateway that stops answering judges nothing.

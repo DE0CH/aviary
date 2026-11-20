@@ -2409,6 +2409,7 @@ async fn the_deployment_sends_an_image_it_uploaded_for_the_person() {
         person: ALICE.into(),
         message: m,
         join_running: true,
+        interrupt_running: false,
     };
     let turn = hermit.hermit_send_turn(conv, &send(m)).await.unwrap().get().turn.id;
     let stored: serde_json::Value = w

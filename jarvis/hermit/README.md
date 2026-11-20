@@ -162,9 +162,13 @@ makes none (`central::do_boot`); its title is magpie's, from the first message. 
    what lets the idle watchdog fire; `asking` (an open question) = `waiting`.
 4. **Turns**: from the chat (pigeon → magpie → the supervisor's command poll), or from Jarvis (the first prompt,
    wakeups, crons, watches, peer messages: `harness-send` → `POST 127.0.0.1:3128/jarvis/deliver` → hermit → magpie's
-   `POST /v1/hermit/conversations/{id}/turns` as Deyao with `joinRunning`: while a turn runs the message joins it,
-   as Deyao's own mid-reply messages do, so a watchdog's warning or an Inbox outcome arrives during a long turn; a
-   409 `turn_running` that still comes back `harness-send` turns into 75 for the inbox loop to retry). The first
+   `POST /v1/hermit/conversations/{id}/turns` as Deyao with `joinRunning`: while a turn runs the message joins it
+   at Claude Code's next tool result, as Deyao's own mid-reply messages do; a 409 `turn_running` that still comes
+   back `harness-send` turns into 75 for the inbox loop to retry). The memory and disk watchdog's message is the one
+   that interrupts (Deyao, 2026-11-20: it must not wait even for the running tool call, which may be what fills the
+   machine): Jarvis's supervisor posts it to `/jarvis/deliver` itself with `interrupt: true`, hermit sends it with
+   `interruptRunning`, and magpie stops the running turn (the person's stop) and runs the message next, as a turn
+   of its own. The first
    prompt's images (the New session form's) are the turn's images, as Deyao's own in the chat (Deyao, 2026-11-17):
    `harness-send` streams each to `POST 127.0.0.1:3128/jarvis/upload` → hermit → magpie's
    `POST /v1/hermit/persons/{person}/uploads` and names the `uploadId`s in the delivery's `images`; magpie writes
