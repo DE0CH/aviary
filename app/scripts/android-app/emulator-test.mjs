@@ -133,6 +133,26 @@ async function waitFor(find, timeoutMs, label) {
   return null;
 }
 
+/**
+ * Tap what `findTarget` finds until `findResult` sees the tap's effect, up to `tries` times. A system dialog that comes
+ * up between the look and the tap (the starved emulator's "Pixel Launcher isn't responding") takes the tap; the next
+ * look answers it (waitFor) and the tap is made again.
+ */
+async function tapUntil(findTarget, findResult, label, { tries = 3, waitMs = 15_000 } = {}) {
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    // the earlier tap may have landed late: its effect, else the thing to tap
+    const seen = await waitFor((n) => (findResult(n) ? { done: findResult(n) } : findTarget(n) ? { target: findTarget(n) } : null),
+      20_000, attempt === tries ? `${label}-target` : undefined);
+    if (!seen) return null;
+    if (seen.done) return seen.done;
+    const target = seen.target;
+    tap(target);
+    const result = await waitFor(findResult, waitMs, attempt === tries ? label : undefined);
+    if (result) return result;
+  }
+  return null;
+}
+
 /** The message box (its root view) and the text field inside it. */
 function composer(nodes) {
   const root = byId(nodes, "message-input-root");
@@ -232,15 +252,13 @@ async function main() {
     if (!check("sign-in returns to the app, signed in", signedIn)) return;
     const pid = appPid();
 
-    const menu = await waitFor((n) => byId(n, "menu-button"), 20_000, "menu");
-    if (menu) {
-      tap(menu);
-      const row = await waitFor((n) => byText(n, CONVERSATION), 20_000, "conversation-row");
-      if (row) tap(row);
+    // the drawer opens from its button, then the conversation from its row: each tap made again if a dialog took it.
+    // Open means the chat and its box with the drawer gone (the chat is in the tree under an open drawer too).
+    const isOpen = (n) => byId(n, "agent-chat-scroll") && composer(n) && !byId(n, "sidebar-close");
+    let opened = null;
+    if (await tapUntil((n) => byId(n, "menu-button"), (n) => byText(n, CONVERSATION), "conversation-row")) {
+      opened = await tapUntil((n) => byText(n, CONVERSATION), isOpen, "conversation");
     }
-    // open: the chat and its box, and the drawer gone (the chat is in the tree under an open drawer too)
-    const opened = await waitFor((n) => byId(n, "agent-chat-scroll") && composer(n) && !byId(n, "sidebar-close"),
-      30_000, "conversation");
     screenshot("cover-conversation");
     if (!check("a conversation opens from the conversation list", opened)) return;
 
