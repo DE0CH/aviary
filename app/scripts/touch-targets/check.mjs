@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { startStandIn } from "./stand-in.mjs";
+import { options } from "./content.mjs";
 
 const require = createRequire(path.join(path.dirname(new URL(import.meta.url).pathname), "../../packages/app/package.json"));
 const { chromium } = require("playwright");
@@ -27,8 +28,8 @@ const workspace = (n) => `/h/srv_conversations/workspace/wks_0000000${n}-0000-40
 // a view-as tab (paseo yyc/view-as.ts): the app reads the token's claims from the address; the stand-in checks nothing
 const VIEW_AS = `#jarvis-view-as=${Buffer.from(JSON.stringify({ a: "admin@yyc.hk", u: "yoyo.ma@yyc.hk", e: 4102444800 })).toString("base64url")}.sig`;
 
-// One entry per screen or state: where it starts, what a person does to get there and (optional `check`) what must
-// then be on the screen.
+// One entry per screen or state: where it starts, what a person does to get there, (optional `check`) what must
+// then be on the screen and (optional `noDelete`) the deployment without delete, Jarvis chat's.
 const STATES = [
   { name: "new chat", at: "/new" },
   { name: "new chat, typing", at: "/new", run: (p) => p.type("幫我整理今日嘅會議紀錄。\n第二行\n第三行") },
@@ -52,6 +53,13 @@ const STATES = [
   { name: "attachments", at: workspace(1), run: (p) => p.tap('[data-testid="message-input-attach-button"]') },
   { name: "sidebar", at: workspace(1), run: (p) => p.tap('[data-testid="menu-button"]') },
   { name: "sidebar, a conversation's menu", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"] >> nth=1'); } },
+  // Jarvis chat offers no delete: the list's ⋯ is still there, with the rest of the menu (Deyao, 2026-11-20)
+  { name: "sidebar, a conversation's menu with no delete", at: workspace(1), noDelete: true,
+    run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"] >> nth=1'); },
+    check: async (page) => {
+      if (!(await page.locator('[data-testid^="sidebar-workspace-menu-rename-"]').first().isVisible())) return "the ⋯ menu has no 重新命名";
+      return (await page.locator('[data-testid^="sidebar-workspace-menu-archive-"]').count()) ? "the ⋯ menu offers delete with conversationDelete false" : null;
+    } },
   // 置頂 (Deyao, 2026-11-19, design A): the conversation moves into the 已置頂 section above 對話
   { name: "sidebar, pinning a conversation", at: workspace(1),
     run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"][data-testid*="wks_00000004-"]'); await p.tap('[data-testid^="sidebar-workspace-menu-pin-"]'); await p.wait(1000); },
@@ -123,6 +131,7 @@ const MEASURE = ({ min, mark }) => {
 };
 
 async function walk(browser, base, state) {
+  options.conversationDelete = !state.noDelete;
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "zh-HK",
     extraHTTPHeaders: state.signedOut ? { "x-signed-out": "1" } : undefined,

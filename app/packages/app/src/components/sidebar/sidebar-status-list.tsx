@@ -53,6 +53,8 @@ import {
   sidebarWorkspaceRowStyles,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
+import { conversationMenuHasItems } from "@/components/sidebar/conversation-menu";
+import { useSharingAvailable } from "@/yyc/me";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
@@ -793,6 +795,13 @@ function StatusWorkspaceRowInnerContent({
   const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
+  const sharing = useSharingAvailable();
+  const hasMenu = conversationMenuHasItems({
+    onTogglePin,
+    onRename,
+    canShare: sharing && Boolean(workspace.serverId && workspace.workspaceId),
+    onArchive,
+  });
   const {
     role: _dragRole,
     tabIndex: _dragTabIndex,
@@ -840,7 +849,7 @@ function StatusWorkspaceRowInnerContent({
         } = resolveTrailingActionVisibility({
           workspace,
           trailing,
-          hasArchiveAction: Boolean(onArchive),
+          hasMenu,
           isHovered,
           isTouchPlatform,
           showShortcut,
@@ -989,7 +998,7 @@ function StatusWorkspaceActionSlot({
         visible={kebab.showKebab}
         scrimBackdrop={showScrim ? backdrop : undefined}
       >
-        {kebab.showKebab && onArchive ? (
+        {kebab.showKebab ? (
           <SidebarWorkspaceMenu
             {...kebab.menuProps}
             workspaceKey={workspace.workspaceKey}

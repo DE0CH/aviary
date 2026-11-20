@@ -123,8 +123,8 @@ export function status(s) {
   return s;
 }
 /** What a check turns on: `personCards` (the deployment's switch), `cardsLive` (conversation 6 gets the live pushes
- * of a question card, cards.mjs). */
-export const options = { personCards: false, cardsLive: false };
+ * of a question card, cards.mjs); `conversationDelete: false` is Jarvis chat's deployment (no delete). */
+export const options = { personCards: false, cardsLive: false, conversationDelete: true };
 
 // The sequence that drew one question twice (Deyao, 2026-11-19; session "Fix CI failure blocking YYC AI system prompt
 // deploy"): the `ask` call runs in the turn, the question's card row opens with no turn and is answered, then the
@@ -161,7 +161,7 @@ function reloadedTimeline(c) {
 }
 
 export function rest(method, p) {
-  if (p === "/api/jarvis/me") return { firstName: "Jackie", sharing: true, newConversations: true, conversationDelete: true, product: "YYC AI", midTurn: true, modelPick: true, personCards: options.personCards };
+  if (p === "/api/jarvis/me") return { firstName: "Jackie", sharing: true, newConversations: true, conversationDelete: options.conversationDelete, product: "YYC AI", midTurn: true, modelPick: true, personCards: options.personCards };
   if (p.startsWith("/api/blobs/") || p.includes("/files/raw")) return { svg: CHART };
   if (/\/api\/jarvis\/sessions\/[^/]+\/tasks$/.test(p)) return { tasks: p.includes("/00000004-") ? TASKS : [] }; // the session id is the workspace's uuid
   if (/\/api\/jarvis\/sessions\/[^/]+\/schedules$/.test(p)) return { schedules: p.includes("/00000003-") ? SCHEDULES : [] };
