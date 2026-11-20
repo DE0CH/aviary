@@ -558,6 +558,8 @@ struct FakeEc2 {
     credentials: Mutex<Vec<String>>,
     /// `bucket/key` of the objects deleted.
     deleted: Mutex<Vec<String>>,
+    /// `bucket/key` of the objects written just now (`ListObjectsV2` dates every other one 2020).
+    fresh: Mutex<Vec<String>>,
 }
 
 impl FakeEc2 {
@@ -573,6 +575,7 @@ impl FakeEc2 {
             objects: Mutex::default(),
             credentials: Mutex::default(),
             deleted: Mutex::default(),
+            fresh: Mutex::default(),
         })
     }
 
@@ -685,6 +688,28 @@ impl Ec2 for FakeEc2 {
         Box::pin(async move {
             self.deleted.lock().unwrap().push(format!("{bucket}/{key}"));
             Ok(())
+        })
+    }
+
+    fn list_objects<'a>(&'a self, bucket: &'a str, prefix: &'a str) -> Fut<'a, Result<Vec<(String, i64)>, Ec2Error>> {
+        Box::pin(async move {
+            let fresh = self.fresh.lock().unwrap().clone();
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|o| o.strip_prefix(&format!("{bucket}/")))
+                .filter(|k| k.starts_with(prefix))
+                .map(|k| {
+                    let at = if fresh.contains(&format!("{bucket}/{k}")) {
+                        now_ms()
+                    } else {
+                        1_577_836_800_000
+                    };
+                    (k.to_owned(), at)
+                })
+                .collect())
         })
     }
 }
@@ -2592,4 +2617,77 @@ async fn a_fabric_without_freeze_never_freezes() {
     assert_eq!(e.status().as_u16(), 501);
     let s = starting(&rig).await;
     assert_eq!(g.place(s, 2 * GIB).await.unwrap(), Place::NoSlot);
+}
+
+/// `fabric.aws.pruneImages` (Jarvis 4's fabric, Deyao 2026-11-20): the bucket's images no one uses go, with the EC2
+/// reconcile; kept are the configured image, those of sandboxes not gone, those of sandboxes started in the last 7
+/// days and those put there in the last day. Without the setting nothing ever goes (YYC AI).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn images_no_one_uses_go_from_the_bucket() {
+    for prune in [true, false] {
+        let rig = Rig::new(
+            if prune { "fabric_prune" } else { "fabric_prune_off" },
+            |v| {
+                v["fabric"]["aws"]["imageBucket"] = json!("imgs");
+                v["fabric"]["aws"]["pruneImages"] = json!(prune);
+            },
+            manual(),
+        )
+        .await;
+        let (r, g) = rig.replica("hermit-a").await;
+        let configured = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
+        let (live, recent, old, fresh) = ("1f".repeat(32), "2e".repeat(32), "3d".repeat(32), "4c".repeat(32));
+        // a sandbox not gone on `live`, a gone one started 2 days ago on `recent`, one started 30 days ago on `old`
+        for (status, image, age) in [
+            ("ready", &live, "0 days"),
+            ("gone", &recent, "2 days"),
+            ("gone", &old, "30 days"),
+        ] {
+            rig.h
+                .pool()
+                .get()
+                .await
+                .unwrap()
+                .execute(
+                    &format!(
+                        "insert into sandboxes (id, conversation_id, person, status, name, token_kid, image, cpu,
+                           memory_bytes, start_deadline, expires_at, hard_expires_at, created_at)
+                         values ($1, $2, $3, '{status}', $4, 1, $5, 1, $6, now(), now() + interval '1 hour',
+                           now() + interval '2 hours', now() - interval '{age}')"
+                    ),
+                    &[
+                        &Uuid::now_v7(),
+                        &Uuid::now_v7(),
+                        &STAFF,
+                        &format!("sbx-{}", &image[..12]),
+                        &format!("sha256:{image}"),
+                        &i64::try_from(2 * GIB).unwrap(),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+        let key = |h: &str| format!("imgs/images/{h}.tar.zst");
+        *rig.ec2.objects.lock().unwrap() = vec![
+            key(&configured),
+            key(&live),
+            key(&recent),
+            key(&old),
+            key(&fresh),
+            "imgs/frozen/x/abc".into(),
+            "imgs/images/not-a-digest.tar.zst".into(),
+        ];
+        rig.ec2.fresh.lock().unwrap().push(key(&fresh));
+        pass(&g, &r).await;
+        let deleted = rig.ec2.deleted.lock().unwrap().clone();
+        if prune {
+            assert_eq!(
+                deleted,
+                vec![key(&old)],
+                "only the image no one uses, put there long ago"
+            );
+        } else {
+            assert!(deleted.is_empty(), "nothing goes without pruneImages: {deleted:?}");
+        }
+    }
 }

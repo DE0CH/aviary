@@ -8,7 +8,7 @@ name: egress
 # checked against the built one).
 on:
   push:
-    branches: ['**']  # every branch: the gate waits for it
+    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
     paths: ["egress/**", "crates/hermit/fixtures/catalogue-cases.json", "testing/conformance/**", "testing/mock-model/**",
             "deploy/images.json", ".github/workflows/egress.yml"]
   workflow_dispatch:

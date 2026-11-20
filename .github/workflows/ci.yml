@@ -8,7 +8,6 @@ on:
     paths: [crates/**, images/**, fabric/**, testing/**, harness/qwen-code/**, tools/aviary-deploy/**, deploy/images.json,
             Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .config/**, deny.toml, deny-hermit-only.toml,
             clippy.toml, rustfmt.toml, .github/ci/**, .github/workflows/ci.yml]
-  pull_request:
   workflow_dispatch:
 
 # a branch's newer push cancels its older run; on main every commit gets its own group, so none is cancelled or
