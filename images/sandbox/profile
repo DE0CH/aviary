@@ -1,5 +1,9 @@
 # /etc/profile.d/00-sandbox-path.sh (hermit spec 17, A5.F5): a login shell's /etc/profile resets PATH, so put the
 # user's bins (~/.npm-global/bin for `npm install -g`; ~/.local/bin and ~/.cargo/bin, where `curl … | sh` installers
 # such as uv's and rustup's put their tools) and the Python venv back in front.
+# The tools that need a variable of their own (Dockerfile, "The agent's general tools"): rustup's homes, Playwright's
+# browsers and Node's global modules for `require('playwright')`.
 export VIRTUAL_ENV=/opt/py
-export PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/opt/py/bin:$PATH
+export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+export PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers NODE_PATH=/usr/local/lib/node_modules
+export PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/opt/py/bin:/opt/cargo/bin:$PATH

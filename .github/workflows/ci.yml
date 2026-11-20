@@ -575,6 +575,28 @@ jobs:
       - name: images/sandbox/smoke.sh
         run: images/sandbox/smoke.sh "hermit-sandbox:$SHA12" dist
 
+  sandbox-tools:
+    # the sandbox image's tool list (testing/sandbox-tools): every tool the agent gets beyond sandbox-smoke's list,
+    # run as uid 1000 in a login shell with no network, in one container of the images job's image
+    needs: [build, images, tags]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SHA12: ${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images
+      - name: load the image
+        run: docker load -i "$RUNNER_TEMP/images/hermit-sandbox.tar"
+      - name: sandbox-tools
+        run: chmod +x dist/sandbox-tools && dist/sandbox-tools "hermit-sandbox:$SHA12"
+
   gvisor:
     # platform 6.1 `gvisor` (WP-28, WP-24's carried item): the images job's sandbox image under runsc of the DE0CH/gvisor
     # fork (release precopy-20261102.1, sha256-checked) as a Docker runtime with sandboxd's flags: the image's keeper
@@ -701,7 +723,7 @@ jobs:
     # A run started by workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push
     # that starts no workflow) and dispatches this workflow on main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
+    needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, sandbox-tools, gvisor, paseo-contract, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
