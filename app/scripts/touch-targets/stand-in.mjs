@@ -34,11 +34,13 @@ const MIME = {
   ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".wasm": "application/wasm", ".ico": "image/x-icon",
 };
 
-export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null, quiet = false }) {
+/** `onRequest(line)`, when given, hears every request and socket ("GET /api/…", "WS /paseo-ws", "WS frame hello"). */
+export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null, quiet = false, onRequest = null }) {
   const root = path.resolve(appDir);
   if (quiet) content.quiet();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://stand-in");
+    onRequest?.(`${req.method} ${url.pathname}`);
     if (appScheme && url.pathname === "/api/jarvis/app-signin") {
       const state = encodeURIComponent(url.searchParams.get("state") ?? "");
       res.writeHead(302, { location: `${appScheme}://signed-in?state=${state}#token=stand-in` });
@@ -67,10 +69,12 @@ export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme =
     fs.createReadStream(file).pipe(res);
   });
   const sockets = new WebSocketServer({ server, path: "/paseo-ws" });
-  sockets.on("connection", (ws) => {
+  sockets.on("connection", (ws, req) => {
+    onRequest?.(`WS ${req?.url ?? ""}`);
     const send = (message) => ws.send(JSON.stringify({ type: "session", message }));
     ws.on("message", (raw) => {
       const frame = JSON.parse(raw.toString());
+      onRequest?.(`WS frame ${frame.type === "session" ? frame.message?.type : frame.type}`);
       if (frame.type === "hello") return send(content.status(clone(answers.status)));
       if (frame.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
       const message = frame.type === "session" ? frame.message : frame;
