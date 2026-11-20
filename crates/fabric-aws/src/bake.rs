@@ -173,13 +173,25 @@ pub fn publish_image(aws: &dyn Aws, cfg: &Config, image: &str, ghcr: Option<&Ghc
     let src = format!("{}@sha256:{d}", plan::repository(image));
     // as sandboxd unpacks an image (crates/sandboxd/src/images.rs) and as its hub serves one (api.rs): rootfs/ with
     // the files' own owners and modes, config.json, .done
-    let (mut export, _d1) = crane(ghcr)?;
-    export.args(["export", &src, "-"]);
     let rootfs_s = rootfs.to_string_lossy().into_owned();
-    pipe(
-        export,
-        as_root(&["tar", "-x", "-C", &rootfs_s]),
-        "crane export | tar -x",
+    // a registry stream that breaks mid-way (ghcr's HTTP/2 PROTOCOL_ERROR, 2026-11-20: the image never reached the
+    // bucket and every new fabric session failed) is downloaded again into an emptied rootfs
+    with_retries(
+        DOWNLOAD_ATTEMPTS,
+        &|s| std::thread::sleep(Duration::from_secs(s)),
+        &mut |attempt| {
+            if attempt > 1 {
+                let _ = as_root(&["rm", "-rf", &rootfs_s]).status();
+                std::fs::create_dir_all(&rootfs)?;
+            }
+            let (mut export, _d1) = crane(ghcr)?;
+            export.args(["export", &src, "-"]);
+            pipe(
+                export,
+                as_root(&["tar", "-x", "-C", &rootfs_s]),
+                "crane export | tar -x",
+            )
+        },
     )?;
     let (mut config, _d2) = crane(ghcr)?;
     std::fs::write(
@@ -209,6 +221,31 @@ pub fn publish_image(aws: &dyn Aws, cfg: &Config, image: &str, ghcr: Option<&Ghc
     let v = call(aws, ["s3api", "head-object", "--bucket", bucket, "--key", &key])?;
     writeln!(out, "s3://{bucket}/{key} published ({} bytes)", v["ContentLength"])?;
     Ok(())
+}
+
+/// How many times a broken image download is tried.
+const DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// Runs `step` until it succeeds, at most `attempts` times, sleeping 10 s, then 20 s, … between tries; the last error
+/// if none did.
+///
+/// # Errors
+/// Every attempt failed.
+pub fn with_retries(attempts: u32, sleep: &dyn Fn(u64), step: &mut dyn FnMut(u32) -> Result<()>) -> Result<()> {
+    let mut last = None;
+    for attempt in 1..=attempts {
+        match step(attempt) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let _ = writeln!(std::io::stderr(), "attempt {attempt} of {attempts}: {e:#}");
+                last = Some(e);
+                if attempt < attempts {
+                    sleep(10 * u64::from(attempt));
+                }
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no attempt made")))
 }
 
 /// What `ami` bakes from.
@@ -572,6 +609,25 @@ mod tests {
         assert_eq!(b64(b"u:t"), "dTp0");
         assert_eq!(b64(b"ab"), "YWI=");
         assert_eq!(b64(b"a"), "YQ==");
+    }
+
+    #[test]
+    fn a_broken_download_is_tried_again_and_the_last_error_kept() {
+        let slept = std::cell::RefCell::new(Vec::new());
+        let sleep = |s: u64| slept.borrow_mut().push(s);
+        let mut seen = Vec::new();
+        with_retries(3, &sleep, &mut |n| {
+            seen.push(n);
+            if n < 3 {
+                anyhow::bail!("stream error {n}")
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen, vec![1, 2, 3]);
+        assert_eq!(*slept.borrow(), vec![10, 20]);
+        let e = with_retries(2, &|_| {}, &mut |n| anyhow::bail!("broken {n}")).unwrap_err();
+        assert_eq!(e.to_string(), "broken 2");
     }
 
     #[test]

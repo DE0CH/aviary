@@ -1,8 +1,11 @@
-//! Whether main's head may deploy now: the one rule of the deploy run (docs/DEPLOY.md). Only main's head deploys, so an
-//! older commit's late run never rolls back a newer one; it deploys once every part's newest run on it is over and
-//! green. A part whose workflow did not run on the commit (its paths unchanged) has nothing to wait for.
+//! Which commit of main deploys now: the one rule of the deploy run (docs/DEPLOY.md). The deploy is the pipeline's
+//! last stage, and a newer commit still in the earlier stages never holds back one that has passed them (Deyao,
+//! 2026-11-20: with main moving every 10-20 min and its ci taking 2 h, waiting for main's head deployed nothing for
+//! hours). So the newest commit main has pointed at whose every part's newest run is over and green deploys, as long as
+//! it is newer than what runs (the caller leaves older ones out): a rollout only points the clusters at that commit's
+//! images. A part whose workflow did not run on the commit (its paths unchanged) has nothing to wait for.
 
-/// one workflow run on the commit (GitHub's `actions/runs?head_sha=`)
+/// one workflow run on the commit (GitHub's `actions/runs`)
 #[derive(Debug, Clone)]
 pub struct Run {
     pub id: u64,
@@ -14,12 +17,15 @@ pub struct Run {
     pub on_main: bool,
 }
 
+/// one commit main has pointed at, with its runs
+#[derive(Debug, Clone)]
+pub struct Commit {
+    pub sha: String,
+    pub runs: Vec<Run>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ready {
-    /// main has moved on: its own head deploys
-    Stale {
-        head: String,
-    },
     /// these workflows' runs are not over
     Wait(Vec<String>),
     /// these workflows' runs ended red
@@ -27,13 +33,16 @@ pub enum Ready {
     Go,
 }
 
-/// `workflows`: the parts' workflow names (the deploy run's own is not among them)
-pub fn ready(sha: &str, main_head: &str, workflows: &[String], runs: &[Run]) -> Ready {
-    if main_head != sha {
-        return Ready::Stale {
-            head: main_head.to_string(),
-        };
-    }
+#[derive(Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// this commit deploys
+    Go(String),
+    /// no commit newer than what runs is ready: how the newest one stands (`None`: main has nothing newer)
+    Nothing(Option<(String, Ready)>),
+}
+
+/// how one commit stands. `workflows`: the parts' workflow names (the deploy run's own is not among them)
+pub fn ready(workflows: &[String], runs: &[Run]) -> Ready {
     let (mut wait, mut fail) = (Vec::new(), Vec::new());
     for w in workflows {
         let Some(r) = runs
@@ -58,6 +67,16 @@ pub fn ready(sha: &str, main_head: &str, workflows: &[String], runs: &[Run]) -> 
     }
 }
 
+/// `commits`: the commits main has pointed at that are newer than what runs, newest first
+pub fn pick(workflows: &[String], commits: &[Commit]) -> Pick {
+    for c in commits {
+        if ready(workflows, &c.runs) == Ready::Go {
+            return Pick::Go(c.sha.clone());
+        }
+    }
+    Pick::Nothing(commits.first().map(|c| (c.sha.clone(), ready(workflows, &c.runs))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,18 +95,12 @@ mod tests {
     }
 
     #[test]
-    fn only_mains_head_deploys() {
-        let runs = [run(1, "ci", "completed", Some("success"))];
-        assert_eq!(ready("a", "b", &ws(), &runs), Ready::Stale { head: "b".into() });
-    }
-
-    #[test]
     fn all_green_goes_and_a_part_that_did_not_run_waits_for_nothing() {
         let runs = [
             run(1, "ci", "completed", Some("success")),
             run(2, "app", "completed", Some("skipped")),
         ];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Go);
+        assert_eq!(ready(&ws(), &runs), Ready::Go);
     }
 
     #[test]
@@ -96,7 +109,7 @@ mod tests {
             run(1, "ci", "completed", Some("success")),
             run(2, "yyc", "in_progress", None),
         ];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Wait(vec!["yyc".into()]));
+        assert_eq!(ready(&ws(), &runs), Ready::Wait(vec!["yyc".into()]));
     }
 
     #[test]
@@ -105,7 +118,7 @@ mod tests {
             run(1, "ci", "completed", Some("failure")),
             run(2, "yyc", "queued", None),
         ];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Fail(vec!["ci: failure".into()]));
+        assert_eq!(ready(&ws(), &runs), Ready::Fail(vec!["ci: failure".into()]));
     }
 
     #[test]
@@ -114,7 +127,7 @@ mod tests {
             run(1, "ci", "completed", Some("failure")),
             run(5, "ci", "completed", Some("success")),
         ];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Go);
+        assert_eq!(ready(&ws(), &runs), Ready::Go);
     }
 
     #[test]
@@ -124,7 +137,7 @@ mod tests {
         let mut pr = run(9, "ci", "completed", Some("failure"));
         pr.on_main = false;
         let runs = [run(1, "ci", "in_progress", None), pr];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Wait(vec!["ci".into()]));
+        assert_eq!(ready(&ws(), &runs), Ready::Wait(vec!["ci".into()]));
     }
 
     #[test]
@@ -133,6 +146,57 @@ mod tests {
             run(1, "deploy", "in_progress", None),
             run(2, "branch", "completed", Some("failure")),
         ];
-        assert_eq!(ready("a", "a", &ws(), &runs), Ready::Go);
+        assert_eq!(ready(&ws(), &runs), Ready::Go);
+    }
+
+    fn commit(sha: &str, runs: Vec<Run>) -> Commit {
+        Commit { sha: sha.into(), runs }
+    }
+
+    #[test]
+    fn an_older_green_commit_deploys_while_a_newer_one_is_still_in_ci() {
+        // 2026-11-20: main's head was always a commit whose 2 h ci had not finished, and nothing deployed for 7 h
+        let commits = [
+            commit("new", vec![run(9, "ci", "in_progress", None)]),
+            commit(
+                "old",
+                vec![
+                    run(5, "ci", "completed", Some("success")),
+                    run(6, "app", "completed", Some("success")),
+                ],
+            ),
+        ];
+        assert_eq!(pick(&ws(), &commits), Pick::Go("old".into()));
+    }
+
+    #[test]
+    fn the_newest_green_commit_deploys() {
+        let commits = [
+            commit("c", vec![run(9, "ci", "completed", Some("success"))]),
+            commit("b", vec![run(5, "ci", "completed", Some("success"))]),
+        ];
+        assert_eq!(pick(&ws(), &commits), Pick::Go("c".into()));
+    }
+
+    #[test]
+    fn a_red_newer_commit_does_not_hold_back_an_older_green_one() {
+        let commits = [
+            commit("red", vec![run(9, "ci", "completed", Some("failure"))]),
+            commit("green", vec![run(5, "ci", "completed", Some("success"))]),
+        ];
+        assert_eq!(pick(&ws(), &commits), Pick::Go("green".into()));
+    }
+
+    #[test]
+    fn nothing_ready_says_how_the_newest_stands() {
+        let commits = [
+            commit("b", vec![run(9, "ci", "completed", Some("failure"))]),
+            commit("a", vec![run(5, "app", "queued", None)]),
+        ];
+        assert_eq!(
+            pick(&ws(), &commits),
+            Pick::Nothing(Some(("b".into(), Ready::Fail(vec!["ci: failure".into()]))))
+        );
+        assert_eq!(pick(&ws(), &[]), Pick::Nothing(None));
     }
 }

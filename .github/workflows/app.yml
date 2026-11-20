@@ -34,6 +34,11 @@ on:
       - ".github/workflows/app-tests.yml"
   workflow_dispatch:
 
+concurrency:
+  group: app-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
+  # finish (they build what the deploy ships)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
 
