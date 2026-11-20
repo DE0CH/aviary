@@ -52,7 +52,9 @@ export function PendingSendLine({
           style={styles.cancelTarget}
           testID="pending-send-cancel"
         >
-          <Text style={styles.cancel}>{t("message.pending.cancel")}</Text>
+          {({ pressed }) => (
+            <Text style={[styles.cancel, pressed && styles.cancelPressed]}>{t("message.pending.cancel")}</Text>
+          )}
         </Pressable>
       ) : null}
     </View>
@@ -94,5 +96,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 13,
     fontWeight: theme.fontWeight.semibold,
     marginLeft: theme.spacing[2],
+  },
+  // a finger on 取消 shows at once (Deyao, 2026-11-20: no control without a sign of the touch)
+  cancelPressed: {
+    opacity: 0.6,
   },
 }));
