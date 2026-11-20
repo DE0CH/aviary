@@ -478,6 +478,7 @@ async fn the_deployment_names_the_conversations_title() {
         person: STAFF.into(),
         message: msg(key, "look at why chat.deyaochen.com answers bad gateway"),
         join_running: false,
+        interrupt_running: false,
     };
     let title_commands = |id| {
         let pool = r.pool().clone();
@@ -604,6 +605,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
                 person: STAFF.into(),
                 message: msg("w1", "a scheduled wakeup"),
                 join_running: false,
+                interrupt_running: false,
             },
         )
         .await
@@ -619,6 +621,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
                 person: LEAVER.into(),
                 message: msg("w2", "x"),
                 join_running: false,
+                interrupt_running: false,
             },
         )
         .await

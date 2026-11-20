@@ -91,13 +91,16 @@ pub async fn restore_conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<C
 
 /// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation). A
 /// turn that runs refuses it (409 `turn_running`) unless the request says `joinRunning`: then the message joins the
-/// running turn as a person's does.
+/// running turn as a person's does; or `interruptRunning`: then the running turn is stopped and the message runs
+/// next, as a turn of its own.
 pub async fn send_turn(app: &Magpie, _ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
     answer(
         async {
             let person = person_of(&body.person)?;
             admission::validate(&body.message)?;
-            let running = if body.join_running {
+            let running = if body.interrupt_running {
+                admission::WhileRunning::InterruptAsDeployment
+            } else if body.join_running {
                 admission::WhileRunning::JoinAsDeployment
             } else {
                 admission::WhileRunning::Refuse
