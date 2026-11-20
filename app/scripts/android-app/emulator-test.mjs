@@ -212,6 +212,12 @@ async function hold([x, y], ms, during) {
   }
 }
 
+/** The list row (its `sidebar-workspace-row-…` view) that holds a title's text node. */
+const rowOf = (nodes, text) =>
+  nodes
+    .filter((n) => n.id.includes("sidebar-workspace-row-") && within(text, n))
+    .sort((a, b) => (a.box.bottom - a.box.top) - (b.box.bottom - b.box.top))[0];
+
 const contextMenuOpen = (n) => n.find((m) => m.id.includes("sidebar-workspace-context-menu-"));
 
 /** The Activity panel's header (its title) sits below the status bar on this screen. */
@@ -427,13 +433,17 @@ async function main() {
     }
     const plain = await waitFor((n) => byText(n, PLAIN_CONVERSATION), 15_000, "plain-row");
     if (check("main: the conversation list is docked", plain)) {
-      // the row's own ground just above its title (inside the 44 px row, clear of the letters), then the same point
-      // under a held finger: the press shows at once
-      const point = [plain.box.left + 10, plain.box.top - 4];
+      // the row's own ground (its view, left of the title, clear of the letters), then the same point under a held
+      // finger: the press shows at once
+      const rowBox = rowOf(dumpUi("plain-row"), plain)?.box ?? plain.box;
+      const point = [rowBox.left + 3, Math.round((rowBox.top + rowBox.bottom) / 2)];
       const before = screenPixels()?.at(...point);
-      const during = await hold(centre(plain), 250, async () => screenPixels()?.at(...point));
-      // the finger lifted on the row: it opened that conversation; go back to where the list was
-      await sleep(1500);
+      // the picture is taken as soon as the finger is down; adb makes the hold longer than a tap, so the row's menu
+      // may open (a long press) and is put away
+      const during = await hold(centre(plain), 0, async () => screenPixels()?.at(...point));
+      await sleep(1000);
+      if (contextMenuOpen(dumpUi())) shell("input", "keyevent", "KEYCODE_BACK");
+      await sleep(1000);
       check("main: a finger on a conversation shows at once", before && during && colourDistance(before, during) >= 8,
         `row ${before} under the finger ${during}`);
 
