@@ -183,7 +183,7 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: hermit's operator page (its state colours; the page's own script run in the runner's Node)
@@ -207,11 +207,11 @@ jobs:
           lines=$(.github/ci/s3.sh versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
           echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
           echo "$lines" >> "$GITHUB_ENV"
-      - name: REPRO (wip only) hermit's fabric tests 25 times, under the suite's own load each round
+      - name: REPRO (wip only) the whole suite 25 times, to catch the fabric test failing under its load
         run: |
           for i in $(seq 1 25); do
             echo "=== round $i"
-            if ! cargo nextest run --locked -p hermit -p magpie --no-fail-fast 2>&1 | tee /tmp/round.log | tail -3; then
+            if ! cargo nextest run --workspace --locked --no-tests=pass --no-fail-fast 2>&1 | tee /tmp/round.log | tail -3; then
               grep -n -A30 "was not released\|panicked at crates/hermit/tests/fabric.rs" /tmp/round.log | head -80
             fi
           done
