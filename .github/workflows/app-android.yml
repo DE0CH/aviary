@@ -19,7 +19,9 @@ on:
 
 concurrency:
   group: yyc-android-${{ github.ref }}
-  cancel-in-progress: false
+  # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
+  # finish (they build what the deploy ships)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read

@@ -10,6 +10,12 @@ on:
   workflow_dispatch:
   workflow_call:
 
+concurrency:
+  # called from app.yml or app-ios.yml, github.workflow is the caller's name: each caller's copy has its own group
+  group: ${{ github.workflow }}-tests-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
+  # finish (they build what the deploy ships)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
 

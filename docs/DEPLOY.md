@@ -23,6 +23,12 @@ GitHub environment `checks`, open to every branch; nothing in `checks` can deplo
 as a gVisor sandbox on the runner as the fabric runs it (jarvis4 `rust/e2e-kernel`, `E2E_RUNNER=fabric`), since step
 2 below moves the fabric's pin with every deploy.
 
+Only a branch's newest commit is checked (Deyao, 2026-11-20): every workflow that runs on branches has a
+`concurrency` group per branch with `cancel-in-progress` off main, so a push that starts a workflow cancels that
+workflow's run on the branch's older commit. A workflow the newer push does not start (its paths untouched) keeps its
+run: the gate carries that result to the newer commit (jarvis4 `rust/gate` `decide::latest`), so cancelling it would
+leave the branch red. main cancels nothing: its runs build what the deploy ships.
+
 ## main: one deploy run
 
 `deploy.yml` runs on every push to main. It waits until every part's run on that commit is over and green, then:
