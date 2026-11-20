@@ -78,6 +78,125 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o 
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
  && gh --version
 
+# The agent's general tools (Deyao, 2026-11-20: one image for every harness, Jarvis 4's included, and it may grow:
+# disk is cheap). testing/sandbox-tools lists each with its check (ci.yml job `sandbox-tools`). Pinned where the
+# upstream lets us, so the image changes only when this file does; Google Chrome is "stable" (Google serves no older
+# build). The supervisor gives the agent only PATH, LANG, LC_ALL and HOME of the image's environment (A5.F5), so a
+# tool that needs a variable (Rust's RUSTUP_HOME, Playwright's browsers) also gets it in /etc/profile.d (`profile`).
+# System packages: shell, network and media tools, LibreOffice (Writer, Calc, Impress), Postgres client, QR codes,
+# X11 input for a browser on Xvfb (xdotool, xclip), ImageMagick, WireGuard, Ruby (fastlane), the C toolchain.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tmux openssl ripgrep nano vim build-essential gnupg rsync age htop sqlite3 bind9-dnsutils iputils-ping \
+      librsvg2-bin psmisc lsof iproute2 sshpass pv zstd whois gawk bc xxd netcat-openbsd brotli icu-devtools \
+      libheif-examples bsdextrautils postgresql-client zbar-tools libzbar0t64 wireguard-tools \
+      libreoffice-writer libreoffice-calc libreoffice-impress \
+      xdotool xclip imagemagick xdg-utils ruby-full \
+      libgtk-3-0t64 libdbus-glib-1-2 libx11-xcb1 \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/ri
+
+# Single-binary tools, each at a pinned release: rclone, kubectl, kubeseal, cloudflared, versitygw, sops, litestream,
+# crane, hcloud, mihomo, yt-dlp, typst, flyctl, uv.
+RUN set -e; cd /tmp \
+ && curl -fsSL -o rclone.zip https://downloads.rclone.org/v1.76.0/rclone-v1.76.0-linux-amd64.zip \
+ && unzip -q rclone.zip && install -m 755 rclone-v1.76.0-linux-amd64/rclone /usr/local/bin/ && rm -rf rclone* \
+ && curl -fsSL -o /usr/local/bin/kubectl https://dl.k8s.io/release/v1.33.4/bin/linux/amd64/kubectl \
+ && curl -fsSL https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.40.0/kubeseal-0.40.0-linux-amd64.tar.gz \
+      | tar -xzO kubeseal > /usr/local/bin/kubeseal \
+ && curl -fsSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64 \
+ && curl -fsSL https://github.com/versity/versitygw/releases/download/v1.8.0/versitygw_v1.8.0_Linux_x86_64.tar.gz \
+      | tar -xz -C /usr/local/bin --strip-components=1 versitygw_v1.8.0_Linux_x86_64/versitygw \
+ && curl -fsSL -o /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64 \
+ && curl -fsSL https://github.com/benbjohnson/litestream/releases/download/v0.5.17/litestream-0.5.17-linux-x86_64.tar.gz \
+      | tar -xz -C /usr/local/bin litestream \
+ && curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz \
+      | tar -xz -C /usr/local/bin crane \
+ && curl -fsSL https://github.com/hetznercloud/cli/releases/download/v1.70.1/hcloud-linux-amd64.tar.gz \
+      | tar -xz -C /usr/local/bin hcloud \
+ && curl -fsSL https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-amd64-v1.19.31.gz \
+      | gunzip > /usr/local/bin/mihomo \
+ && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp \
+ && curl -fsSL https://github.com/typst/typst/releases/download/v0.15.1/typst-x86_64-unknown-linux-musl.tar.xz \
+      | tar -xJ -C /usr/local/bin --strip-components=1 typst-x86_64-unknown-linux-musl/typst \
+ && curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh -s 0.5.14 \
+ && curl -LsSf https://astral.sh/uv/0.13.9/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
+ && chmod 755 /usr/local/bin/kubectl /usr/local/bin/kubeseal /usr/local/bin/cloudflared /usr/local/bin/sops \
+      /usr/local/bin/mihomo /usr/local/bin/yt-dlp \
+ && kubectl version --client >/dev/null && flyctl version && uv --version && typst --version
+
+# Tailscale (CLI and daemon; tailscaled runs with --tun=userspace-networking in a sandbox): its own apt repository.
+RUN curl -fsSL https://tailscale.com/install.sh | sh \
+ && rm -rf /var/lib/apt/lists/* && tailscale version
+
+# Go at a pinned release, and two tools built with it: age-plugin-tag (sops to an age1tag1 recipient, a Secure
+# Enclave key; age ships it as source only) and actionlint (checks a GitHub workflow before it is pushed).
+RUN curl -fsSL https://go.dev/dl/go1.27.4.linux-amd64.tar.gz | tar -C /usr/local -xz \
+ && ln -s /usr/local/go/bin/go /usr/local/bin/go && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
+ && GOBIN=/usr/local/bin GOPATH=/tmp/gopath GOCACHE=/tmp/gocache go install filippo.io/age/extra/age-plugin-tag@v1.3.2 \
+ && GOBIN=/usr/local/bin GOPATH=/tmp/gopath GOCACHE=/tmp/gocache go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 \
+ && rm -rf /tmp/gopath /tmp/gocache && go version
+
+# Rust (1.99.1, minimal profile + rustfmt + clippy): rustup in /opt, owned by uid 1000 so the agent adds targets
+# (`rustup target add wasm32-unknown-unknown`) and `cargo install`s tools; RUSTUP_HOME and CARGO_HOME are in `profile`.
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.99.1 \
+      --component rustfmt,clippy \
+ && rm -rf /opt/rustup/downloads /opt/rustup/tmp /opt/cargo/registry \
+ && chown -R 1000:1000 /opt/rustup /opt/cargo && /opt/cargo/bin/cargo --version
+
+# fastlane (spaceship): App Store Connect and developer-portal steps the public API lacks.
+RUN gem install fastlane -N && fastlane --version >/dev/null
+
+# Node CLIs, root's npm (prefix /usr/local): wrangler (Cloudflare Workers), vercel, Tencent CloudBase (`tcb`),
+# browse (the Browserbase CLI). Every npm RUN ends with the cache cleaned.
+RUN npm install -g wrangler@4.165.0 vercel@65.10.0 @cloudbase/cli@3.9.4 browse@0.12.0 \
+ && npm cache clean --force && rm -rf /root/.npm \
+ && wrangler --version && vercel --version
+
+# Browsers. Playwright for Node is global (`require('playwright')` through NODE_PATH, in `profile`) and Playwright for
+# Python (in the venv) is the same version, so both share one set of browsers in /opt/pw-browsers: Chromium, its
+# headless shell and WebKit (pages in Safari's engine without a Mac); `--with-deps` installs their system libraries.
+# The Python package's own Node becomes a link to the image's. Stable links hide the revision-numbered directories,
+# and the build fails if a browser isn't where they point. Then real Google Chrome stable (`google-chrome`): some
+# anti-bot layers reject Chromium builds; only its English and Chinese UI locales are kept.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@1.62.0 ws@8.23.0 && npm cache clean --force && rm -rf /root/.npm \
+ && playwright install --with-deps chromium chromium-headless-shell webkit \
+ && /opt/py/bin/pip install --no-cache-dir playwright==1.62.0 \
+ && ln -sf /usr/local/bin/node /opt/py/lib/python3.13/site-packages/playwright/driver/node \
+ && ln -s "$(find /opt/pw-browsers -path '*/chromium-*' -type f -name chrome | head -1)" /opt/pw-browsers/chromium \
+ && ln -s "$(find /opt/pw-browsers -path '*/chromium_headless_shell-*' -type f \( -name headless_shell -o -name chrome-headless-shell \) | head -1)" /opt/pw-browsers/headless_shell \
+ && test -x /opt/pw-browsers/chromium && test -x /opt/pw-browsers/headless_shell \
+ && test -n "$(find /opt/pw-browsers -maxdepth 1 -name 'webkit-*')" \
+ && ln -s /opt/pw-browsers/chromium /usr/local/bin/chromium \
+ && chmod -R a+rX /opt/pw-browsers \
+ && curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+ && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+ && rm -rf /var/lib/apt/lists/* /tmp/chrome.deb /usr/share/doc /usr/share/man \
+ && find /opt/google/chrome/locales -name '*.pak' ! -name 'en-US.pak' ! -name 'en-GB.pak' ! -name 'zh-CN.pak' ! -name 'zh-TW.pak' -delete \
+ && google-chrome --version \
+ && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + && chown -R 1000:1000 /opt/py
+
+# Python libraries in the venv: HTTP and HTML, TOTP, images and QR codes, browser-grade TLS (curl_cffi), SOCKS and a
+# local proxy forwarder (pproxy), cloud SDKs (boto3, Aliyun core), Hugging Face, Telegram (telethon), Microsoft OAuth
+# (msal), sealed boxes (pynacl), crypto wallets (eth-account, tronpy), voice-over (edge-tts), offline Chinese OCR
+# (rapidocr on onnxruntime: rapidocr_onnxruntime has no Python 3.13 build), VNC screenshots (asyncvnc), Camoufox,
+# Postgres (psycopg and its pool), Chinese words (jieba), HEIC photos, tokenizers, a KORAIL client. The venv's
+# opencc stays opencc-python-reimplemented (above): the `opencc` package would replace the same module.
+RUN /opt/py/bin/pip install --no-cache-dir \
+      pyotp boto3 telethon PySocks python-socks pyzbar curl_cffi eth-account pproxy websocket-client zxing-cpp \
+      'qrcode[pil]' numpy aliyun-python-sdk-core pyyaml huggingface_hub gradio_client msal korail-mobile-api \
+      edge-tts tronpy rapidocr onnxruntime asyncvnc 'camoufox[geoip]' 'psycopg[binary]' psycopg-pool jieba \
+      pillow-heif tokenizers pynacl \
+ && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
+ && chown -R 1000:1000 /opt/py
+
+# pymobiledevice3 (iOS devices over a network link; iOS 18.2+ tunnels need Python 3.13, the system Python here) in
+# its own venv, so its pins don't move the agent's.
+RUN python3 -m venv /opt/ios && /opt/ios/bin/pip install --no-cache-dir pymobiledevice3==11.19.4 \
+ && ln -s /opt/ios/bin/pymobiledevice3 /usr/local/bin/pymobiledevice3 \
+ && find /opt/ios -name '__pycache__' -prune -exec rm -rf {} + && pymobiledevice3 version
+
 # Claude Code at the version supervisor spec 3 pins, root-owned outside every directory uid 1000 can write (A11.F13):
 # the supervisor runs /opt/claude-code/bin/claude by that absolute path (in 2.1.325 the package's native
 # bin/claude.exe). /usr/local/bin/claude is a root-owned link to it for shells. The managed files in /etc/claude-code
@@ -182,7 +301,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DEBIAN_FRONTEND=noninteractive \
     MPLCONFIGDIR=/home/sandbox/.config/matplotlib \
     LANG=C.UTF-8
-ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:$PATH
+ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/opt/cargo/bin:$PATH
 
 # The image's own setup, readable inside the sandbox so Claude can see exactly what is installed and how (the
 # instance prompt points at it, A5.F6): this Dockerfile and the files it installs.

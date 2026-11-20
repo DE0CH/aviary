@@ -13,7 +13,7 @@ keeper of the same aviary commit. Ported from jarvis3's
 | `reportlab-cjk.py` | `sbx_reportlab_cjk` in the venv, loaded by a `.pth` | reportlab's `TTFont()` given a Noto CJK `.ttc` uses the TrueType Noto Sans/Serif HK |
 | `90sandbox` | `/etc/apt/apt.conf.d/90sandbox` | no prompts, no recommended packages |
 | `sudoers` | `/etc/sudoers.d/sandbox` | passwordless sudo for `node` (uid 1000), proxy and mirror variables kept |
-| `profile` | `/etc/profile.d/00-sandbox-path.sh` | a login shell's PATH and `VIRTUAL_ENV` |
+| `profile` | `/etc/profile.d/00-sandbox-path.sh` | a login shell's PATH, `VIRTUAL_ENV`, rustup's homes, Playwright's browsers and `NODE_PATH` |
 | `npmrc`, `pip.conf` | `/home/sandbox/.npmrc` (uid 1000's), `/etc/pip.conf` | uid 1000's npm prefix and pip's settings, whatever the environment; root's npm keeps `/usr/local` |
 | `line-buffered.pth` | `sbx-line-buffered.pth` in the venv | Python's stdout and stderr line-buffered when not a terminal (what `PYTHONUNBUFFERED` did for Claude Code's tools) |
 | `video/engine/` | `/opt/engine`, `/usr/local/bin/edit` | the video edit engine: an edit plan (JSON, with HTML blocks) rendered by HyperFrames with a pinned headless Chrome; `GUIDE.md` is what the agent reads |
@@ -23,7 +23,13 @@ keeper of the same aviary commit. Ported from jarvis3's
 | `smoke.sh` | | the image smoke test (`ci.yml` job `sandbox-smoke`) |
 
 What is in it: Debian trixie with Node 22; documents, PDF and spreadsheet tools, CJK fonts, a Python venv `/opt/py`
-owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.325 root-owned at `/opt/claude-code` (the
+owned by uid 1000; the agent's general tools (Deyao, 2026-11-20: one image for every harness, and it may grow),
+each listed with its check in `testing/sandbox-tools` (ci.yml job `sandbox-tools`): LibreOffice, Google Chrome and
+Playwright's Chromium, headless shell and WebKit in `/opt/pw-browsers`, Go, Rust (rustup in `/opt/rustup` and
+`/opt/cargo`, uid 1000's), Ruby and fastlane, the cloud and cluster CLIs (rclone, kubectl, kubeseal, cloudflared,
+flyctl, hcloud, wrangler, vercel, tcb, browse, crane, sops, age), network tools (ip, dig, nc, WireGuard, Tailscale,
+mihomo), yt-dlp, typst, uv, pymobiledevice3 (`/opt/ios`) and the Python libraries the Dockerfile names; the
+variables some of them need are in `profile` too, since the supervisor passes only PATH, LANG, LC_ALL and HOME; Docker (dockerd started on demand); Claude Code 2.1.325 root-owned at `/opt/claude-code` (the
 supervisor runs `/opt/claude-code/bin/claude` by that path; `/usr/local/bin/claude` links to it for shells);
 Qwen Code (harness/qwen-code's release qwen-code-<sha12>, given by tag and sha256: `QWEN_CODE_TAG`, `QWEN_CODE_SHA256`) root-owned at
 `/opt/qwen-code` (`/opt/qwen-code/bin/qwen`, `/usr/local/bin/qwen`); the video edit engine, its tools and its asset
