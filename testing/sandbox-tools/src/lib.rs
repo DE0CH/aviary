@@ -54,7 +54,7 @@ pub const TOOLS: &[Tool] = &[
     t("psql and pg_dump", "psql --version && pg_dump --version"),
     t("zbarimg", "zbarimg --version"),
     t("wg", "wg --version"),
-    t("xdotool", "xdotool version"),
+    t("xdotool", "command -v xdotool"), // it drives an X display: there is none here
     t("xclip", "xclip -version"),
     t("imagemagick", "convert -version"),
     t("libreoffice", "soffice --version"),
@@ -70,7 +70,7 @@ pub const TOOLS: &[Tool] = &[
     t("crane", "crane version"),
     t("flyctl", "flyctl version"),
     t("hcloud", "hcloud version"),
-    t("tailscale", "tailscale version && command -v tailscaled"),
+    t("tailscale", "tailscale version && test -x /usr/sbin/tailscaled"), // sbin: not on uid 1000's PATH
     t("mihomo", "mihomo -v"),
     t("yt-dlp", "yt-dlp --version"),
     t("typst", "typst --version"),
