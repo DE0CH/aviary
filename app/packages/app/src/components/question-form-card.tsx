@@ -501,11 +501,14 @@ export function QuestionFormCard({
         return;
       }
 
-      if (!multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
+      // On a phone a tap only selects and Next moves on (Deyao, 2026-11-20): moving on in the same tap meant the
+      // choice was never on screen (no hover, the finger over the option), so the next question seemed to come by
+      // itself. A pointer has hover, which shows the option before the click.
+      if (!isMobile && !multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
         setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
       }
     },
-    [activeQuestionIndex, questions, selections],
+    [activeQuestionIndex, isMobile, questions, selections],
   );
 
   const setOtherText = useCallback(

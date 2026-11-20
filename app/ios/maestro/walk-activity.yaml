@@ -1,0 +1,10 @@
+# The iPhone walk's second half (scripts/ios-app/simulator-walk.mjs): the conversation's Activity panel opens.
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "activity-chip"
+- extendedWaitUntil:
+    visible:
+      id: "activity-title"
+    timeout: 15000
+- takeScreenshot: activity

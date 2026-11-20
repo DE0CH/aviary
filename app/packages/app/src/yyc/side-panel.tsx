@@ -1,127 +1,144 @@
 /**
- * The shell of a conversation's side panel (Activity, Schedules): beside the chat on a wide screen, over it on a phone.
- * On a phone the panel covers the whole screen, so the shell keeps its header below the status bar and its last line
- * above the home indicator: a panel built on it never handles the safe area itself.
+ * A conversation's side panel (Activity, Schedules) is content of upstream's right-hand panel frame
+ * (`screens/workspace/explorer-sidebar/frame.tsx`, mounted by `conversation-side-panel.tsx`): docked beside the chat on
+ * a wide screen, sliding over it on a phone, and keeping its column clear of the status bar in both. A panel here has
+ * no layout or safe area of its own: its header is the app's (`CompactHeader` floating behind the chat's fade on a
+ * phone, `ScreenHeader` beside the chat). Deyao, 2026-11-20: a shell of our own left room for the status bar only on a
+ * phone, and the docked Activity on the unfolded Fold sat under it.
  */
 import React from "react";
 import type { ReactNode } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronLeft, X } from "lucide-react-native";
-import type { Theme } from "@/styles/theme";
+import { X } from "lucide-react-native";
+import { create } from "zustand";
+import { CompactHeader } from "@/components/headers/compact-header";
+import { ScreenHeader } from "@/components/headers/screen-header";
+import { FloatingHeaderLayout } from "@/components/floating-header";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
+import { mutedLargeGlyphProps } from "@/components/ui/icon-button-chrome";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { usePanelStore } from "@/stores/panel-store";
+import { sidePanelOpen, type SidePanelKind } from "./side-panel-state";
+
+export type { SidePanelKind } from "./side-panel-state";
 
 const ThemedX = withUnistyles(X);
-const ThemedBack = withUnistyles(ChevronLeft);
-const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const foregroundColor = (theme: Theme) => ({ color: theme.colors.foreground });
+const NO_SHORTCUT: never[] = [];
 
-export function SidePanel({
+/** The panel chosen for a conversation; the frame shows it (on a phone while its overlay is out). */
+export const useSidePanel = create<{
+  shown: { sessionId: string; kind: SidePanelKind } | null;
+}>(() => ({
+  shown: null,
+}));
+
+/** Whether this conversation's panel of this kind is on screen, and what a tap on its chip does. */
+export function useSidePanelToggle(
+  sessionId: string | null,
+  kind: SidePanelKind
+): {
+  open: boolean;
+  toggle: () => void;
+} {
+  const compact = useIsCompactFormFactor();
+  const shown = useSidePanel((s) => s.shown);
+  const overlayOut = usePanelStore(
+    (s) => s.mobilePanel.target === "file-explorer"
+  );
+  const open = sidePanelOpen({ shown, sessionId, kind, compact, overlayOut });
+  const toggle = () => {
+    if (!sessionId) return;
+    if (open) {
+      closeSidePanel();
+      return;
+    }
+    useSidePanel.setState({ shown: { sessionId, kind } });
+    if (compact) usePanelStore.getState().showMobileFileExplorer();
+  };
+  return { open, toggle };
+}
+
+export function closeSidePanel(): void {
+  useSidePanel.setState({ shown: null });
+  if (usePanelStore.getState().mobilePanel.target === "file-explorer")
+    usePanelStore.getState().showMobileAgent();
+}
+
+/** A side panel's page: the app's header, then its scrolling body. `<id>-panel` and `<id>-title` are its test IDs. */
+export function SidePanelPage({
   id,
   title,
   compact,
-  onClose,
-  backLabel,
   closeLabel,
   children,
 }: {
-  /** `<id>-panel`, `<id>-back` and `<id>-close` are the test IDs. */
   id: string;
   title: string;
-  /** A phone: the panel covers the chat and closes with a back arrow. */
   compact: boolean;
-  onClose: () => void;
-  backLabel: string;
   closeLabel: string;
-  /** The scrolling body. */
   children: ReactNode;
 }) {
-  const insets = useSafeAreaInsets();
-  return (
-    <View
-      style={
-        compact
-          ? [styles.panelPhone, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }]
-          : styles.panelDock
+  const close = closeSidePanel;
+  const header = compact ? (
+    <CompactHeader
+      framed
+      navigation="back"
+      onBack={close}
+      title={title}
+      titleTestID={`${id}-title`}
+    />
+  ) : (
+    <ScreenHeader
+      framed
+      left={
+        <Text style={styles.title} numberOfLines={1} testID={`${id}-title`}>
+          {title}
+        </Text>
       }
-      testID={`${id}-panel`}
-    >
-      <View style={styles.panelHeader}>
-        {compact ? (
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel={backLabel}
-            style={styles.iconButton}
-            testID={`${id}-back`}
-          >
-            <ThemedBack size={20} uniProps={foregroundColor} />
-          </Pressable>
-        ) : null}
-        <Text style={styles.panelTitle}>{title}</Text>
-        {compact ? null : (
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel={closeLabel}
-            style={styles.iconButton}
-            testID={`${id}-close`}
-          >
-            <ThemedX size={16} uniProps={mutedColor} />
-          </Pressable>
-        )}
-      </View>
-      <ScrollView style={styles.panelBody} contentContainerStyle={styles.panelContent}>
-        {children}
-        {compact ? <View style={{ height: insets.bottom }} testID={`${id}-home-indicator`} /> : null}
-      </ScrollView>
-    </View>
+      right={
+        <HeaderToggleButton
+          onPress={close}
+          tooltipLabel={closeLabel}
+          tooltipKeys={NO_SHORTCUT}
+          tooltipSide="left"
+          testID={`${id}-close`}
+          accessibilityRole="button"
+          accessibilityLabel={closeLabel}
+        >
+          <ThemedX strokeWidth={1.5} uniProps={mutedLargeGlyphProps} />
+        </HeaderToggleButton>
+      }
+    />
+  );
+  return (
+    <FloatingHeaderLayout header={header} floating={compact}>
+      {(topOverlayInset) => (
+        <ScrollView
+          testID={`${id}-panel`}
+          style={styles.body}
+          contentContainerStyle={[
+            styles.content,
+            { paddingTop: topOverlayInset },
+          ]}
+        >
+          {children}
+        </ScrollView>
+      )}
+    </FloatingHeaderLayout>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  panelDock: {
-    width: 340,
-    flexShrink: 0,
-    borderLeftWidth: 1,
-    borderLeftColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    minHeight: 0,
-  },
-  panelPhone: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 50,
-    backgroundColor: theme.colors.surface0,
-  },
-  panelHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    // the 44 px back button sets the height on a phone
-    paddingVertical: { xs: theme.spacing[1], md: theme.spacing[3] },
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  panelTitle: {
-    flex: 1,
+  title: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
-  // a finger's 44 px on a phone (the 20 px arrow + 12 px each side), the glyph where it was
-  iconButton: {
-    padding: { xs: 12, md: theme.spacing[1] },
-    marginHorizontal: { xs: -8, md: 0 },
-  },
-  panelBody: {
+  body: {
     flex: 1,
   },
-  panelContent: {
+  content: {
     paddingBottom: theme.spacing[6],
   },
 }));

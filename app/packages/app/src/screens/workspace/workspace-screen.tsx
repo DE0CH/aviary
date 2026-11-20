@@ -10,8 +10,9 @@ import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { RawTranscriptChip } from "@/yyc/raw-transcript";
-import { ScheduleChip, SchedulesPanel } from "@/yyc/schedules";
-import { ActivityChip, ActivityPanel } from "@/yyc/activity";
+import { ScheduleChip } from "@/yyc/schedules";
+import { ActivityChip } from "@/yyc/activity";
+import { ConversationSidePanel } from "@/yyc/conversation-side-panel";
 import { sessionIdOfWorkspace } from "@/yyc/api";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
@@ -3704,8 +3705,13 @@ function WorkspaceScreenContent({
             >
               {workspaceCenterColumn}
               {sharedExplorer}
-              <SchedulesPanel sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} compact={isMobile} />
-              <ActivityPanel sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} compact={isMobile} />
+              <ConversationSidePanel
+                sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)}
+                compact={isMobile}
+                persistenceKey={persistenceKey}
+                containerWidth={workspaceViewportWidth}
+                isWorkspaceActive={isRouteFocused}
+              />
             </WorkspaceTabDragScope>
           </FloatingPanelPortalHostNameProvider>
           <FloatingPanelPortalHost name={workspaceFloatingPanelPortalHostName} />

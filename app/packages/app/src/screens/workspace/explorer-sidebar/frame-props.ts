@@ -7,4 +7,7 @@ export interface ExplorerFrameProps {
   isOpen: boolean;
   isWorkspaceActive: boolean;
   surfaceColor?: string;
+  workspaceColor?: string;
+  /** The panel's ground: the sidebar's (the explorer), or the chat's (a conversation's side panel). */
+  surface?: "sidebar" | "workspace";
 }

@@ -1,0 +1,79 @@
+# The iPhone walk (app/scripts/ios-app/simulator-walk.mjs; Deyao, 2026-11-20: CI walks the Fold and the iPhone): Jarvis
+# Chat built for the simulator with the stand-in for pigeon as its server, then signed in and walked with Maestro: a
+# long press opens a conversation's menu, and the Activity panel's header sits where the chat's does. Every branch, as
+# the Fold's emulator test (app-android.yml); no secret, nothing uploaded but the walk's screens.
+name: app-ios-walk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - "app/**"
+      - ".github/workflows/app-ios-walk.yml"
+
+concurrency:
+  group: yyc-ios-walk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  walk:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      APP_VARIANT: jarvis-chat
+      YYC_SITE: http://127.0.0.1:8787
+      PRODUCT_NAME: Jarvis 4
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate the iOS project
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+        run: ios/prepare.sh
+
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          ws=$(ls -d packages/app/ios/*.xcworkspace | head -1)
+          cd packages/app/ios
+          xcodebuild -workspace "../../../$ws" -scheme "$(basename "$ws" .xcworkspace)" -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' ARCHS=arm64 \
+            -derivedDataPath build/sim CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/sim-build.log" 2>&1 \
+            || { grep -E -B3 -A8 ": (fatal )?error:" "$RUNNER_TEMP/sim-build.log" | head -n 300; tail -n 40 "$RUNNER_TEMP/sim-build.log"; exit 1; }
+
+      - name: The walk
+        timeout-minutes: 45
+        run: node scripts/ios-app/simulator-walk.mjs "$(ls -d packages/app/ios/build/sim/Build/Products/Release-iphonesimulator/*.app | head -1)" "$GITHUB_WORKSPACE/out/ios-walk"
+
+      - name: Keep the walk's screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-walk
+          path: out/ios-walk/
+          if-no-files-found: ignore

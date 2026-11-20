@@ -10,11 +10,20 @@ import { QuestionFormCard } from "./question-form-card";
 // Load translations so controls expose their real accessible names.
 void testI18n;
 
-// The Markdown engine does not load in this harness; question and option text are covered by
-// e2e/browser/question-prompt-pagination.spec.ts. Plain text keeps these tests on the answers.
+// The Markdown engine does not load in this harness; plain text keeps these tests on the answers.
 vi.mock("@/components/markdown/renderer", () => ({
   MarkdownRenderer: ({ text }: { text: string }) => <span>{text}</span>,
 }));
+
+// A phone (compact) or a wider screen, per test.
+const compact = vi.hoisted(() => ({ value: false }));
+vi.mock("@/constants/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/constants/layout")>()),
+  useIsCompactFormFactor: () => compact.value,
+}));
+afterEach(() => {
+  compact.value = false;
+});
 
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
@@ -193,5 +202,46 @@ describe("QuestionFormCard other answers", () => {
     card.submit();
 
     expect(card.submittedAnswers()).toEqual({ Fruits: "Apple" });
+  });
+});
+
+describe("QuestionFormCard paging", () => {
+  // Deyao, 2026-11-20: on a phone a tap only selects. Moving on in the same tap meant the choice was never on screen
+  // (no hover, the finger over the option), so the next question seemed to appear by itself; Next moves on.
+  function mountTwo() {
+    const onRespond = vi.fn<(response: AgentPermissionResponse) => void>();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const permission = buildPermission(singleSelectQuestion);
+    (permission.request.input as { questions: unknown[] }).questions.push({
+      question: "Which branch?",
+      header: "Branch",
+      options: [{ label: "main" }, { label: "a new branch" }],
+      multiSelect: false,
+    });
+    act(() =>
+      root.render(
+        <QuestionFormCard permission={permission} onRespond={onRespond} isResponding={false} responseError={null} />,
+      ),
+    );
+    mounted.push({ root, container });
+    return within(container);
+  }
+
+  it("on a phone, a tap on an option selects it and stays on the question until Next", () => {
+    compact.value = true;
+    const view = mountTwo();
+    act(() => view.getByRole("radio", { name: "Codex" }).click());
+    expect(view.getByRole("radio", { name: "Codex" }).getAttribute("aria-checked")).toBe("true");
+    expect(view.queryByRole("radio", { name: "main" })).toBeNull();
+    act(() => view.getByRole("button", { name: "Next" }).click());
+    expect(view.getByRole("radio", { name: "main" })).toBeTruthy();
+  });
+
+  it("on a wider screen, a tap on an option of a single-select question moves on", () => {
+    const view = mountTwo();
+    act(() => view.getByRole("radio", { name: "Codex" }).click());
+    expect(view.getByRole("radio", { name: "main" })).toBeTruthy();
   });
 });

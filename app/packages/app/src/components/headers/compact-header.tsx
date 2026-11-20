@@ -31,6 +31,11 @@ interface CompactHeaderProps {
   loading?: boolean;
   /** Icon actions inherit the island chrome through the shared button primitives. */
   actions?: ReactNode;
+  /**
+   * Inside a column frame that already keeps its top clear of the status bar and adds the phone's top padding (the
+   * right-hand panel's, `explorer-sidebar/geometry.tsx`): no padding or margins of its own.
+   */
+  framed?: boolean;
 }
 
 /**
@@ -48,18 +53,22 @@ export function CompactHeader({
   subtitle,
   loading = false,
   actions,
+  framed = false,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
   const rootStyle = useMemo(
-    () => [
-      styles.root,
-      {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
-        marginLeft: insets.left,
-        marginRight: insets.right,
-      },
-    ],
-    [insets.top, insets.left, insets.right],
+    () =>
+      framed
+        ? styles.root
+        : [
+            styles.root,
+            {
+              paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+              marginLeft: insets.left,
+              marginRight: insets.right,
+            },
+          ],
+    [framed, insets.top, insets.left, insets.right],
   );
 
   return (
