@@ -41,7 +41,7 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      fabric; hermit/gateway.release, the gateway server's own pin, names an aviary release (--online: with sandboxd)
   H  hosts (hermit.json): a host of fabric.aws.fallbackHost takes N sandboxes (memory less the reserve over
      sandbox.memory, or CPUs x cpuOvercommit over sandbox.cpu, the smaller); fabric.aws.maxHosts x N holds
-     sandbox.maxActive, and the host's disk fabric.aws.diskGiB (aviary infra.sh's 40 when absent) holds N scratch
+     sandbox.maxActive, and the host's disk fabric.aws.diskGiB (fabric-aws's 40 when absent) holds N scratch
      filesystems of sandbox.tmpGiB in full beside 16 GiB for the system and the image
      sandbox.maxActiveByPerson (a person's own number of sandboxes): none above sandbox.maxActive, and the test
      account bot@deyaochen.com (tests/e2e, the operator's checks) holds at most 3

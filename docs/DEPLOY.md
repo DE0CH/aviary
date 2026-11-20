@@ -18,7 +18,10 @@ yyc/                               YYC AI (ai.yyc-internal.com, YYC's staff): de
 A branch push runs each part's workflow (`ci`, `app`, `egress`, `jarvis`, `qwen-code`, `yyc`) for the parts it
 changed, and the gate (`branch.yml`, `merge.yml`) merges the branch into main only once every run on it is green. The
 checks that need a secret (Jarvis 4's replica: a Fly token; YYC's catalogue check: the catalogue) get it from the
-GitHub environment `checks`, open to every branch; nothing in `checks` can deploy.
+GitHub environment `checks`, open to every branch; nothing in `checks` can deploy. Jarvis 4's two replicas (`ci.yml`
+`replica`, `replica-fabric`) run this commit's release in a Jarvis 4 session before the merge: on a Fly machine, and
+as a gVisor sandbox on the runner as the fabric runs it (jarvis4 `rust/e2e-kernel`, `E2E_RUNNER=fabric`), since step
+2 below moves the fabric's pin with every deploy.
 
 ## main: one deploy run
 
@@ -32,11 +35,12 @@ GitHub environment `checks`, open to every branch; nothing in `checks` can deplo
    the deploy run pushes the tag `deploy-<sha12>` and makes one commit in DE0CH/jarvis4 with that repository's deploy
    key: the chat tenant (`k8s/cluster/tenants/chat.yaml`: `jarvis/deploy` at that tag, with this commit's image
    tags), the sessions' release (`session-image/aviary.json`; its push builds the session image, so new aviary
-   sessions run this commit) and the fabric's tags (`k8s/cluster/fabric`). Flux applies it; the run waits for the
+   sessions run this commit) and the fabric's tags (`k8s/cluster/fabric`; jarvis4's `fabric-ami.yml` then bakes the
+   fabric hosts' AMI with `fabric-aws` when sandboxd, runsc or the disk changed). Flux applies it; the run waits for the
    chat to serve this build, then checks the site through Access.
 3. **YYC AI.** `yyc/deploy` applied to YYC's cluster (yyc-apply, through YYC's Access-gated API), every rollout waited
-   for, then its live end-to-end check, the site's install check, and the host AMI baked when the sandbox image,
-   sandboxd or runsc changed.
+   for, then its live end-to-end check, the site's install check, and the host AMI baked (`fabric-aws`,
+   crates/fabric-aws) when the sandbox image, sandboxd or runsc changed.
 4. **The sandbox gateway.** `yyc/infra/gateway.sh setup` over the jump host (no packet lost); unchanged = nothing done.
 
 Jarvis chat goes first: Deyao's own instance takes a bad build before YYC's staff do. A failed step stops the run

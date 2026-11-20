@@ -17,7 +17,7 @@ value, and print the one `scripts/store-put.py yyc …` command (claude-env) tha
 
 Made elsewhere: YYC_CF_PIGEON_TUNNEL_TOKEN (tofu output tunnel_token_pigeon after the A1 tofu apply),
 YYC_OLD_CLUSTER_IMPORT_TOKEN (the old cluster's Secret jarvis/magpie-import-token, read into a file in A1 step 7),
-YYC_HERMIT_AWS_* (aviary fabric/aws/infra.sh iam-key). OUT is created mode 700; every file mode 600. Delete OUT after
+YYC_HERMIT_AWS_* (`fabric-aws iam-key --key-out FILE`, crates/fabric-aws). OUT is created mode 700; every file mode 600. Delete OUT after
 the store-put run.
 """
 import base64, hashlib, os, secrets, subprocess, sys, urllib.parse
