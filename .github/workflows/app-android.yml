@@ -42,11 +42,15 @@ jobs:
             site: https://ai.yyc-internal.com
             abi: arm64-v8a
             keystore: YYC_ANDROID_UPLOAD_KEYSTORE
+            r2: YYC_APPS
+            bucket: yyc-ai-apps
           - build: jarvis-chat
             variant: jarvis-chat
             site: https://chat.deyaochen.com
             abi: arm64-v8a
             keystore: JARVIS_CHAT_ANDROID_KEYSTORE
+            r2: JARVIS_CHAT_APPS
+            bucket: jarvis-chat-apps
           # the emulator's build: x86_64, the stand-in as its server, debug-signed
           - build: replica
             variant: jarvis-chat
@@ -154,6 +158,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      # the download in the app's settings (app/docs/paseo-ui.md "The Android app"): staged here, published by the job
+      # publish only once every build of this run, the emulator test included, is green
+      - name: Stage the APK for the download
+        if: github.ref == 'refs/heads/main' && matrix.bucket
+        working-directory: .
+        env:
+          AWS_ACCESS_KEY_ID: ${{ matrix.r2 && secrets[format('{0}_R2_ACCESS_KEY_ID', matrix.r2)] }}
+          AWS_SECRET_ACCESS_KEY: ${{ matrix.r2 && secrets[format('{0}_R2_SECRET_ACCESS_KEY', matrix.r2)] }}
+          R2_ENDPOINT: ${{ matrix.r2 && secrets[format('{0}_R2_ENDPOINT', matrix.r2)] }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        run: |
+          aws s3 cp "out/${{ matrix.build }}.apk" "s3://${{ matrix.bucket }}/pending/${{ github.run_id }}.apk" \
+            --endpoint-url "$R2_ENDPOINT" --region auto --content-type application/vnd.android.package-archive --no-progress
+
       - name: Keep the Jarvis Chat APK
         if: matrix.build == 'jarvis-chat'
         uses: actions/upload-artifact@v4
@@ -178,3 +196,33 @@ jobs:
           name: yyc-ai-android-encrypted
           path: yyc-ai-android.apk.age
           retention-days: 30
+
+  # Every build green (the emulator test included): the staged APKs become each deployment's download,
+  # <host>/apps/android.apk (R2 bucket yyc-ai-apps on YYC's account, jarvis-chat-apps on Deyao's; served by the Worker
+  # in DE0CH/yyc-code apps/ and DE0CH/deyao-ai chat-apps/)
+  publish:
+    needs: android
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - r2: YYC_APPS
+            bucket: yyc-ai-apps
+          - r2: JARVIS_CHAT_APPS
+            bucket: jarvis-chat-apps
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets[format('{0}_R2_ACCESS_KEY_ID', matrix.r2)] }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets[format('{0}_R2_SECRET_ACCESS_KEY', matrix.r2)] }}
+      R2_ENDPOINT: ${{ secrets[format('{0}_R2_ENDPOINT', matrix.r2)] }}
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+    steps:
+      - name: Publish the APK
+        run: |
+          s3() { aws s3 "$@" --endpoint-url "$R2_ENDPOINT" --region auto; }
+          s3 cp "s3://${{ matrix.bucket }}/pending/${{ github.run_id }}.apk" "s3://${{ matrix.bucket }}/android.apk" \
+            --content-type application/vnd.android.package-archive --metadata-directive REPLACE
+          s3 rm "s3://${{ matrix.bucket }}/pending/${{ github.run_id }}.apk"
+          s3 ls "s3://${{ matrix.bucket }}/android.apk"

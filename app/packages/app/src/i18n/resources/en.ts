@@ -2457,6 +2457,12 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      androidApp: {
+        title: "Apps",
+        label: "Android",
+        description: "The {{product}} app for Android, newest version. Open the downloaded file to install or update it.",
+        download: "Download",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

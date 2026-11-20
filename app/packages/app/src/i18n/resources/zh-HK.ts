@@ -2415,6 +2415,12 @@ export const zhHK: TranslationResources = {
     general: {
       title: "通用",
       sending: "傳送",
+      androidApp: {
+        title: "應用程式",
+        label: "Android",
+        description: "{{product}} 的 Android 應用程式，最新版本。下載後打開檔案即可安裝或更新。",
+        download: "下載",
+      },
       browserData: {
         title: "瀏覽器資料",
         siteData: "Cookie 和網站資料",

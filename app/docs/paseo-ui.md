@@ -482,7 +482,7 @@ exercised on TestFlight.
 
 ## The Android app
 
-The same native app as the iPhone's, built for Android once per deployment by `.github/workflows/yyc-android.yml`
+The same native app as the iPhone's, built for Android once per deployment by `.github/workflows/app-android.yml`
 (the variants of "The iOS app": YYC AI `dev.de0ch.yycai`, Jarvis Chat `dev.de0ch.jarvis4chat`) as a signed release
 APK, arm64, installed from the file (no Play Store; Deyao, 2026-11-19, for his Galaxy Z Fold). What the iPhone app
 does for comfort is the shared code's, with Android's own half: the message box rides on the keyboard
@@ -504,6 +504,14 @@ Sign-in is the iPhone's: `/api/jarvis/app-signin` in a Chrome Custom Tab, back o
   (`ANDROID_BUILD_NUMBER`), so every build installs over the one before.
 - **Out of CI**: Jarvis Chat's APK is the artifact `jarvis-chat-android`; YYC AI's carries the YYC_SITE secret, so it is
   `yyc-ai-android-encrypted`, age-encrypted to `YYC_ANDROID_CI_AGE_KEY`'s recipient.
+- **The download** (Deyao, 2026-11-20): Settings → General → Apps → Android, 「下載」 / "Download", on Android only (the
+  site in an Android browser, and the app itself for its updates; `yyc/android-app.ts`), opens
+  `<deployment>/apps/android.apk`, which the browser fetches behind the deployment's Access. Served from Cloudflare's
+  edge: a Worker on that path reads the R2 bucket (YYC AI: `yyc-ai-apps` on YYC's account, DE0CH/yyc-code `apps/`;
+  Jarvis Chat: `jarvis-chat-apps` on Deyao's, DE0CH/deyao-ai `chat-apps/`), checks Access's token and answers from the
+  location's cache keyed by the object's ETag. On main each build stages its APK in the bucket (`pending/<run>.apk`) and
+  the job `publish` copies it to `android.apk` only once every build of the run, the emulator test included, is green
+  (secrets `YYC_APPS_R2_*`, `JARVIS_CHAT_APPS_R2_*`: tokens for those buckets only).
 - **The emulator test** (the matrix's `replica`): Jarvis Chat built with `YYC_SITE=http://127.0.0.1:8787`, the stand-in
   for pigeon (`scripts/touch-targets/stand-in.mjs`, which with `appScheme` also answers the app's sign-in), on a
   foldable emulator profile. `scripts/android-app/emulator-test.mjs` signs in, opens a conversation, checks that the

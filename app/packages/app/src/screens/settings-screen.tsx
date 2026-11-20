@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
+  Linking,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -82,6 +84,9 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { EditorSection } from "@/screens/settings/editor-section";
 import { FilesSection } from "@/screens/settings/files-section";
 import { Button } from "@/components/ui/button";
+import { androidAppDownloadUrl } from "@/yyc/android-app";
+import { siteOrigin } from "@/yyc/site";
+import { useProductName } from "@/yyc/product";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -374,6 +379,38 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        </SettingsRow>
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+// The deployment's Android app (yyc/android-app.ts): Android only, the site in a browser and the app itself
+function AndroidAppSection() {
+  const { t } = useTranslation();
+  const product = useProductName();
+  const url = androidAppDownloadUrl({
+    platform: Platform.OS,
+    userAgent: typeof navigator !== "undefined" ? (navigator.userAgent ?? null) : null,
+    origin: siteOrigin(),
+  });
+  const handleDownload = useCallback(() => {
+    if (!url) return;
+    // the app hands it to the browser, which signs in to the deployment's Access and keeps the file
+    if (typeof window !== "undefined" && window.location && Platform.OS === "web") window.location.assign(url);
+    else void Linking.openURL(url);
+  }, [url]);
+  if (!url) return null;
+  return (
+    <SettingsSection title={t("settings.general.androidApp.title")}>
+      <SettingsCard>
+        <SettingsRow
+          label={t("settings.general.androidApp.label")}
+          hint={t("settings.general.androidApp.description", { product })}
+        >
+          <Button variant="secondary" size="sm" onPress={handleDownload} testID="android-app-download">
+            {t("settings.general.androidApp.download")}
+          </Button>
         </SettingsRow>
       </SettingsCard>
     </SettingsSection>
@@ -1292,6 +1329,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return (
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
+              <AndroidAppSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>
           );
