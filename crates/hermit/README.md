@@ -290,10 +290,16 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   pass's heartbeats just read.
 - **Vanished** (13.4 step 3) judges only rows that were `ready` before the heartbeat was asked and have not moved
   since it was asked: a list read before a row became ready or moved cannot hold it.
-- **The gateway's "answering since"** is kept on its row (`info.upSince`) by the leader and read by every other
-  replica each tick, so `gateway_settled()` (the silence rule, the soft release's settle time) answers the same on
-  every replica. AWS hosts are judged once the gateway has answered for `hostDeadSeconds` (13.4 step 4 says 30 s,
-  YYC's `hostDeadSeconds`).
+- **The gateway's "answering since"** is what each replica hears from the gateway itself: every replica, leader or
+  not, asks the gateway's sandboxd (`GET /v1/host`) at the start of each tick, before any database work, and the
+  leader's pass records its own heartbeat of it the same way (`Gvisor::beat_gateway`, `heard_gateway`).
+  `gateway_settled()` (the silence rule, the soft release's settle time) and the ops snapshot's `reachable` and
+  `lastSeenAt` for the gateway come from that, never from the gateway row's `last_seen_at`: on 2026-11-20 a Postgres
+  whose commits hung stopped the leader's writes, and every replica called a gateway that answered all along "not
+  answering" for 19 minutes (YYC's lessons/156). A replica that just started waits its own settle time. AWS hosts
+  are judged once the gateway has answered for `hostDeadSeconds` (13.4 step 4 says 30 s, YYC's `hostDeadSeconds`).
+- **Every database call has a deadline** (aviary-pg, `statement_timeout` + 5 s): a primary that stops answering fails
+  a pass or a replica report with `Error::Timeout` in seconds and the next tick goes on, instead of hanging there.
 - **The fresh-host switch** (16) compares a host's activation time (`info.activeAt`, written when it turns active)
   with `controls.updated_at` while `fresh_host_until` is in the future.
 - **A launch before the gateway's first heartbeat** (its `WireGuard` key unknown) answers `planned`: the start waits

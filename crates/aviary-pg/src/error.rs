@@ -56,6 +56,11 @@ pub enum Error {
     /// A dedicated connection ended while it was in use.
     #[error("postgres connection closed")]
     Closed,
+    /// The database gave no answer within the pool's deadline (its `statement_timeout` and a margin): a primary that
+    /// stopped answering without closing anything. The connection is never used again; a statement's or a commit's
+    /// outcome is unknown, so it is not run again.
+    #[error("postgres: no answer in {} s", .0.as_secs())]
+    Timeout(std::time::Duration),
 }
 
 impl Error {

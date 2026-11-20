@@ -806,6 +806,10 @@ jobs:
           set -euo pipefail
           jq --arg t "$TAG" '.fabric.sandboxd = $t' jarvis4/k8s/cluster/fabric/hermit.json > "$RUNNER_TEMP/hermit.json"
           jq -c '{image: .sandbox.image, sandboxd: .fabric.sandboxd, runsc: .fabric.runsc, memory: .sandbox.memory}' "$RUNNER_TEMP/hermit.json"
+      # the runner's Docker sets iptables' FORWARD policy to DROP, which drops every packet a sandbox sends out (its
+      # first DNS query: "Could not resolve host"); a fabric host runs no Docker, so the runner is put back to accept
+      - name: forwarding as on a fabric host (no Docker's FORWARD DROP)
+        run: sudo iptables -S FORWARD | head -1 && sudo iptables -P FORWARD ACCEPT
       - name: the runner as a fabric host (fabric-replica up)
         run: sudo target/release/fabric-replica up --hermit-json "$RUNNER_TEMP/hermit.json" --aviary .
       - name: the checks (egress, pause, freeze to S3 and thaw, delete paused)

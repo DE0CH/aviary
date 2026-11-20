@@ -452,6 +452,9 @@ pub async fn live_hosts(core: &Core) -> Result<Vec<Value>, aviary_pg::Error> {
             &[&HOST_FRESH_S],
         )
         .await?;
+    // the gateway as this replica heard it (each replica asks it every tick): a row the scaler could not write says
+    // nothing about the gateway
+    let heard = core.providers.fabric.gateway_heard();
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
         let info: Option<Value> = r.try_get(11)?;
@@ -479,6 +482,13 @@ pub async fn live_hosts(core: &Core) -> Result<Vec<Value>, aviary_pg::Error> {
             "load1": info["loadAvg"][0].as_f64(),
             "gvisor": info["gvisorRelease"].clone(),
         }));
+        if let (true, Some((answering, at)), Some(x)) = (kind == "gateway", heard, out.last_mut()) {
+            x["reachable"] = json!(answering && at > 0 && crate::fabric::gvisor::now_ms() - at < HOST_FRESH_S * 1000);
+            if at > 0 {
+                x["lastSeenAt"] = iso(OffsetDateTime::from_unix_timestamp_nanos(i128::from(at) * 1_000_000)
+                    .unwrap_or(OffsetDateTime::UNIX_EPOCH));
+            }
+        }
     }
     Ok(out)
 }

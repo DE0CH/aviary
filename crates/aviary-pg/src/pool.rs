@@ -31,6 +31,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const POOL_TIMEOUT: Duration = Duration::from_secs(5);
 /// The role-level backstop (platform 11.1), also set per connection.
 const IDLE_IN_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How much longer than its `statement_timeout` a statement, a `COMMIT` or a `ROLLBACK` may wait for the server's
+/// answer before it fails with [`Error::Timeout`]. The server ends a slow statement itself at `statement_timeout`; the
+/// deadline is for a server that does not answer at all (YYC, 2026-11-20: a primary whose storage stalled held every
+/// commit for 15 minutes, and Postgres does not apply `statement_timeout` to a commit's wait).
+pub const DEADLINE_MARGIN: Duration = Duration::from_secs(5);
 
 /// Run on every pooled connection before it is handed out again (deadpool's recycle). First a check that it is
 /// outside any transaction: a multi-statement simple query runs in one implicit transaction that starts with the
@@ -65,6 +70,8 @@ pub struct Pool {
     inner: deadpool_postgres::Pool,
     config: Arc<tokio_postgres::Config>,
     tls: MakeRustlsConnect,
+    /// `statement_timeout` + [`DEADLINE_MARGIN`]: the longest any answer is waited for.
+    deadline: Duration,
 }
 
 impl fmt::Debug for Pool {
@@ -176,6 +183,7 @@ fn build(
         inner: pool,
         config: Arc::new(config),
         tls,
+        deadline: statement_timeout + DEADLINE_MARGIN,
     })
 }
 
@@ -188,10 +196,17 @@ impl Pool {
     /// [`crate::retry::RETRY_FOR`].
     pub async fn get(&self) -> Result<Conn, Error> {
         Ok(Conn {
-            client: tokio::sync::Mutex::new(crate::retry::get(&self.inner).await?),
+            client: tokio::sync::Mutex::new(Some(crate::retry::get(&self.inner).await?)),
             pool: self.inner.clone(),
             doubt: AtomicBool::new(false),
+            deadline: self.deadline,
         })
+    }
+
+    /// The longest any answer from the server is waited for (`statement_timeout` + [`DEADLINE_MARGIN`]).
+    #[must_use]
+    pub fn deadline(&self) -> Duration {
+        self.deadline
     }
 
     /// The pool's size, idle connections and waiters (for metrics). The deadpool pool itself is not handed out:
@@ -233,11 +248,14 @@ impl Pool {
 /// pool, which resets the connection before its next user (`RECYCLE_SQL`). Statements are prepared once per connection and cached; a stale cached statement clears the
 /// pool's caches and is retried once (`crate::stmt`).
 pub struct Conn {
-    /// Replaced by a new pooled connection when the database dropped this one ([`crate::retry`]).
-    client: tokio::sync::Mutex<Object>,
+    /// Replaced by a new pooled connection when the database dropped this one ([`crate::retry`]); `None` once a
+    /// statement got no answer within the deadline (the connection was closed, never handed back).
+    client: tokio::sync::Mutex<Option<Object>>,
     pool: deadpool_postgres::Pool,
     /// Unused here (a statement outside a transaction aborts nothing); [`StmtGuard`] wants one.
     doubt: AtomicBool,
+    /// The pool's [`Pool::deadline`].
+    deadline: Duration,
 }
 
 impl fmt::Debug for Conn {
@@ -247,9 +265,26 @@ impl fmt::Debug for Conn {
 }
 
 impl Conn {
-    #[allow(clippy::unnecessary_wraps)] // the shape `statement!` expects (Tx's can fail)
-    async fn stmt_client(&self) -> Result<tokio::sync::MutexGuard<'_, Object>, Error> {
-        Ok(self.client.lock().await)
+    async fn stmt_client(&self) -> Result<tokio::sync::MappedMutexGuard<'_, Object>, Error> {
+        tokio::sync::MutexGuard::try_map(self.client.lock().await, Option::as_mut).map_err(|_| Error::Closed)
+    }
+
+    /// The deadline of one answer ([`Pool::deadline`]).
+    fn deadline(&self) -> Duration {
+        self.deadline
+    }
+
+    /// A statement got no answer within the deadline: the connection is closed (taken out of the pool, so it never
+    /// serves anyone again) and this `Conn` answers [`Error::Closed`] from now on.
+    async fn timed_out(&self) -> Error {
+        if let Some(obj) = self.client.lock().await.take() {
+            drop(Object::take(obj));
+        }
+        tracing::warn!(
+            deadline_s = self.deadline.as_secs(),
+            "postgres: no answer within the deadline"
+        );
+        Error::Timeout(self.deadline)
     }
 
     fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
@@ -268,8 +303,10 @@ impl Conn {
             }
             tokio::time::sleep(crate::retry::RETRY_GAP).await;
             let fresh = crate::retry::get(&self.pool).await?;
-            let old = std::mem::replace(&mut *self.client.lock().await, fresh);
-            drop(Object::take(old)); // the dead connection never goes back to the pool
+            let old = self.client.lock().await.replace(fresh);
+            if let Some(old) = old {
+                drop(Object::take(old)); // the dead connection never goes back to the pool
+            }
             return Ok(());
         }
         if !stmt::is_stale(&e) || g.retried {
@@ -324,10 +361,14 @@ impl Conn {
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
         let mut g = self.guard(sql)?;
         loop {
-            let outcome = self.client.lock().await.batch_execute(sql).await;
+            let outcome = {
+                let client = self.stmt_client().await?;
+                tokio::time::timeout(self.deadline, client.batch_execute(sql)).await
+            };
             match outcome {
-                Ok(()) => return g.ok(Ok(())),
-                Err(e) => self.recover(&mut g, e).await?,
+                Ok(Ok(())) => return g.ok(Ok(())),
+                Ok(Err(e)) => self.recover(&mut g, e).await?,
+                Err(_) => return Err(self.timed_out().await),
             }
         }
     }
