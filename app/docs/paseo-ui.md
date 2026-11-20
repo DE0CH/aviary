@@ -185,8 +185,10 @@ server (`server/`) serves no deployment.
   magpie's M5 `pinned`), offered while `server_info` has `features.workspacePinning`, so it follows the person to
   every device. The touch-target walk pins and unpins through both menus and checks the section.
 - **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
-  `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
-  entry; an agent's `closed` (a sentence the deployment sets through magpie's hermit route) makes the message box read-only with that sentence
+  `/api/jarvis/me` `conversationDelete: false` removes the Delete item (from the header's ⋯ menu and the list row's) and
+  the Recently deleted entry. The row's ⋯ stays whenever its menu has any item (`conversationMenuHasItems`): it once
+  came only with Delete, and Jarvis chat's list had no ⋯ at all (2026-11-20; the touch-target walk opens it with
+  `noDelete`). An agent's `closed` (a sentence the deployment sets through magpie's hermit route) makes the message box read-only with that sentence
   as its placeholder and nothing can be sent. A conversation the deployment ended just leaves the list.
 
 ## Schedules (Deyao, 2026-11-06)

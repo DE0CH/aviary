@@ -95,7 +95,8 @@ export interface SidebarWorkspaceMenuProps {
   onRename?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
-  onArchive: () => void;
+  /** Delete, when the deployment offers it (`conversationDelete`); the menu's other items stay without it. */
+  onArchive?: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
@@ -111,12 +112,7 @@ export interface SidebarWorkspaceMenuProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-interface SidebarWorkspaceMenuItemsProps extends Omit<
-  SidebarWorkspaceMenuProps,
-  "onArchive" | "open" | "onOpenChange"
-> {
-  onArchive?: () => void;
-}
+type SidebarWorkspaceMenuItemsProps = Omit<SidebarWorkspaceMenuProps, "open" | "onOpenChange">;
 
 type MenuSurface = "context" | "dropdown";
 
