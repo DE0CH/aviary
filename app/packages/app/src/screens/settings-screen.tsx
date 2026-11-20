@@ -387,15 +387,11 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
   );
 }
 
-// The deployment's Android app (yyc/android-app.ts): Android only, the site in a browser and the app itself
+// The deployment's Android app (yyc/android-app.ts), on every device
 function AndroidAppSection() {
   const { t } = useTranslation();
   const product = useProductName();
-  const url = androidAppDownloadUrl({
-    platform: Platform.OS,
-    userAgent: typeof navigator !== "undefined" ? (navigator.userAgent ?? null) : null,
-    origin: siteOrigin(),
-  });
+  const url = androidAppDownloadUrl({ origin: siteOrigin() });
   const handleDownload = useCallback(() => {
     if (!url) return;
     // the app hands it to the browser, which signs in to the deployment's Access and keeps the file
