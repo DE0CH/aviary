@@ -339,7 +339,7 @@ describe("bottom anchor controller driver", () => {
   it("suppresses sticky maintenance while detached", () => {
     const harness = createDriverHarness();
 
-    harness.driver.detachByUser();
+    harness.driver.stopFollowing("scrolled-away");
     harness.driver.handleContentSizeChange({
       previousContentHeight: 1200,
       contentHeight: 1500,
@@ -428,7 +428,7 @@ describe("bottom anchor controller driver", () => {
       isNearBottom: false,
     });
 
-    harness.driver.detachByUser();
+    harness.driver.stopFollowing("scrolled-away");
     harness.driver.requestLocalAnchor({
       agentId: "agent-1",
       reason: "jump-to-bottom",
@@ -939,5 +939,14 @@ describe("controller helper predicates", () => {
         hasUnverifiedStickyMeasurementChange: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("stopFollowing hints", () => {
+  // Deyao, 2026-11-20: every reason to stop following the newest text is one hint of one category
+  it.each(["scrolled-away", "opened-turn", "opened-details"] as const)("%s stops following", (hint) => {
+    const harness = createDriverHarness();
+    harness.driver.stopFollowing(hint);
+    expect(harness.modeChanges).toEqual(["detached"]);
   });
 });

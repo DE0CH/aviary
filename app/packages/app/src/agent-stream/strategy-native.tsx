@@ -375,7 +375,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
-      holdReadingPosition: () => bottomAnchorController.detachByUser(),
+      stopFollowing: (hint) => bottomAnchorController.stopFollowing(hint),
     };
     viewportRef.current = handle;
     return () => {
@@ -555,16 +555,14 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId]);
 
-  const holdForRow = useStableEvent(() => bottomAnchorController.detachByUser());
   const rowAnchor = useMemo<RowAnchor>(
     () => ({
       keepTop: (delta: number) => {
         "worklet";
         scrollTo(animatedListRef, 0, scrollOffset.value + delta, false);
       },
-      hold: holdForRow,
     }),
-    [animatedListRef, holdForRow, scrollOffset],
+    [animatedListRef, scrollOffset],
   );
 
   const liveHeaderContent = useMemo(() => {

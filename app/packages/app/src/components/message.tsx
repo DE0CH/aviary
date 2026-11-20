@@ -18,6 +18,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { EaseHeight } from "@/components/ui/ease-height";
 import { useRowAnchor } from "@/agent-stream/row-anchor";
+import { useStopFollowing } from "@/agent-stream/stop-following";
 import { isNative, isWeb } from "@/constants/platform";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -1918,15 +1919,16 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   // On a phone the details ease open below the header and ease closed before they go, the header held still
   // (components/ui/ease-height.tsx, agent-stream/row-anchor.tsx; Deyao, 2026-11-20). Web opens and closes at once.
   const rowAnchor = useRowAnchor();
+  const stopFollowing = useStopFollowing();
   const [detailsMounted, setDetailsMounted] = useState(isExpanded);
   if (isExpanded && !detailsMounted) setDetailsMounted(true);
   const detailsShown = isExpanded || (!isWeb && detailsMounted);
   const detailContent = hasDetailContent && detailsShown ? renderDetails?.() : null;
   const hideDetails = useCallback(() => setDetailsMounted(false), []);
   const handleToggle = useCallback(() => {
-    rowAnchor?.hold();
+    stopFollowing?.("opened-details");
     onToggle?.();
-  }, [onToggle, rowAnchor]);
+  }, [onToggle, stopFollowing]);
   const detailWrapperRef = useRef<View | null>(null);
 
   const handleHoverIn = useCallback(() => setIsHovered(true), []);

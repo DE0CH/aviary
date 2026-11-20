@@ -3,6 +3,7 @@ import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { PersonCardView } from "@/yyc/person-cards";
 import { EaseHeight } from "@/components/ui/ease-height";
+import { StopFollowingContext, type StopFollowingHint } from "./stop-following";
 import { withLeaving, type Shown } from "@/components/ui/ease-height-motion";
 import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
 import { usePersonCardsAvailable } from "@/yyc/me";
@@ -739,9 +740,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
+    // every reason to stop following the newest text comes here (stop-following.ts)
+    const stopFollowing = useCallback((hint: StopFollowingHint) => {
+      viewportRef.current?.stopFollowing(hint);
+    }, []);
+
     const setTurnExpanded = useCallback((hostId: string, expanded: boolean) => {
       // A turn opens below its summary line; keep that line under the reader's pointer.
-      viewportRef.current?.holdReadingPosition();
+      stopFollowing("opened-turn");
       setExpandedTurnHostIds((previous) => {
         if (previous.has(hostId) === expanded) return previous;
         const next = new Set(previous);
@@ -1312,6 +1318,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         visibleMessageIds={mountedMessageIds}
       >
         <ToolCallSheetProvider>
+          <StopFollowingContext.Provider value={stopFollowing}>
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
@@ -1359,6 +1366,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               </View>
             )}
           </AssistantSelectionCopySurface>
+          </StopFollowingContext.Provider>
         </ToolCallSheetProvider>
       </ChatFind>
     );

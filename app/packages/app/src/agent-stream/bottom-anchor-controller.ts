@@ -1,3 +1,4 @@
+import type { StopFollowingHint } from "./stop-following";
 import { useEffect, useRef, useState } from "react";
 import type { BottomAnchorTransportBehavior } from "./strategy";
 
@@ -70,7 +71,8 @@ interface BottomAnchorControllerDriver {
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
   beginUserScroll: () => void;
   endUserScroll: (params: { isNearBottom: boolean }) => void;
-  detachByUser: () => void;
+  /** Stop following the newest text, for one of the reasons of stop-following.ts. */
+  stopFollowing: (hint: StopFollowingHint) => void;
   handleViewportMetricsChange: (params: {
     previousViewportWidth: number;
     viewportWidth: number;
@@ -534,14 +536,14 @@ function createBottomAnchorControllerDriver(
         return;
       }
       if (mode === "sticky-bottom") {
-        this.detachByUser();
+        this.stopFollowing("scrolled-away");
       }
     },
-    detachByUser() {
+    stopFollowing(hint) {
       if (mode === "detached") {
         return;
       }
-      cancelPendingRequest("user_scrolled_away");
+      cancelPendingRequest(hint);
       setModeInternal("detached");
     },
     handleViewportMetricsChange(params) {
@@ -642,7 +644,7 @@ function createBottomAnchorControllerDriver(
           hasUnverifiedStickyMeasurementChange,
         })
       ) {
-        this.detachByUser();
+        this.stopFollowing("scrolled-away");
         return;
       }
       if (mode === "sticky-bottom" && !nextIsNearBottom && hasUnverifiedStickyMeasurementChange) {
@@ -795,8 +797,8 @@ export function useBottomAnchorController(input: {
     endUserScroll(params: { isNearBottom: boolean }) {
       driverRef.current?.endUserScroll(params);
     },
-    detachByUser() {
-      driverRef.current?.detachByUser();
+    stopFollowing(hint: StopFollowingHint) {
+      driverRef.current?.stopFollowing(hint);
     },
     handleViewportLayout() {},
     handleViewportMetricsChange(params: {
