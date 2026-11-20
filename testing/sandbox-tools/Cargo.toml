@@ -1,0 +1,14 @@
+[package]
+name = "aviary-sandbox-tools"
+description = "Checks that the sandbox image (images/sandbox) has every tool its list names, each run as uid 1000 in a login shell with no network."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sandbox-tools"
+path = "src/main.rs"
+
+[lints]
+workspace = true
