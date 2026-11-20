@@ -1532,6 +1532,75 @@ async fn a_question_card_sits_where_it_was_asked_until_the_ai_reads_the_answer()
     assert!(tool(find(&p, "toolu_cat")).person_read.is_none());
 }
 
+/// Rule 11 through a rewrite (Deyao, 2026-11-20: a card stayed "Not read yet" after the AI had read the answer): Claude
+/// Code writes the line that carried the answer again (same uuid, the same result), so the new line lands first and
+/// the old one is retracted after it. The call's result still carries the marker, so the card stays read by that call,
+/// on both sides: the card's row keeps `readBy`, the call's row keeps the card.
+#[tokio::test]
+async fn a_rewritten_line_that_carried_the_answer_keeps_the_card_read() {
+    let db = common::fresh_db("person_card_rewrite").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    let answer = "Which?\n→ B (answer to q-1)";
+    let seqs = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(ev::assistant("m1", json!([ev::tool_use("toolu_ask", "Bash")])), turn),
+            ev::in_turn(
+                ev::ev(
+                    "ask.pending",
+                    json!({"askId": "q-1", "toolName": "ask", "marksAnswers": true,
+                           "input": {"questions": [{"question": "Which?"}]}}),
+                ),
+                turn,
+            ),
+            ev::in_turn(
+                ev::ev(
+                    "ask.resolved",
+                    json!({"askId": "q-1", "resolution": {"behavior": "allow", "updatedInput": {"answers": {"Which?": "B"}}}}),
+                ),
+                turn,
+            ),
+            // `ask` in the foreground: the call that asked is the call that read the answer
+            ev::in_turn(ev::results(&[("toolu_ask", answer, false)]), turn),
+        ],
+    )
+    .await;
+    let first = *seqs.last().unwrap();
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(card(find(&p, "q-1")).read_by.as_deref(), Some("toolu_ask"));
+    // the rewrite: the same result again, then the old line's retract
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::in_turn(ev::results(&[("toolu_ask", answer, false)]), turn),
+            ev::in_turn(ev::retract(&[first]), turn),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(
+        card(find(&p, "q-1")).read_by.as_deref(),
+        Some("toolu_ask"),
+        "still read where it was read"
+    );
+    let carried = tool(find(&p, "toolu_ask"))
+        .person_read
+        .as_ref()
+        .expect("the reading call keeps the card");
+    assert_eq!(carried.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["q-1"]);
+}
+
 /// Rule 11 for a declined question and for a command's wait on the person (`wait.pending`, Jarvis 4's Inbox): the
 /// card says the outcome, and the result carrying the wait's own marker is where the AI read it.
 #[tokio::test]
