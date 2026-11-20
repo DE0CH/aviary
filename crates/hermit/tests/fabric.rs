@@ -1308,7 +1308,7 @@ async fn the_gateway_answering_is_heard_from_it_not_read_from_a_row() {
         .await;
     for (r, g) in [(&lead, &g), (&other, &g2)] {
         g.tick(r.core(), false).await; // a tick that does not lead: it writes nothing
-        let snap = ::hermit::snapshot::build(r.core(), "UTC").await;
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
         assert_eq!(
             gateway_of(&snap)["reachable"],
             true,
@@ -1323,7 +1323,7 @@ async fn the_gateway_answering_is_heard_from_it_not_read_from_a_row() {
         .await;
     for (r, g) in [(&lead, &g), (&other, &g2)] {
         g.tick(r.core(), false).await;
-        let snap = ::hermit::snapshot::build(r.core(), "UTC").await;
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
         assert_eq!(gateway_of(&snap)["reachable"], false, "{}", r.core().pod);
         assert!(
             !g.gateway_settled(),
