@@ -1,0 +1,27 @@
+# The iPhone walk's third part (scripts/ios-app/simulator-walk.mjs): the conversation with steps, its turn opened so
+# its tool calls show. The script reads where the first tool call's header is, then walk-tool-open.yaml opens it.
+appId: ${APP_ID}
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "menu-button"
+    timeout: 90000
+- tapOn:
+    id: "menu-button"
+- extendedWaitUntil:
+    visible: "${STEPS}"
+    timeout: 30000
+- tapOn: "${STEPS}"
+- extendedWaitUntil:
+    visible:
+      id: "turn-summary"
+    timeout: 30000
+- tapOn:
+    id: "turn-summary"
+- extendedWaitUntil:
+    visible:
+      id: "tool-call-badge"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: tool-closed

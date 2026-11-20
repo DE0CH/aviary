@@ -16,6 +16,8 @@ import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mut
 import { TaskListRow } from "@/components/task-list-row";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { EaseHeight } from "@/components/ui/ease-height";
+import { useRowAnchor } from "@/agent-stream/row-anchor";
 import { isNative, isWeb } from "@/constants/platform";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -87,7 +89,6 @@ import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { PlanCard } from "./plan-card";
 import { ToolCallDetailsContent } from "./tool-call-details";
-import { useToolCallSheet } from "./tool-call-sheet";
 
 /** The copy glyph on a phone, and the padding that makes its button a finger's 44 px. */
 const COPY_GLYPH_COMPACT = 18;
@@ -1914,7 +1915,18 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const [isPressed, setIsPressed] = useState(false);
   const isInteractive = Boolean(onToggle);
   const hasDetailContent = Boolean(renderDetails);
-  const detailContent = hasDetailContent && isExpanded ? renderDetails?.() : null;
+  // On a phone the details ease open below the header and ease closed before they go, the header held still
+  // (components/ui/ease-height.tsx, agent-stream/row-anchor.tsx; Deyao, 2026-11-20). Web opens and closes at once.
+  const rowAnchor = useRowAnchor();
+  const [detailsMounted, setDetailsMounted] = useState(isExpanded);
+  if (isExpanded && !detailsMounted) setDetailsMounted(true);
+  const detailsShown = isExpanded || (!isWeb && detailsMounted);
+  const detailContent = hasDetailContent && detailsShown ? renderDetails?.() : null;
+  const hideDetails = useCallback(() => setDetailsMounted(false), []);
+  const handleToggle = useCallback(() => {
+    rowAnchor?.hold();
+    onToggle?.();
+  }, [onToggle, rowAnchor]);
   const detailWrapperRef = useRef<View | null>(null);
 
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -2075,13 +2087,13 @@ export const ExpandableBadge = memo(function ExpandableBadge({
     () => [
       expandableBadgeStylesheet.pressable,
       isPressed && isInteractive ? expandableBadgeStylesheet.pressablePressed : null,
-      isExpanded && expandableBadgeStylesheet.pressableExpanded,
-      isExpanded &&
+      detailsShown && expandableBadgeStylesheet.pressableExpanded,
+      detailsShown &&
         (borderlessWhenExpanded
           ? expandableBadgeStylesheet.pressableExpandedDetached
           : expandableBadgeStylesheet.pressableExpandedAttached),
     ],
-    [borderlessWhenExpanded, isExpanded, isInteractive, isPressed],
+    [borderlessWhenExpanded, detailsShown, isInteractive, isPressed],
   );
 
   const detailWrapperStyle = useMemo(
@@ -2156,7 +2168,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 
   const pressHandlers = isInteractive
     ? {
-        onPress: onToggle,
+        onPress: handleToggle,
         onPressIn: handlePressIn,
         onPressOut: handlePressOut,
         accessibilityRole: "button" as const,
@@ -2206,14 +2218,23 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         </View>
       </Pressable>
       {detailContent ? (
-        <Pressable
-          ref={detailWrapperRef}
-          style={detailWrapperStyle}
-          onHoverIn={handleDetailHoverIn}
-          onHoverOut={handleDetailHoverOut}
+        <EaseHeight
+          pin="top"
+          curve="open"
+          fromZero
+          leaving={!isExpanded}
+          onLeft={hideDetails}
+          onHeightDelta={rowAnchor?.keepTop}
         >
-          {detailContent}
-        </Pressable>
+          <Pressable
+            ref={detailWrapperRef}
+            style={detailWrapperStyle}
+            onHoverIn={handleDetailHoverIn}
+            onHoverOut={handleDetailHoverOut}
+          >
+            {detailContent}
+          </Pressable>
+        </EaseHeight>
       ) : null}
     </View>
   );
@@ -2255,7 +2276,6 @@ interface ToolCallProps {
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
   onOpenFilePath?: (filePath: string) => void;
   defaultExpanded?: boolean;
-  forceInline?: boolean;
   maxDetailHeight?: number;
 }
 
@@ -2276,14 +2296,11 @@ export const ToolCall = memo(function ToolCall({
   onInlineDetailsExpandedChange,
   onOpenFilePath,
   defaultExpanded,
-  forceInline = false,
   maxDetailHeight = 400,
 }: ToolCallProps) {
-  const { openToolCall } = useToolCallSheet();
+  // A tool call opens in place on every screen; on a phone its height opens on a spring with its header held still
+  // (ExpandableBadge; Deyao, 2026-11-20, chosen from mocks over the bottom sheet it opened in before).
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
-
-  const isMobile = useIsCompactFormFactor();
-  const shouldRenderInline = !isMobile || forceInline;
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -2323,49 +2340,21 @@ export const ToolCall = memo(function ToolCall({
     return () => onOpenFilePath(openFilePath);
   }, [presentation.openFilePath, onOpenFilePath]);
 
-  const handleToggle = useCallback(() => {
-    if (!shouldRenderInline) {
-      openToolCall({
-        toolName,
-        displayName: presentation.displayName,
-        summary: presentation.summary,
-        detail: presentation.detail,
-        errorText: presentation.errorText,
-        icon: presentation.icon,
-        showLoadingSkeleton: presentation.isLoadingDetails,
-      });
-    } else {
-      setIsExpanded((prev) => !prev);
-    }
-  }, [
-    shouldRenderInline,
-    openToolCall,
-    toolName,
-    presentation.detail,
-    presentation.displayName,
-    presentation.summary,
-    presentation.errorText,
-    presentation.icon,
-    presentation.isLoadingDetails,
-  ]);
+  const handleToggle = useCallback(() => setIsExpanded((prev) => !prev), []);
 
   useEffect(() => {
-    if (!onInlineDetailsHoverChange || !shouldRenderInline || isExpanded) {
+    if (!onInlineDetailsHoverChange || isExpanded) {
       return;
     }
     onInlineDetailsHoverChange(false);
-  }, [isExpanded, shouldRenderInline, onInlineDetailsHoverChange]);
+  }, [isExpanded, onInlineDetailsHoverChange]);
 
   useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
       return;
     }
-    if (!shouldRenderInline) {
-      onInlineDetailsExpandedChange(false);
-      return;
-    }
     onInlineDetailsExpandedChange(isExpanded);
-  }, [isExpanded, shouldRenderInline, onInlineDetailsExpandedChange]);
+  }, [isExpanded, onInlineDetailsExpandedChange]);
 
   useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
@@ -2376,9 +2365,7 @@ export const ToolCall = memo(function ToolCall({
     };
   }, [onInlineDetailsExpandedChange]);
 
-  // Render inline details for desktop
   const renderDetails = useCallback(() => {
-    if (!shouldRenderInline) return null;
     return (
       <ToolCallDetailsContent
         toolName={toolName}
@@ -2389,7 +2376,6 @@ export const ToolCall = memo(function ToolCall({
       />
     );
   }, [
-    shouldRenderInline,
     toolName,
     presentation.detail,
     presentation.errorText,
@@ -2414,10 +2400,10 @@ export const ToolCall = memo(function ToolCall({
       label={presentation.displayName}
       secondaryLabel={presentation.summary}
       icon={presentation.icon}
-      isExpanded={shouldRenderInline && isExpanded}
+      isExpanded={isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
-      renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
+      renderDetails={presentation.canOpenDetails ? renderDetails : undefined}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
@@ -2442,7 +2428,6 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.onOpenFilePath !== next.onOpenFilePath) return false;
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
-  if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
   return true;
 }
