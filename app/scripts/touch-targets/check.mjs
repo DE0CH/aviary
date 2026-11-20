@@ -50,7 +50,9 @@ const STATES = [
   { name: "model menu", at: workspace(1), run: (p) => p.tap('[data-testid="yyc-model-menu"]') },
   { name: "model switch question", at: workspace(1), run: async (p) => { await p.tap('[data-testid="yyc-model-menu"]'); await p.tap('[data-testid="yyc-model-xiaomi/mimo-v2.6-pro"]'); await p.wait(1500); } },
   { name: "attachments", at: workspace(1), run: (p) => p.tap('[data-testid="message-input-attach-button"]') },
-  { name: "sidebar", at: workspace(1), run: (p) => p.tap('[data-testid="menu-button"]') },
+  // 登出 lives in the settings list, not the sidebar's footer (Deyao, 2026-11-20, design A)
+  { name: "sidebar", at: workspace(1), run: (p) => p.tap('[data-testid="menu-button"]'),
+    check: async (page) => ((await page.locator('[data-testid="sidebar-sign-out"]').count()) ? "登出 is still in the sidebar footer" : null) },
   { name: "sidebar, a conversation's menu", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"] >> nth=1'); } },
   // 置頂 (Deyao, 2026-11-19, design A): the conversation moves into the 已置頂 section above 對話
   { name: "sidebar, pinning a conversation", at: workspace(1),
@@ -62,7 +64,8 @@ const STATES = [
   { name: "sidebar, more", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-project-show-more"]'); await p.scroll(1); } },
   { name: "search", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-search"]'); } },
   { name: "recently deleted", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-sessions"]'); } },
-  { name: "settings", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-settings"]'); } },
+  { name: "settings", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-settings"]'); },
+    check: async (page) => ((await page.locator('[data-testid="settings-sign-out"]').innerText({ timeout: 3000 }).catch(() => "")).includes("登出") ? null : "no 登出 row in the settings list") },
   { name: "settings, general", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-settings"]'); await p.tap("text=通用"); } },
   { name: "settings, appearance", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-settings"]'); await p.tap("text=外觀"); } },
   { name: "settings, theme menu", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-settings"]'); await p.tap("text=外觀"); await p.tap("text=跟隨系統"); } },

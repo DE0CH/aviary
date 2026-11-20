@@ -96,7 +96,8 @@ server (`server/`) serves no deployment.
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
   settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
   `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
-  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. Signed-out shell, share
+  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. 登出 is the settings list's last row, in a group of its own under 通用 / 外觀 / 聊天 (`settings-sign-out`;
+  Deyao, 2026-11-20); the sidebar's footer holds only 設定. Signed-out shell, share
   page, 最近刪除 and the loading skeleton take the same values as the screens they stand for.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
