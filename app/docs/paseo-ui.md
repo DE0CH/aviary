@@ -1,22 +1,21 @@
 # The Paseo UI
 
 The chat app of YYC AI and of Jarvis 4's chat (chat.deyaochen.com) is the Paseo app (getpaseo/paseo, Apache-2.0),
-copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not kept in sync with upstream
+copied (now in `app/`) at upstream commit e3bbed3 and changed into a chat app. It is not kept in sync with upstream
 (Deyao, 2026-10-26): change it as this fork's own code. It is one build for every deployment (see "Branding").
 
 ```
-browser, or the YYC AI iOS app (paseo/packages/app; the web export is the `pigeon-app` image)
-   │  /paseo-ws: Paseo's WebSocket protocol (paseo/packages/protocol messages.ts)
+browser, or the YYC AI iOS app (app/packages/app; the web export is the `pigeon-app` image)
+   │  /paseo-ws: Paseo's WebSocket protocol (app/packages/protocol messages.ts)
    │  /api/jarvis/...: REST for what the protocol has no message for (uploads, files, sharing, warming, /me, tasks)
    ▼
 pigeon (DE0CH/aviary crates/pigeon: the gateway that speaks both), in front of magpie and hermit
 ```
 
 How pigeon maps a conversation onto Paseo's host, project, workspace and agent, and each protocol message it
-answers, is pigeon's own documentation (DE0CH/aviary `crates/pigeon/README.md`, `src/paseo/`). This repo's CloudCLI
-server (`server/`) serves no deployment.
+answers, is pigeon's own documentation (DE0CH/aviary `crates/pigeon/README.md`, `src/paseo/`).
 
-## What changed in the app (paseo/packages/app)
+## What changed in the app (app/packages/app)
 
 - **Connection**: the page connects back to its own origin (`runtime/host-runtime.ts`
   `readPageOriginConnectionHint`) on `/paseo-ws` (`protocol/src/daemon-endpoints.ts`); no host setup, no pairing. When
@@ -87,7 +86,7 @@ server (`server/`) serves no deployment.
   message box's +, model button and send are 44 tall and send/stop draw a 36 px disc inside their 44 px target (the box
   grows 4 px). Small things that sit on a line of text (copy buttons, 「工作了」, the schedule and activity chips,
   「取消」) are 44 px targets drawn as before: negative margins give the space back, so no line moves. The check is
-  `scripts/touch-targets/check.mjs DIST [OUT]` (run by `pigeon-app.yml` on every export): the export served with a
+  `scripts/touch-targets/check.mjs DIST [OUT]` (run by `app.yml` on every export): the export served with a
   stand-in for pigeon (`stand-in.mjs`, pigeon's recorded answers in `pigeon-answers.json`, the sample conversations of
   `content.mjs`), every screen and state opened on a 390 px touch phone in Chromium and every control measured; one
   under 44 px fails it by screen, label and size. A new screen or state is a new entry in its `STATES`. An inline link
@@ -237,8 +236,9 @@ A question the AI asked with `ask`, or a command's wait on the person for someth
 Inbox requests), is one card in the history (`yyc/person-cards.tsx`, read by `yyc/person-cards-text.ts`; design: the
 approved three-state mock):
 
-- **Waiting on you:** yellow, where it was asked; a question's options are in the answer card at the bottom, which is
-  unchanged.
+- **Waiting on you:** yellow, where it was asked; a question's options are in the answer card at the bottom. On a
+  phone a tap on an option only selects it and Next moves on (Deyao, 2026-11-20: moving on in the same tap meant the
+  choice was never on screen); a pointer moves on with the tap, hover having shown the option.
 - **Answered, not read yet:** still where it was asked, the answer filled in, a hollow mark and "Not read yet".
 - **Read:** on the tool call whose result first carried the answer into the AI's context (the asking command itself
   when it waited; otherwise wherever the AI read it, e.g. a background task's output), its header saying when it was
@@ -375,7 +375,7 @@ measuring; test on a throttled connection. So:
   come from `git/forges/brands.ts`, not the PR-pane view modules. A split pane that has never been shown mounts
   nothing (`components/split-container.tsx`), so the hidden explorer's diff views are not fetched.
 - **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
-  `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
+  `app/patches/@expo+metro-config+57.0.13.patch` (applied by `app/scripts/postinstall-patches.mjs`) turns that off:
   each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The same patch
   drops from a lazy chunk the modules that every chunk importing it has surely defined by then (its own or its
   importers' ancestors'; an import from the entry leaves only what the entry holds), so a chunk fetched from another
@@ -443,18 +443,18 @@ measuring; test on a throttled connection. So:
 ## Branding
 
 The app is one build for every deployment. What names a deployment to the eye is a set of files under `/branding/`
-of the server (`paseo/packages/app/src/yyc/brand.ts` `BRAND_FILES`): `logo.png` (square, transparent, 512 px: the
+of the server (`app/packages/app/src/yyc/brand.ts` `BRAND_FILES`): `logo.png` (square, transparent, 512 px: the
 launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`, `favicon-running.png`,
 `favicon-attention.png` (the tab icon and its two states), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`
 (home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
-(`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
+(`app/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
 when it deploys pigeon (YYC: DE0CH/yyc-code `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
 `k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only a native build's
 home-screen name, icon and launch image are build-time files (`app.config.js` `variants`, "The iOS app").
 
 ## The iOS app
 
-The same `paseo/packages/app`, built natively once per deployment (`app.config.js` `variants`, picked by
+The same `app/packages/app`, built natively once per deployment (`app.config.js` `variants`, picked by
 `APP_VARIANT`): **YYC AI** (`production`, `dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used to ship) and
 **Jarvis Chat** (`jarvis-chat`, `dev.de0ch.jarvis4chat`, Jarvis 4's chat; the TestFlight record "Jarvis 4 Chat").
 A variant holds only what a build cannot ask its server: the home-screen name, the bundle id (also the URL scheme
@@ -483,12 +483,21 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
   The prompts' texts are the variant's (`cameraPermission`, `photosPermission`).
 - **Taps** (`yyc/haptics.ts`): a light one when a message goes out, a firmer one when the reply is stopped, the
   system's "done" when the reply of the conversation on screen ends. Nothing on the web.
+- **Motion** (Deyao, 2026-11-20, chosen from mocks; desktop and the web have none): text appears plainly as it
+  lands. What appears, changes height or goes at the bottom of the chat eases its height with its content pinned to
+  one edge (`components/ui/ease-height.tsx`, decided in `ease-height-motion.ts`): the answer card and a question's
+  card where it was asked pin to the bottom, so only their top edge moves, and an answered card eases out before it
+  goes; a live row (the reply streaming, a step arriving) pins to the top and follows its content on a soft spring,
+  so new lines rise in instead of the list jumping a line at a time. A tool call opens in place (no sheet) on a
+  spring; the list is inverted, so it gives each frame's change of height back as scroll on the UI thread and the
+  header stays where the finger was (`agent-stream/row-anchor.tsx`), and stops sticking to the bottom. Reduce Motion
+  sets every height at once.
 - **Not there**: push notifications.
 - **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI apps' 1.0); the build number is the CI
   run.
 
-`.github/workflows/yyc-ios.yml` builds both (a matrix) on GitHub macOS runners on every push touching `paseo/`
-(`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there
+`.github/workflows/app-ios.yml` builds both (a matrix) on GitHub macOS runners on every push touching `app/`
+(`app/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there
 and taps Sign in up to iOS's sign-in prompt,
 an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
 `YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so that build's chat is first
@@ -496,7 +505,8 @@ exercised on TestFlight. The chat itself is walked on every branch by `.github/w
 (Deyao, 2026-11-20: CI walks the Fold and the iPhone): Jarvis Chat built for the simulator with the stand-in for
 pigeon as its server (`scripts/touch-targets/stand-in.mjs`), signed in through iOS's prompt and walked with Maestro by
 `scripts/ios-app/simulator-walk.mjs` (`ios/maestro/walk-*.yaml`): a long press on a plain and a pinned conversation
-opens its menu, and the Activity panel's title sits where the chat's does (artifact `ios-simulator-walk`).
+opens its menu, the Activity panel's title sits where the chat's does, and a tool call opens in place with its header
+where it was tapped (artifact `ios-simulator-walk`).
 
 ## The Android app
 
@@ -545,19 +555,18 @@ Sign-in is the iPhone's: `/api/jarvis/app-signin` in a Chrome Custom Tab, back o
   (`scripts/build-paseo-ui.mjs`, about 20 minutes on 4 cores) and the server. Metro needs a big heap for the 10 MB
   generated protocol validator: the script gives it 6 GB and `build:web` runs 3 workers. On a machine with 8 GB, stop
   anything else heavy first.
-- A change to `paseo/packages/protocol` needs `npm --prefix paseo run build:protocol` (it regenerates the validators)
+- A change to `app/packages/protocol` needs `npm --prefix paseo run build:protocol` (it regenerates the validators)
   before the app typechecks against it.
-- For pigeon (DE0CH/aviary), `.github/workflows/pigeon-app.yml` packs the web export into
+- For pigeon (DE0CH/aviary), `.github/workflows/app.yml` packs the web export into
   `ghcr.io/de0ch/pigeon-app:<commit 12>`. The image also holds the hashed chunks of recent builds and of every ui image
   served in the last 720 h, and the workflow checks the app against pigeon's frames: `scripts/pigeon-app/README.md`.
 
 ## Tests
 
-- Server: `server/modules/paseo/tests/` (tsx --test), in `npm test`.
-- App: `.github/workflows/paseo-ui.yml` typechecks the app and runs every suite of `paseo/packages` (the app's unit
+- App: `.github/workflows/app-tests.yml` typechecks the app and runs every suite of `app/packages` (the app's unit
   and browser projects, protocol, client, relay, highlight, plugin) and the bridge's, on every push touching them;
-  `pigeon-app.yml` and `yyc-ios.yml` call it and build only after it passes. YYC AI is test-first: a change starts with
+  `app.yml` and `app-ios.yml` call it and build only after it passes. YYC AI is test-first: a change starts with
   a test that fails without it. Language tests use zh-HK, the fork's second language (`fr`/`ja`/… are not shipped).
 - Protocol replies: capture a session's frames with a browser (Playwright `page.on('websocket')`) and parse each
-  server frame with `WSOutboundMessageSchema` from `paseo/packages/protocol/dist/messages.js`; zero failures is the
+  server frame with `WSOutboundMessageSchema` from `app/packages/protocol/dist/messages.js`; zero failures is the
   bar for a bridge change.

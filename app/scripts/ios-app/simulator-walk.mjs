@@ -23,8 +23,8 @@ fs.mkdirSync(out, { recursive: true });
 const here = path.dirname(new URL(import.meta.url).pathname);
 const flows = path.join(here, "../../ios/maestro");
 const PORT = 8787;
-// the stand-in's conversations (scripts/touch-targets/content.mjs), as in the Fold walk
-const TEXTS = { PLAIN: "新產品命名諗法", PINNED: "員工旅行行程", TASKS: "客戶電郵草稿" };
+// the stand-in's conversations (scripts/touch-targets/content.mjs), as in the Fold walk; STEPS has tool calls
+const TEXTS = { PLAIN: "新產品命名諗法", PINNED: "員工旅行行程", TASKS: "客戶電郵草稿", STEPS: "季度銷售報告" };
 
 const run = (cmd, args, opts = {}) =>
   execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, ...opts });
@@ -115,21 +115,27 @@ function hierarchy(maestro, udid) {
   });
 }
 
-/** The top edge of the element whose identifier is `id` in Maestro's UI tree, or null. */
-async function topOf(maestro, udid, id, label) {
+/** The top edges of the elements whose identifier is `id` in Maestro's UI tree, top first. */
+async function topsOf(maestro, udid, id, label) {
   const tree = JSON.parse((await hierarchy(maestro, udid)).replace(/^[^{]*/, ""));
   fs.writeFileSync(path.join(out, `tree-${label}.json`), JSON.stringify(tree, null, 1));
+  const tops = [];
   const stack = [tree];
   while (stack.length) {
     const node = stack.pop();
     const attrs = node.attributes ?? {};
     if (Object.values(attrs).includes(id)) {
       const bounds = String(attrs.bounds ?? "").match(/\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/);
-      if (bounds && +bounds[4] > +bounds[2]) return +bounds[2];
+      if (bounds && +bounds[4] > +bounds[2]) tops.push(+bounds[2]);
     }
     stack.push(...(node.children ?? []));
   }
-  return null;
+  return tops.sort((a, b) => a - b);
+}
+
+/** The top edge of the element whose identifier is `id`, or null. */
+async function topOf(maestro, udid, id, label) {
+  return (await topsOf(maestro, udid, id, label))[0] ?? null;
 }
 
 async function main() {
@@ -153,6 +159,19 @@ async function main() {
     check("the Activity panel's header is below the status bar, where the chat's is",
       chatTop !== null && panelTop !== null && panelTop >= chatTop - 4,
       `chat title top ${chatTop}, Activity title top ${panelTop}`);
+    // a tool call opens in place on a phone, its header held where the finger was (Deyao, 2026-11-20): the list is
+    // inverted, so without the scroll it gives back each frame the header would rise by the details' height
+    const steps = await flow(maestro, udid, "walk-tool", env);
+    check("the conversation with steps opens and its turn shows its tool calls", steps);
+    if (!steps) return;
+    const closedTop = await topOf(maestro, udid, "tool-call-badge", "tool-closed");
+    const toolOpened = await flow(maestro, udid, "walk-tool-open", env);
+    check("a tap on a tool call opens it", toolOpened);
+    if (!toolOpened) return;
+    const openTop = await topOf(maestro, udid, "tool-call-badge", "tool-open");
+    check("an opened tool call's header stays where it was tapped",
+      closedTop !== null && openTop !== null && Math.abs(openTop - closedTop) <= 4,
+      `header top ${closedTop} closed, ${openTop} open`);
   } finally {
     try {
       run("xcrun", ["simctl", "io", udid, "screenshot", path.join(out, "final.png")]);

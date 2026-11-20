@@ -103,7 +103,11 @@ jobs:
             export ANDROID_KEYSTORE="$RUNNER_TEMP/upload.p12"
             printf '%s' "$KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE"
           fi
-          ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=${{ matrix.abi }} > "$RUNNER_TEMP/gradle.log" 2>&1 \
+          # --refresh-dependencies: setup-gradle saves the Gradle home even after a failed build, and a cache holding
+          # Gradle's record of a jar it could not fetch then failed every later run in seconds ("Could not find
+          # kotlin-stdlib-2.2.21.jar" on Maven Central, the Jarvis Chat release build, 2026-11-20); the repository is
+          # asked again and the jars already cached are kept
+          ./gradlew --no-daemon --refresh-dependencies assembleRelease -PreactNativeArchitectures=${{ matrix.abi }} > "$RUNNER_TEMP/gradle.log" 2>&1 \
             || { grep -E -B2 -A12 "FAILURE|error:|e: " "$RUNNER_TEMP/gradle.log" | head -n 300; tail -n 60 "$RUNNER_TEMP/gradle.log"; exit 1; }
           rm -f "$RUNNER_TEMP/upload.p12"
           tail -n 5 "$RUNNER_TEMP/gradle.log"
