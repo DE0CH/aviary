@@ -297,6 +297,13 @@ pub struct AwsJson {
     /// none. Absent: the gateway is the hosts' image server.
     #[serde(default)]
     pub image_bucket: Option<String>,
+    /// Images of the bucket no one uses are deleted (scaler step 8, with the EC2 reconcile): every image but the
+    /// configured one, those of the sandboxes that are not gone (frozen ones restore on theirs), those of the sandboxes
+    /// started in the last 7 days (a replica of a rollout still on the image before) and those put there in the last
+    /// day. Absent or false: nothing is ever deleted from the bucket (YYC AI). Jarvis 4's fabric (Deyao, 2026-11-20):
+    /// the bucket grew by an image of about 4 GB with every pin.
+    #[serde(default)]
+    pub prune_images: bool,
 }
 
 impl AwsJson {

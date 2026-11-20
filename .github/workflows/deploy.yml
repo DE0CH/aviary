@@ -1,8 +1,10 @@
 name: deploy
 # A push to main is the deploy (docs/DEPLOY.md; Deyao, 2026-11-19). Each part's workflow ends on main by building its
-# images (once per tag); this run starts when one of them completes and deploys main's head once every part's newest
-# run on it is over and green (aviary-deploy ready: only main's head deploys, so a late run of an older commit never
-# rolls back a newer one). Then, in order, stopping at the first failure:
+# images (once per tag); this run starts when one of them completes and deploys the newest commit main has pointed at
+# whose every part's newest run is over and green and that is newer than what runs (aviary-deploy ready; the
+# deploy-<sha12> tags say what runs): a newer commit still in its checks never holds back an older one that passed
+# them, and nothing older than what runs ever deploys (Deyao, 2026-11-20). Then, in order, stopping at the first
+# failure:
 #   1. jarvis: Jarvis chat, Jarvis 4's sessions and its fabric, through DE0CH/jarvis4's git (its cluster takes changes
 #      only from git, jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release,
 #      sandbox and gateway), k8s/cluster/tenants/chat.yaml (the chat's source, this commit's tag deploy-<sha12>, and its image tags) and
@@ -15,7 +17,7 @@ name: deploy
 #      no-op unless its release changed) and the live checks: one chat turn and the drive (yyc/tests/e2e), the site's
 #      install from Chrome on Android.
 #   3. record: a GitHub Deployment per environment with the tags (pigeon-app's image keeps the builds served).
-# Every 3 h it re-applies main's head to YYC's cluster (reverts drift), without the live checks.
+# Every 3 h it re-applies what runs, or a newer green commit, to YYC's cluster (reverts drift), without the live checks.
 on:
   workflow_run:
     workflows: [ci, app, app-tests, app-android, egress, jarvis, drive, yyc]
@@ -39,9 +41,7 @@ jobs:
       go: ${{ steps.r.outputs.go }}
       sha: ${{ steps.r.outputs.sha }}
     steps:
-      # main's head, whatever finished: a part's run of an older commit (a rerun) or of a head with no part runs (a
-      # docs commit) deploys the head, with the images its tags name (2026-11-20: evaluating the run's own commit left
-      # such a head to the 3-hourly schedule, which skips the Jarvis job)
+      # main's head, whatever finished: its history and the deploy tags are where ready looks for the commit to deploy
       - id: head
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -67,10 +67,16 @@ jobs:
           SHA: ${{ steps.head.outputs.sha }}
         run: |
           set -euo pipefail
-          out=$(tools/aviary-deploy/target/release/aviary-deploy ready "$SHA" "$PARTS")
+          again=()
+          if [ "${{ github.event_name }}" = schedule ]; then again=(--again); fi
+          out=$(tools/aviary-deploy/target/release/aviary-deploy ready "$SHA" "$PARTS" "${again[@]}")
           echo "$out"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          if [ "$out" = go ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+          if [[ "$out" =~ ^go\ ([0-9a-f]{40})$ ]]; then
+            echo "sha=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: the tags, and every image there
         if: steps.r.outputs.go == 'true'
         env:
@@ -78,7 +84,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/deploy"
-          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "$SHA" > "$RUNNER_TEMP/deploy/tags.json"
+          # the picked commit's own images.json (it may be older than the checkout)
+          git show "$SHA:deploy/images.json" > "$RUNNER_TEMP/images.json"
+          tools/aviary-deploy/target/release/aviary-deploy tags "$RUNNER_TEMP/images.json" "$SHA" > "$RUNNER_TEMP/deploy/tags.json"
           tools/aviary-deploy/target/release/aviary-deploy digests "$RUNNER_TEMP/deploy/tags.json" > "$RUNNER_TEMP/deploy/digests.json"
           cp tools/aviary-deploy/target/release/aviary-deploy "$RUNNER_TEMP/deploy/"
           cat "$RUNNER_TEMP/deploy/tags.json"
