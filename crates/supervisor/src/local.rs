@@ -9,8 +9,9 @@
 //!   lease ([`crate::ask`]); each poll is a wait on the person until the answer.
 //! - `POST`/`DELETE /v1/person-waits/{key}`: a command that waits on the person for anything else (Jarvis 4's Inbox
 //!   requests): the heartbeat's `waiting` while it calls (Deyao, 2026-11-18: the list's needs-you mark). Its card
-//!   (what is asked, why, the marker) is passed to magpie once per key, and the outcome when the wait ends with one
-//!   (magpie rule 11: the chat shows the wait where it was asked until the AI has read the outcome).
+//!   (what is asked, why, the marker) is passed to magpie once per key, and the outcome when the wait ends with one,
+//!   before the `DELETE` answers (magpie rule 11: the chat shows the wait where it was asked until the AI has read the
+//!   outcome, and reads only a settled card).
 
 use std::io::Write as _;
 use std::path::Path;
@@ -117,7 +118,9 @@ impl LocalServer for Local {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&key);
             if let Some(outcome) = ended.outcome {
-                self.end_card(key.clone(), outcome);
+                // before the answer: the command prints the outcome only after it, so magpie has the card settled
+                // before any result can carry the outcome's marker (rule 11 reads only a settled card)
+                self.end_card(&key, outcome).await;
             }
         }
         if waiting {
@@ -174,24 +177,23 @@ impl Local {
         }
     }
 
-    /// Passes a wait's outcome to magpie (a few tries, in the background: the command's `DELETE` does not wait).
-    fn end_card(&self, key: String, outcome: String) {
-        let agent = self.agent.clone();
-        tokio::spawn(async move {
-            let Some(calls) = agent.magpie_calls() else { return };
-            let end = magpie_api::sandbox::PersonWaitEnd { outcome };
-            for attempt in 0..5u32 {
-                match calls.person_wait_ended(&key, &end).await {
-                    Ok(()) => return,
-                    // no card was opened for it (a command that gave none): nothing to end
-                    Err(e) if e.api().map(|r| r.status) == Some(404) => return,
-                    Err(e) => {
-                        tracing::warn!(key, error = %e, attempt, "a person wait's outcome did not reach magpie");
+    /// Passes a wait's outcome to magpie, a few times over 15 s when it fails.
+    async fn end_card(&self, key: &str, outcome: String) {
+        let Some(calls) = self.agent.magpie_calls() else { return };
+        let end = magpie_api::sandbox::PersonWaitEnd { outcome };
+        for attempt in 0..5u32 {
+            match calls.person_wait_ended(key, &end).await {
+                Ok(()) => return,
+                // no card was opened for it (a command that gave none): nothing to end
+                Err(e) if e.api().map(|r| r.status) == Some(404) => return,
+                Err(e) => {
+                    tracing::warn!(key, error = %e, attempt, "a person wait's outcome did not reach magpie");
+                    if attempt < 4 {
                         tokio::time::sleep(std::time::Duration::from_secs(1u64 << attempt)).await;
                     }
                 }
             }
-        });
+        }
     }
 }
 
