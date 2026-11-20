@@ -3,11 +3,11 @@ import type { GestureResponderEvent } from "react-native";
 import * as Haptics from "expo-haptics";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
-import type { useContextMenu } from "@/components/ui/context-menu";
+import type { RowMenuOpener } from "@/components/sidebar/sidebar-workspace-menu";
 
 export function useLongPressDragInteraction(input: {
   drag?: () => void;
-  menuController: ReturnType<typeof useContextMenu> | null;
+  menuController: RowMenuOpener | null;
 }) {
   const { drag, menuController } = input;
   const didLongPressRef = useRef(false);

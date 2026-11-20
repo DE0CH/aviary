@@ -5,6 +5,8 @@ import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanima
 import { resolveHighlightCorners } from "./press-highlight.shape";
 import type { PressHighlightProps } from "./press-highlight.types";
 
+const HELD_MS = 60_000;
+
 export const PressHighlight = forwardRef<View, PressHighlightProps>(function PressHighlight(
   { children, disabled, highlightStyle, ...props },
   ref,
@@ -19,6 +21,9 @@ export const PressHighlight = forwardRef<View, PressHighlightProps>(function Pre
       Gesture.Tap()
         .enabled(disabled !== true && highlightStyle != null)
         .maxDistance(8)
+        // the highlight stays while the finger does (a tap's default 500 ms ended it under a held finger, before a
+        // long press's menu; Deyao, 2026-11-20); activation stays the Pressable's
+        .maxDuration(HELD_MS)
         .shouldCancelWhenOutside(true)
         .onBegin(() => {
           highlighted.value = 1;

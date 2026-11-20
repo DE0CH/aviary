@@ -33,6 +33,9 @@ const MAIN = { name: "main", size: "1968x2184", density: 420 };
 const CONVERSATION = "季度銷售報告"; // the stand-in's first conversation (scripts/touch-targets/content.mjs)
 const OTHER_CONVERSATION = "活動海報文案"; // its second: a row of the list, never this conversation's own header
 const TYPED = "hello fold";
+const PLAIN_CONVERSATION = "新產品命名諗法"; // not pinned, nothing running
+const PINNED_CONVERSATION = "員工旅行行程"; // pinned: a row that can be dragged
+const TASKS_CONVERSATION = "客戶電郵草稿"; // has tasks: its header shows the Activity chip
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // every adb call has a time limit: a hung one fails its step instead of the job's two hours
@@ -161,17 +164,70 @@ function composer(nodes) {
   return field ? { root, field } : null;
 }
 
-/** The keyboard's area on screen from the window manager's insets (null when it is hidden). */
-function keyboardFrame() {
+/** The area of one kind of the window manager's insets on screen (`ime`, `statusBars`; null when it is hidden). */
+function insetFrame(type) {
   const dump = tryShell("dumpsys", "window", "displays");
   fs.writeFileSync(path.join(out, "last-insets.txt"), dump);
   for (const line of dump.split("\n")) {
-    if (!/type=ime\b/.test(line)) continue;
+    if (!new RegExp(`type=${type}\\b`).test(line)) continue;
     const frame = line.match(/frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
     const visible = line.match(/visible=(true|false)/);
     if (frame && visible?.[1] === "true" && +frame[4] > +frame[2]) return { top: +frame[2], bottom: +frame[4] };
   }
   return null;
+}
+
+/** The keyboard's area on screen (null when it is hidden). */
+const keyboardFrame = () => insetFrame("ime");
+
+/** The screen's pixels now: the colour at (x, y) as [r, g, b]. */
+function screenPixels() {
+  const raw = execFileSync("adb", ["exec-out", "screencap"], { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
+  // a profile with two screens prints a warning first; the header is width, height, format (and a colour space)
+  for (const header of [16, 12]) {
+    for (let skip = 0; skip < 512 && skip + header < raw.length; skip += 1) {
+      const w = raw.readUInt32LE(skip);
+      const h = raw.readUInt32LE(skip + 4);
+      if (w > 0 && h > 0 && w < 10000 && h < 10000 && raw.length - skip - header === w * h * 4) {
+        const at = (x, y) => {
+          const i = skip + header + (y * w + x) * 4;
+          return [raw[i], raw[i + 1], raw[i + 2]];
+        };
+        return { w, h, at };
+      }
+    }
+  }
+  return null;
+}
+const colourDistance = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+
+/** A finger held on (x, y) for `ms`, then lifted, with `during` run while it is down. */
+async function hold([x, y], ms, during) {
+  shell("input", "motionevent", "DOWN", String(x), String(y));
+  try {
+    await sleep(ms);
+    return during ? await during() : undefined;
+  } finally {
+    shell("input", "motionevent", "UP", String(x), String(y));
+  }
+}
+
+/** The list row (its `sidebar-workspace-row-…` view) that holds a title's text node. */
+const rowOf = (nodes, text) =>
+  nodes
+    .filter((n) => n.id.includes("sidebar-workspace-row-") && within(text, n))
+    .sort((a, b) => (a.box.bottom - a.box.top) - (b.box.bottom - b.box.top))[0];
+
+const contextMenuOpen = (n) => n.find((m) => m.id.includes("sidebar-workspace-context-menu-"));
+
+/** The Activity panel's header (its title) sits below the status bar on this screen. */
+async function checkPanelBelowStatusBar(posture) {
+  const title = await waitFor((n) => byId(n, "activity-title"), 15_000, `${posture}-activity`);
+  screenshot(`${posture}-activity`);
+  const bar = insetFrame("statusBars");
+  if (!check(`${posture}: the Activity panel opens`, title)) return;
+  check(`${posture}: the Activity panel's header is below the status bar`, bar && title.box.top >= bar.bottom,
+    bar ? `title top ${title.box.top}, status bar bottom ${bar.bottom}` : "no status bar inset");
 }
 
 async function waitKeyboard(shown, timeoutMs = 10_000) {
@@ -366,6 +422,63 @@ async function main() {
     const refolded = dumpUi("cover-folded-again");
     check("folding again keeps the conversation and the typed text",
       byId(refolded, "agent-chat-scroll") && composer(refolded)?.field.text.includes(TYPED));
+
+    // ---- the list and the side panel on both screens (Deyao, 2026-11-20: no sign of a tap on the unfolded phone,
+    // no menu on a long press, and the Activity panel under the status bar) ----
+    setScreen(MAIN);
+    await waitFor((n) => byId(n, "wide-shell"), 20_000, "main-again");
+    if (!byText(dumpUi(), PLAIN_CONVERSATION)) {
+      const toggle = byId(dumpUi(), "menu-button");
+      if (toggle) tap(toggle);
+    }
+    const plain = await waitFor((n) => byText(n, PLAIN_CONVERSATION), 15_000, "plain-row");
+    if (check("main: the conversation list is docked", plain)) {
+      // the row's own ground (its view, left of the title, clear of the letters), then the same point under a held
+      // finger: the press shows at once
+      const rowBox = rowOf(dumpUi("plain-row"), plain)?.box ?? plain.box;
+      const point = [rowBox.left + 3, Math.round((rowBox.top + rowBox.bottom) / 2)];
+      const before = screenPixels()?.at(...point);
+      // the picture is taken as soon as the finger is down; adb makes the hold longer than a tap, so the row's menu
+      // may open (a long press) and is put away
+      const during = await hold(centre(plain), 0, async () => screenPixels()?.at(...point));
+      await sleep(1000);
+      if (contextMenuOpen(dumpUi())) shell("input", "keyevent", "KEYCODE_BACK");
+      await sleep(1000);
+      check("main: a finger on a conversation shows at once", before && during && colourDistance(before, during) >= 8,
+        `row ${before} under the finger ${during}`);
+
+      // a long press opens the conversation's menu at the row
+      const row = await waitFor((n) => byText(n, PLAIN_CONVERSATION), 10_000, "plain-row-2");
+      const menu = row ? (await hold(centre(row), 900), await waitFor(contextMenuOpen, 5_000, "row-menu")) : null;
+      screenshot("main-row-menu");
+      check("main: a long press on a conversation opens its menu", menu);
+      check("main: the menu opens at the row", menu && row && menu.box.top <= row.box.bottom + 40 && menu.box.bottom >= row.box.top - 40,
+        menu && row ? `row ${row.box.top}-${row.box.bottom}, menu ${menu.box.top}-${menu.box.bottom}` : "");
+      shell("input", "keyevent", "KEYCODE_BACK");
+      await sleep(1000);
+
+      // a pinned conversation, which can be dragged: holding still opens its menu too
+      const pinned = await waitFor((n) => byText(n, PINNED_CONVERSATION), 10_000, "pinned-row");
+      const pinnedMenu = pinned ? (await hold(centre(pinned), 900), await waitFor(contextMenuOpen, 5_000, "pinned-menu")) : null;
+      screenshot("main-pinned-menu");
+      check("main: a long press on a pinned conversation opens its menu", pinnedMenu);
+      shell("input", "keyevent", "KEYCODE_BACK");
+      await sleep(1000);
+    }
+
+    // the Activity panel, docked beside the chat on the main screen and over it on the cover
+    const busy = await waitFor((n) => byText(n, TASKS_CONVERSATION), 10_000, "tasks-row");
+    if (busy) tap(busy);
+    const chip = await waitFor((n) => byId(n, "activity-chip"), 30_000, "activity-chip");
+    if (check("a conversation that ran tasks shows the Activity chip", chip)) {
+      tap(chip);
+      await checkPanelBelowStatusBar("main");
+      setScreen(COVER);
+      await sleep(3000);
+      await checkPanelBelowStatusBar("cover");
+      shell("input", "keyevent", "KEYCODE_BACK");
+      await sleep(1000);
+    }
 
     // ---- the emulator's own hinge (a foldable profile's posture, not a size override) ----
     shell("wm", "size", "reset");

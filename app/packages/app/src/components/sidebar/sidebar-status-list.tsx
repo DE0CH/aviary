@@ -18,8 +18,10 @@ import {
 } from "react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import {
+  openWorkspaceFromList,
+  useShownWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
@@ -66,7 +68,9 @@ import {
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import {
   SidebarWorkspaceContextMenu,
+  type RowMenuOpener,
   SidebarWorkspaceMenu,
+  useRowLongPressMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
@@ -530,14 +534,14 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const activeWorkspaceSelection = useShownWorkspaceSelection();
   const selected =
     activeWorkspaceSelection?.serverId === workspace.serverId &&
     activeWorkspaceSelection?.workspaceId === workspace.workspaceId;
 
   const handlePress = useCallback(() => {
     if (!workspace.serverId) return;
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    openWorkspaceFromList({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
   }, [workspace.serverId, workspace.workspaceId]);
 
   return (
@@ -754,11 +758,18 @@ function StatusWorkspaceRowInner(props: StatusWorkspaceRowInnerProps) {
 function DraggableStatusWorkspaceRowInner(
   props: StatusWorkspaceRowInnerProps & { drag: () => void },
 ) {
+  const rowMenu = useRowLongPressMenu(true);
   const dragInteraction = useLongPressDragInteraction({
     drag: props.drag,
-    menuController: null,
+    menuController: rowMenu.menuController,
   });
-  return <StatusWorkspaceRowInnerContent {...props} dragInteraction={dragInteraction} />;
+  return (
+    <StatusWorkspaceRowInnerContent
+      {...props}
+      dragInteraction={dragInteraction}
+      openerRef={rowMenu.openerRef}
+    />
+  );
 }
 
 function StatusWorkspaceRowInnerContent({
@@ -788,8 +799,10 @@ function StatusWorkspaceRowInnerContent({
   isDragging = false,
   dragHandleProps,
   dragInteraction,
+  openerRef,
 }: StatusWorkspaceRowInnerProps & {
   dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
+  openerRef?: MutableRefObject<RowMenuOpener | null>;
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
@@ -895,7 +908,9 @@ function StatusWorkspaceRowInnerContent({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowPressed}
+              highlightStyle={styles.workspaceRowHighlight}
+              longPressOpens={hasMenu && !openerRef}
+              openerRef={hasMenu ? openerRef : undefined}
               onPressIn={handlePressIn}
               onTouchMove={moveDragPress}
               onPressOut={handlePressOut}
@@ -1136,6 +1151,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceRowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  // the phone apps' finger-down (PressHighlight): the shared overlay, which shows on any ground (surface2 was the
+  // light sidebar's own, so a touch showed nothing; Deyao, 2026-11-20)
+  workspaceRowHighlight: {
+    backgroundColor: theme.colors.interactionHighlight,
   },
   workspaceRowDragging: {
     backgroundColor: theme.colors.surface2,

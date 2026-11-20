@@ -20,6 +20,11 @@ interface ScreenHeaderProps {
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
   onRowLayout?: (event: LayoutChangeEvent) => void;
+  /**
+   * Inside a column frame that already keeps its top clear of the status bar (the right-hand panel's,
+   * `explorer-sidebar/geometry.tsx`): no top padding of its own.
+   */
+  framed?: boolean;
 }
 
 /**
@@ -33,6 +38,7 @@ export function ScreenHeader({
   rightStyle,
   borderless,
   onRowLayout,
+  framed = false,
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -42,8 +48,8 @@ export function ScreenHeader({
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
   const innerStyle = useMemo(
-    () => [styles.inner, { paddingTop: insets.top + topPadding }],
-    [insets.top, topPadding],
+    () => [styles.inner, { paddingTop: framed ? 0 : insets.top + topPadding }],
+    [framed, insets.top, topPadding],
   );
   const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);

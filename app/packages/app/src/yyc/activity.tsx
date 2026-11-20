@@ -3,19 +3,20 @@
  * the background, a subagent, a workflow, a monitor — shown the way its schedules are (yyc/schedules.tsx):
  *   - a chip in the conversation's header, 「n running」 with a still icon (ActivityChip; nothing when the conversation
  *     never started one), opening
- *   - a panel beside the chat that pushes it narrower (full screen with a back arrow on a phone; ActivityPanel): one
+ *   - a side panel (yyc/side-panel.tsx: beside the chat, over it on a phone; ActivityPanel): one
  *     section per task with what it is, how long it has run, what it does now, its steps, and Stop; the finished
  *     ones below, with their result. Nothing in it moves except the clock.
  * The panel reads GET /api/jarvis/sessions/<id>/tasks and stops one with POST …/tasks/<taskId>/stop (aviary's
  * pigeon). A server without the route has no chip.
  */
 import { TOUCH_TARGET } from "@/components/ui/control-geometry";
+import { HeaderChip } from "@/yyc/header-chip";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ListTodo } from "lucide-react-native";
-import { SidePanel } from "@/yyc/side-panel";
+import { SidePanelPage, useSidePanelToggle } from "@/yyc/side-panel";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { api } from "@/yyc/api";
@@ -63,17 +64,6 @@ export function useConversationTasks(sessionId: string | null, watching: boolean
   });
 }
 
-/** Which conversation's panel is open. */
-export const useActivityPanel = create<{
-  openFor: string | null;
-  toggle: (sessionId: string) => void;
-  close: () => void;
-}>((set) => ({
-  openFor: null,
-  toggle: (sessionId) => set((s) => ({ openFor: s.openFor === sessionId ? null : sessionId })),
-  close: () => set({ openFor: null }),
-}));
-
 function useActivityLocale(): ActivityLocale {
   const { i18n } = useTranslation();
   return activityLocale(i18n.language);
@@ -86,27 +76,20 @@ const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** 「n running」 in the conversation's header (nothing when it never ran a task); opens the panel. */
 export function ActivityChip({ sessionId }: { sessionId: string | null }) {
-  const open = useActivityPanel((s) => (sessionId ? s.openFor === sessionId : false));
-  const toggle = useActivityPanel((s) => s.toggle);
+  const { open, toggle } = useSidePanelToggle(sessionId, "activity");
   const { data } = useConversationTasks(sessionId, open);
   const locale = useActivityLocale();
   const tasks = data ?? [];
   if (!sessionId || tasks.length === 0) return null;
   const label = chipLabel(tasks, locale);
   return (
-    <Pressable
+    <HeaderChip
       testID="activity-chip"
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      accessibilityLabel={label}
-      onPress={() => toggle(sessionId)}
-      style={styles.chipTarget}
-    >
-      <View style={[styles.chip, open ? styles.chipOpen : null]}>
-        <ThemedList size={13} uniProps={mutedColor} />
-        <Text style={styles.chipText}>{label}</Text>
-      </View>
-    </Pressable>
+      icon={<ThemedList size={13} uniProps={mutedColor} />}
+      label={label}
+      open={open}
+      onPress={toggle}
+    />
   );
 }
 
@@ -157,9 +140,11 @@ function TaskSection({
             onPress={handleStop}
             style={styles.stopTarget}
           >
-            <View style={styles.stop}>
-              <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
-            </View>
+            {({ pressed }) => (
+              <View style={[styles.stop, pressed && styles.stopPressed]}>
+                <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
+              </View>
+            )}
           </Pressable>
         ) : null}
       </View>
@@ -205,9 +190,8 @@ function TaskSection({
  * chat, with a back arrow. Its shell, the safe area included, is `SidePanel`.
  */
 export function ActivityPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
-  const open = useActivityPanel((s) => (sessionId ? s.openFor === sessionId : false));
-  const close = useActivityPanel((s) => s.close);
-  const { data } = useConversationTasks(open ? sessionId : null, open);
+  const { open } = useSidePanelToggle(sessionId, "activity");
+  const { data } = useConversationTasks(sessionId, open);
   const locale = useActivityLocale();
   const readOnly = useViewAsReadOnly();
   const queryClient = useQueryClient();
@@ -215,13 +199,6 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const tasks = data ?? [];
   const anyRunning = runningCount(tasks) > 0;
-
-  useEffect(() => {
-    // a conversation left with its panel open: closed, so the next one starts without it
-    return () => {
-      if (useActivityPanel.getState().openFor === sessionId) useActivityPanel.getState().close();
-    };
-  }, [sessionId]);
 
   useEffect(() => {
     // the clock of the running tasks; nothing ticks while none runs or the panel is closed
@@ -254,17 +231,10 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
     [queryClient, sessionId],
   );
 
-  if (!open || !sessionId) return null;
+  if (!sessionId) return null;
   const w = activityWords(locale);
   return (
-    <SidePanel
-      id="activity"
-      title={w.title}
-      compact={compact}
-      onClose={close}
-      backLabel={w.back}
-      closeLabel={w.close}
-    >
+    <SidePanelPage id="activity" title={w.title} compact={compact} closeLabel={w.close}>
       {tasks.length === 0 ? <Text style={styles.none}>{w.none}</Text> : null}
       {tasks.map((task) => (
         <TaskSection
@@ -278,35 +248,11 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
         />
       ))}
       {tasks.length > 0 ? <Text style={styles.footer}>{w.footer}</Text> : null}
-    </SidePanel>
+    </SidePanelPage>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // the tap target: a finger's 44 px tall on a phone around the drawn pill, the pill itself from md up
-  chipTarget: {
-    minHeight: { xs: TOUCH_TARGET, md: 0 },
-    justifyContent: "center",
-    marginVertical: { xs: -10, md: 0 },
-  },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[0.5],
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-  },
-  chipOpen: {
-    backgroundColor: theme.colors.surface3,
-  },
-  chipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
   section: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
@@ -349,6 +295,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  stopPressed: {
+    backgroundColor: theme.colors.surface3,
   },
   stopText: {
     color: theme.colors.foreground,
