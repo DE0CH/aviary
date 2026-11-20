@@ -207,7 +207,14 @@ jobs:
           lines=$(.github/ci/s3.sh versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
           echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
           echo "$lines" >> "$GITHUB_ENV"
-      - run: cargo nextest run --workspace --locked --no-tests=pass
+      - name: REPRO (wip only) hermit's fabric tests 25 times, under the suite's own load each round
+        run: |
+          for i in $(seq 1 25); do
+            echo "=== round $i"
+            if ! cargo nextest run --locked -p hermit -p magpie --no-fail-fast 2>&1 | tee /tmp/round.log | tail -3; then
+              grep -n -A30 "was not released\|panicked at crates/hermit/tests/fabric.rs" /tmp/round.log | head -80
+            fi
+          done
       - name: supervisor as root (dockerd spawned as uid 0, daemon.json, the _ping wait; a kernel FUSE mount; the job runs as a user)
         run: |
           bin=$(cargo test --locked -p supervisor --lib --no-run --message-format=json \
