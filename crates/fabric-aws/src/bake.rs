@@ -365,7 +365,9 @@ pub fn ami(aws: &dyn Aws, cfg: &Config, bake: &Bake<'_>, out: &mut dyn Write, lo
             "--metadata-options",
             "HttpTokens=required,HttpPutResponseHopLimit=1",
             "--block-device-mappings",
-            "DeviceName=/dev/sda1,Ebs={VolumeSize=16,VolumeType=gp3,DeleteOnTermination=true}",
+            // the system and the unpacked sandbox image (8,935 MiB with the agent's tools, 2026-11-20): hermit's
+            // HOST_SYSTEM_GIB
+            "DeviceName=/dev/sda1,Ebs={VolumeSize=32,VolumeType=gp3,DeleteOnTermination=true}",
             "--tag-specifications",
             &plan::tagspec(
                 cfg,

@@ -271,9 +271,10 @@ pub struct MigrationJson {
     pub max_scratch_mib: u32,
 }
 
-/// What a host's disk holds beside the sandboxes' scratch: the system and the unpacked sandbox image (the AMI's
-/// own snapshot is 16 GiB).
-pub const HOST_SYSTEM_GIB: u64 = 16;
+/// What a host's disk holds beside the sandboxes' scratch: the system and the unpacked sandbox image, two of them
+/// while a pin changes (the image with the agent's tools is 8,935 MiB, 2026-11-20; the AMI's own snapshot is 32 GiB,
+/// crates/fabric-aws bake.rs).
+pub const HOST_SYSTEM_GIB: u64 = 32;
 
 fn max_scratch_mib() -> u32 {
     512

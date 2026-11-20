@@ -180,7 +180,7 @@ schedules), but it never acts outside YYC: nothing that sends, posts, pays or re
   Claude Code runs.
 - **Capacity (Deyao, 2026-11-13):** a sandbox is cpu 1 / 7Gi with a 100 GiB scratch filesystem (`sandbox.tmpGiB`: the
   root's writes, `/tmp`, Docker; gone with the sandbox, unlike `/workspace`); a host holds 2 (its 15.33 GiB less the
-  1 GiB reserve, over 7Gi) on a 220 GiB disk (`fabric.aws.diskGiB`: 2 × 100 + 16 for the system and the image);
+  1 GiB reserve, over 7Gi) on a 232 GiB disk (`fabric.aws.diskGiB`: 2 × 100 + 32 for the system and the image, hermit `HOST_SYSTEM_GIB`);
   5 hosts hold `maxActive` 10 (check item H keeps the three in step); one person holds at most their number of
   `sandbox.maxActiveByPerson` at a time (an address or `*` to a number: the test account bot@deyaochen.com 3; a start
   over it takes that person's own idle sandbox or is refused as busy after `capacityWaitSeconds`); released after `idleMinutes` 30 without use, at
