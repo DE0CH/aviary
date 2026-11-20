@@ -38,6 +38,17 @@ pub struct HermitJson {
     pub sandbox: SandboxJson,
     pub fabric: FabricJson,
     pub ops: OpsJson,
+    /// App features this deployment turns on, each off unless named.
+    #[serde(default)]
+    pub features: FeaturesJson,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FeaturesJson {
+    /// The question and wait cards in the history (magpie rule 11; `hermit_api::deployment::Features`).
+    #[serde(default)]
+    pub person_cards: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -976,5 +987,16 @@ mod tests {
         std::fs::write(d.join("stray.md"), "x").unwrap();
         assert!(read_skills(&d).is_err());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn app_features_are_off_unless_named_and_reach_the_deployment_facts() {
+        // the question and wait cards (magpie rule 11): YYC AI turns them on in its own hermit.json (Deyao,
+        // 2026-11-20); pigeon reads them from the deployment facts (`GET /api/jarvis/me` `personCards`)
+        let off = load_edited(&|_| {}).unwrap();
+        assert!(!crate::deployment::of(&off).features.person_cards);
+        let on = load_edited(&|v| v["features"] = serde_json::json!({ "personCards": true })).unwrap();
+        assert!(crate::deployment::of(&on).features.person_cards);
+        assert!(load_edited(&|v| v["features"] = serde_json::json!({ "cards": true })).is_err());
     }
 }

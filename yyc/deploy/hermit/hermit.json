@@ -12,6 +12,9 @@
     ],
     "appScheme": "dev.de0ch.yycai"
   },
+  "features": {
+    "personCards": true
+  },
   "catalogue": "/etc/hermit/catalogue/catalogue.json",
   "prompt": {
     "instructions": "/etc/hermit/config/system-prompt.md",
