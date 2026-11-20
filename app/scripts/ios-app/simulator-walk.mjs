@@ -73,11 +73,12 @@ function bootSimulator() {
 }
 
 /**
- * Runs a flow; false when it failed (its log and screenshots are in OUT). Maestro runs beside this process, never
+ * Runs a flow: true when it passed, "driver" when Maestro's driver never started, false when it failed (its log and
+ * screenshots are in OUT). Maestro runs beside this process, never
  * blocking it: the stand-in that answers the app lives in this process's event loop (a synchronous run left the
  * app's sign-in page with "the server stopped responding").
  */
-function flow(maestro, udid, name, env) {
+function runFlow(maestro, udid, name, env) {
   const args = ["--device", udid, "test", "--test-output-dir", path.join(out, name)];
   for (const [k, v] of Object.entries(env)) args.push("-e", `${k}=${v}`);
   args.push(path.join(flows, `${name}.yaml`));
@@ -87,11 +88,23 @@ function flow(maestro, udid, name, env) {
       args,
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, env: { ...process.env, MAESTRO_DRIVER_STARTUP_TIMEOUT: "600000" } },
       (error, stdout, stderr) => {
-        fs.writeFileSync(path.join(out, `${name}.log`), `${stdout ?? ""}\n${stderr ?? ""}`);
-        done(!error);
+        const log = `${stdout ?? ""}\n${stderr ?? ""}`;
+        fs.writeFileSync(path.join(out, `${name}.log`), log);
+        done(error ? (log.includes("IOSDriverTimeoutException") ? "driver" : false) : true);
       },
     );
   });
+}
+
+/**
+ * A flow, once more when Maestro's XCTest driver never came up (not when the app failed it): a fresh simulator on a CI
+ * runner can take longer than the driver's 10 minutes (ios/simulator-test.sh does the same).
+ */
+async function flowWithRetry(maestro, udid, name, env) {
+  const first = await runFlow(maestro, udid, name, env);
+  if (first !== "driver") return first === true;
+  console.log(`Maestro's driver did not start for ${name}; trying once more`);
+  return (await runFlow(maestro, udid, name, env)) === true;
 }
 
 /** Maestro's UI tree, read beside this process as a flow is (the stand-in keeps answering). */
@@ -127,12 +140,12 @@ async function main() {
   const udid = bootSimulator();
   try {
     const env = { APP_ID: appId, ...TEXTS };
-    const listed = await flow(maestro, udid, "walk-list", env);
+    const listed = await flowWithRetry(maestro, udid, "walk-list", env);
     check("sign-in, the list, and a long press on a plain and a pinned conversation opening its menu", listed,
       "walk-list.log names the step that failed");
     if (!listed) return;
     const chatTop = await topOf(maestro, udid, "workspace-header-title", "conversation");
-    const opened = await flow(maestro, udid, "walk-activity", env);
+    const opened = await flowWithRetry(maestro, udid, "walk-activity", env);
     check("the Activity panel opens", opened);
     if (!opened) return;
     const panelTop = await topOf(maestro, udid, "activity-title", "activity");

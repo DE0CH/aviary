@@ -200,9 +200,13 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
     `marker` is where the AI read the answer: that call's row takes the card (`personRead`) and the card's row says
     which call (`readBy`), so the app shows the card there and nothing where it was asked. A question's marker is
     `(answer to <askId>)`, which the `ask` command prints on every line of an answer and never before one (the id
-    alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). A retract of the
-    reading line makes the card unread again where it was asked (rule 9 rebuilds the reading row from its line, without
-    the card). `rows_person_unread` (migration 0046, built concurrently) keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
+    alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). Only a settled card
+    is read, so whatever prints the answer settles it first: magpie writes `ask.resolved` before `ask` gets the
+    answer, and the supervisor answers a person wait's end only once magpie has `wait.ended` (jarvis4's
+    `jarvis-request` prints the outcome after that end). A card stays read while the call that read it still carries
+    its marker: a retract of the reading line keeps the read when the rebuilt call's result still carries it (Claude
+    Code wrote the line again: the new line lands first, the old one is retracted after it), else the card is unread
+    again where it was asked (2026-11-20: the card stayed "Not read yet" after a rewrite). `rows_person_unread` (migration 0046, built concurrently) keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
     cards and are not rebuilt (a card row made now would land at the end of the timeline, not where it was asked).
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
     Each row records the derivation version it was made or last updated by (`rows.derivation`,
