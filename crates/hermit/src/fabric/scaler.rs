@@ -372,6 +372,9 @@ async fn steps(g: &Gvisor, core: &Arc<Core>) -> Result<Report, FabricError> {
         if let Err(e) = reconcile(g, core, &mut report).await {
             tracing::warn!(error = %e, "EC2 reconcile");
         }
+        if let Err(e) = prune_images(g, core).await {
+            tracing::warn!(error = %e, "image bucket pruning");
+        }
         report.orphans = orphans(g, core, &beats).await?;
     }
 
@@ -679,6 +682,69 @@ async fn push_mesh_and_egress(g: &Gvisor, core: &Core) {
             tracing::warn!(error = %e, "egress targets");
         }
     }
+}
+
+/// How long an image stays in the bucket after it was put there, used or not (a pin follows its publish by minutes).
+const IMAGE_FRESH: Duration = Duration::from_hours(24);
+/// Images of sandboxes started this recently are kept (a replica of a rollout may still start on the image before).
+const IMAGE_RECENT_STARTS: Duration = Duration::from_hours(7 * 24);
+
+/// The image objects to delete: `images/<64 hex>.tar.zst` whose digest (`sha256:<hex>`) is not in `keep` and that were
+/// written before `fresh_before` (unix ms). Any other key is left alone.
+#[must_use]
+pub fn unused_images<S: std::hash::BuildHasher>(
+    objects: &[(String, i64)],
+    keep: &HashSet<String, S>,
+    fresh_before: i64,
+) -> Vec<String> {
+    objects
+        .iter()
+        .filter(|(k, at)| {
+            let Some(hex) = k.strip_prefix("images/").and_then(|r| r.strip_suffix(".tar.zst")) else {
+                return false;
+            };
+            hex.len() == 64
+                && hex.bytes().all(|c| c.is_ascii_hexdigit())
+                && !keep.contains(&format!("sha256:{hex}"))
+                && *at < fresh_before
+        })
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+/// `fabric.aws.pruneImages`: the bucket's images no one uses go ([`unused_images`] over the configured image, the
+/// images of the sandboxes not gone and of those started in the last [`IMAGE_RECENT_STARTS`]).
+async fn prune_images(g: &Gvisor, core: &Arc<Core>) -> Result<(), FabricError> {
+    let aws = &core.cfg.file.fabric.aws;
+    let (Some(ec2), Some(bucket), true) = (&g.ec2, &aws.image_bucket, aws.prune_images) else {
+        return Ok(());
+    };
+    let recent = ms(IMAGE_RECENT_STARTS);
+    let mut keep: HashSet<String> = core
+        .pool
+        .get()
+        .await?
+        .query(
+            "select distinct image from sandboxes
+              where image is not null and (status <> 'gone' or created_at > now() - $1::bigint * interval '1 millisecond')",
+            &[&recent],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get::<_, String>(0))
+        .collect();
+    keep.insert(core.cfg.image_digest.clone());
+    let objects = ec2
+        .list_objects(bucket, "images/")
+        .await
+        .map_err(|e| FabricError(e.to_string()))?;
+    for key in unused_images(&objects, &keep, now_ms() - ms(IMAGE_FRESH)) {
+        match ec2.delete_object(bucket, &key).await {
+            Ok(()) => tracing::info!(bucket = %bucket, key = %key, "image no one uses deleted"),
+            Err(e) => tracing::warn!(bucket = %bucket, key = %key, error = %e, "image no one uses: delete failed"),
+        }
+    }
+    Ok(())
 }
 
 /// 13.9: unknown instances older than `orphanInstanceSeconds` are terminated; a live row whose instance is missing
@@ -1479,6 +1545,23 @@ pub async fn start_migration(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn unused_images_keep_what_is_used_or_fresh_and_only_touch_image_keys() {
+        let h = |c: &str| c.repeat(32);
+        let objects = vec![
+            (format!("images/{}.tar.zst", h("aa")), 10),
+            (format!("images/{}.tar.zst", h("bb")), 10),
+            (format!("images/{}.tar.zst", h("cc")), 1_000),
+            ("images/short.tar.zst".to_owned(), 10),
+            ("frozen/x/y".to_owned(), 10),
+        ];
+        let keep: HashSet<String> = [format!("sha256:{}", h("aa"))].into_iter().collect();
+        assert_eq!(
+            unused_images(&objects, &keep, 500),
+            vec![format!("images/{}.tar.zst", h("bb"))]
+        );
+    }
     use super::*;
 
     #[test]
