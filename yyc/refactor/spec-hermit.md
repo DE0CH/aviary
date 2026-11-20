@@ -944,6 +944,9 @@ pods keep serving).
 }
 ```
 
+- `ops.chat` (default `true`): a chat (magpie, egress) runs beside hermit and its page reads their summaries; `false`
+  for a hermit with none (Jarvis 4's fabric), whose snapshot then has `"chat": false`, no people, View as, egress or
+  budget, and whose page leaves those cards out.
 - `aws.emptyMinutes` (accepted and unused today, A3.F28) is gone. `aws.instance` (`"ai.yyc.deyaochen.com"`, an EC2
   tag, gap-1 5.7) is replaced by the explicit `tags` map; new hosts are tagged `app=hermit-host`, `hermit=yyc-ai`,
   `Name=hermit-host-<name>` (instance and volume).
