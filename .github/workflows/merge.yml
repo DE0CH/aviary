@@ -1,6 +1,7 @@
 # merge.yml — when a workflow of the repo's CI finishes on a branch, the gate decides (DE0CH/jarvis4 rust/gate): every
-# workflow on the head commit green → into main (a fast-forward on main's head, else main merged in cleanly), the
-# branch deleted; one red → the `gate` status red. workflow_run runs main's copy of this file, so a branch can't
+# workflow on the head commit green → into main (a fast-forward on main's head, else main merged in cleanly), every
+# branch now in main deleted; one red → the `gate` status red, except a first-attempt red that main has too, which is
+# run once more (`actions: write`). workflow_run runs main's copy of this file, so a branch can't
 # change it; the job's deploy key is the `merge` environment's secret, which admits main only. `workflows` names the
 # repo's CI; GATE_WORKFLOWS repeats it: the gate counts those runs only.
 name: merge
@@ -8,7 +9,7 @@ on:
   workflow_run:
     workflows: [branch, ci, app, app-tests, app-android]
     types: [completed]
-permissions: { contents: read, pull-requests: write, statuses: write, actions: read }
+permissions: { contents: read, pull-requests: write, statuses: write, actions: write }
 concurrency: { group: "merge-${{ github.event.workflow_run.head_branch }}", cancel-in-progress: false }
 jobs:
   merge:
