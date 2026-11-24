@@ -1,8 +1,9 @@
 //! magpie 6.10's write acceptance: p50 <= 15 ms for a 10 KiB append and p99 <= 150 ms for a write carrying a 1 MiB
 //! image line, with synchronous replication on; and 6.11's read acceptance: an 87 MB transcript (about 50 MB of
 //! distinct blobs, every one only in the bucket) streams in under 5 s. Ignored in the ordinary suite; ci.yml's
-//! `magpie-perf` job runs them with a release build against `.github/ci/postgres-sync.sh` (a primary and a synchronous
-//! standby), and the write test refuses to measure against a server that does not replicate synchronously.
+//! `magpie-perf` job runs them with a release build against `ci-services postgres-sync` (a primary and a synchronous
+//! standby, both in memory), and the write test refuses to measure against a server that does not replicate
+//! synchronously.
 //!
 //! Measured at the client over loopback HTTP, so the figures include the HTTP round trip the handler-side numbers
 //! do not.

@@ -1042,6 +1042,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ci-services"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+]
+
+[[package]]
 name = "cipher"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

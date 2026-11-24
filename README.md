@@ -51,9 +51,9 @@ cargo deny --locked check && cargo audit --deny warnings
 ```
 
 Tests that need Postgres read `AVIARY_TEST_DATABASE_URL`. CI starts the production Postgres image, pinned to the
-digest production runs, with TLS on (`.github/ci/postgres.sh`). Tests that need S3 read `AVIARY_TEST_S3_ENDPOINT`,
+digest production runs, with TLS on (`testing/ci-services`). Tests that need S3 read `AVIARY_TEST_S3_ENDPOINT`,
 `AVIARY_TEST_S3_REGION`, `AVIARY_TEST_S3_ACCESS_KEY_ID` and `AVIARY_TEST_S3_SECRET_ACCESS_KEY`, use path-style
-addressing and create their own buckets. CI serves S3 with versitygw, pinned by digest (`.github/ci/s3.sh`).
+addressing and create their own buckets. CI serves S3 with versitygw, pinned by digest, its data in memory (`testing/ci-services`).
 
 ### Where this differs from the platform spec
 

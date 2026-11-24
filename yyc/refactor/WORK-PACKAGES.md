@@ -999,7 +999,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   Carried from WP-12: `magpie-pg`'s `postgresql.parameters` set `min_wal_size: 1GB` and `max_wal_size: 2GB` (a
   required parameter: magpie 6.10's p99 <= 150 ms for a 1 MiB image line was measured at these, 47-53 ms; at
   Postgres's defaults, 80MB / 1GB, new 16 MiB segment files cost 150-200 ms each and the p99 was 129-134 ms; see
-  DE0CH/aviary `crates/magpie/README.md` and `.github/ci/postgres-sync.sh`). A manifest test in DE0CH/YYC's CI
+  DE0CH/aviary `crates/magpie/README.md` and `testing/ci-services`). A manifest test in DE0CH/YYC's CI
   fails unless `magpie-pg.yaml`'s `spec.postgresql.parameters` has exactly `min_wal_size: 1GB` and
   `max_wal_size: 2GB` (or larger), so the setting the latency bound depends on cannot be dropped silently.
 

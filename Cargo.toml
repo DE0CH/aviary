@@ -14,6 +14,7 @@ members = [
   "testing/source-rules",
   "testing/tls-canary",
   "testing/fabric-replica",
+  "testing/ci-services",
 ]
 # throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
 # jarvis/hermit (hermit-jarvis, aviary-gateway: on these crates by path), drive/server (YYC Drive) and tools/ are

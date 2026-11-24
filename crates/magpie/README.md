@@ -83,7 +83,7 @@ of only the transcript's surviving lines in file order, an oracle that shares no
 review's truncate, rewrite, truncate, original-bytes sequence); `tests/ccfs_claude_code.rs` (Claude Code 2.1.304's
 transcripts from the FUSE gate, product text replaced by same-length placeholders, replayed in the shape of the
 gate's recorded calls with every prompt a person turn's echo, with pinned event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
-`.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
+`ci-services postgres-sync`'s primary and synchronous standby, in memory (`testing/ci-services`): p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
 for a 1 MiB image line; an 87 MB transcript from a cold bucket in under 5 s). The scanner, extraction and classification have unit and property tests in the crate.
 
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
