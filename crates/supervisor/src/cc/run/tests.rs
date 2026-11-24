@@ -3669,7 +3669,11 @@ async fn a_resumed_conversation_counts_the_images_its_transcript_holds() {
     assert_eq!(compactions(&w), 0);
     let (t, _) = w.turn_with("img:1", Some(session), vec![], vec![]);
     assert_eq!(w.ended(t).await["state"], "completed");
-    until("the compaction at five", || compactions(&w) == 1).await;
+    // the compaction's turn reaches magpie beside its prompt to Claude Code, not before it: both are waited for
+    until("the compaction at five", || {
+        compactions(&w) == 1 && agent_turns(&w).len() == 1
+    })
+    .await;
     assert_eq!(w.ended(agent_turns(&w)[0]).await["state"], "completed");
     w.idle(&sup).await;
 }
