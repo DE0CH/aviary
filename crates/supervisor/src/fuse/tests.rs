@@ -896,6 +896,25 @@ fn a_replayed_write_magpie_holds_is_stuck_without_the_heartbeat() {
     hold.release();
 }
 
+/// A settled core holds no request in its journal: a request is handled until its slot is free again, after its
+/// reply, so an instance killed once a settle returned (a checkpoint, a fault) replays nothing already answered (an
+/// answered create replayed after a settle was held by magpie as a second stuck op, CI 2026-11-20).
+#[test]
+fn a_settled_core_leaves_no_answered_request_in_the_journal() {
+    let w = world();
+    let fs = w.fs(fast());
+    let core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let cfg = w.cfg(fast());
+    let journal = super::journal::Journal::open(&cfg.journal, cfg.slots, cfg.slot_bytes).unwrap();
+    let ws = workspace_dir(&w);
+    for i in 0..2000 {
+        let r = w.sentry.call(op::GETATTR, ws, PID, &body::getattr());
+        ok(&r, "getattr");
+        assert!(core.settle(Duration::from_secs(5)));
+        assert_eq!(journal.occupied(), Vec::new(), "after request {i}");
+    }
+}
+
 #[test]
 fn offset_repair_from_the_cache() {
     let w = world();

@@ -365,7 +365,8 @@ impl Core {
         self.inflight.load(Ordering::SeqCst)
     }
 
-    /// Waits until no request is being handled, at most `d`; whether none is.
+    /// Waits until no request is being handled, at most `d`; whether none is. A request is handled from its read
+    /// until its journal slot is free again, after its reply.
     #[must_use]
     pub fn settle(&self, d: Duration) -> bool {
         let deadline = std::time::Instant::now() + d;
@@ -917,6 +918,22 @@ impl Core {
     }
 
     fn worker(self: Arc<Self>, i: usize) {
+        /// One request counted in `inflight`; settle's waiters are woken when it ends.
+        struct Held<'a>(&'a Core);
+        impl<'a> Held<'a> {
+            fn new(c: &'a Core) -> Self {
+                c.inflight.fetch_add(1, Ordering::SeqCst);
+                Held(c)
+            }
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                self.0.inflight.fetch_sub(1, Ordering::SeqCst);
+                let _g = lock(&self.0.idle.0);
+                self.0.idle.1.notify_all();
+            }
+        }
+
         SLOT.set(Some(i));
         // the last `unique` this slot held: a header after a short read must name a newer one
         let mut last = 0u64;
@@ -992,6 +1009,9 @@ impl Core {
             tracing::info!(unique = h.unique, op = proto::opname(h.opcode), "fuse request");
             let len = (h.len as usize).min(slot.len());
             let body = &slot[IN_HEADER..len];
+            // held until the slot is free again (or this worker ends), so a settled core has no answered request
+            // left in the journal for a later instance to replay
+            let _held = Held::new(&self);
             let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 self.point(Point::ReadReturned, &h);
                 self.request(&h, body);
@@ -1033,16 +1053,6 @@ impl Core {
             }
             _ => {}
         }
-        self.inflight.fetch_add(1, Ordering::SeqCst);
-        struct Done<'a>(&'a Core);
-        impl Drop for Done<'_> {
-            fn drop(&mut self) {
-                self.0.inflight.fetch_sub(1, Ordering::SeqCst);
-                let _g = lock(&self.0.idle.0);
-                self.0.idle.1.notify_all();
-            }
-        }
-        let _done = Done(self);
         if !proto::mutates(h.opcode) {
             let o = self.serve(h, body);
             self.send(h, &o);
