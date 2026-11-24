@@ -132,7 +132,7 @@ pub async fn stats(pool: &Pool) -> Result<OpsStats> {
                (select min(created_at) from outbox) as oldest_outbox,
                (select min(deleted_at) + make_interval(secs => $1) from conversations
                   where deleted_at <= now() - make_interval(secs => $1)) as oldest_due_purge,
-               (select extract(epoch from now() - updated_at)::float8 from hermit_feed) as feed_lag",
+               (select extract(epoch from clock_timestamp() - updated_at)::float8 from hermit_feed) as feed_lag",
             &[&limits::RECENTLY_DELETED.as_secs_f64()],
         )
         .await?;
