@@ -2594,23 +2594,21 @@ async fn frozen_sandboxes_are_evicted_only_when_their_slot_is_needed() {
         "update hosts set created_at = now() - interval '16 minutes' where name = '{a}'"
     ))
     .await;
-    pass(&g, &r).await;
+    let first = pass(&g, &r).await;
     assert!(
         eventually(|| evicted(&rig, y)).await,
         "y was not evicted from a host holding nothing running"
     );
-    // a following pass releases it: one may still do nothing (a pass whose gateway heartbeat went unanswered returns
+    // the pass that evicts y releases the host when the eviction ends before its release step (CI, 2026-11-20),
+    // else a following pass does; one may still do nothing (a pass whose gateway heartbeat went unanswered returns
     // before any release; CI under load, 2026-11-19)
-    let mut terminated = Vec::new();
-    let mut reports = Vec::new();
-    for _ in 0..10 {
+    let mut terminated = first.terminated.clone();
+    let mut reports = vec![format!("{first:?}")];
+    while terminated.is_empty() && reports.len() <= 10 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
         let p = pass(&g, &r).await;
         terminated.clone_from(&p.terminated);
         reports.push(format!("{p:?}"));
-        if !terminated.is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     if terminated != vec![a.clone()] {
         // what kept the host (it failed only in CI, 2026-11-19): the host's row and every row on it
