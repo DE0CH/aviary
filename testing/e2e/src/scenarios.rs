@@ -55,8 +55,16 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         other if other.starts_with("chaos:") => {
             // chaos:<minutes>, or chaos:<minutes>:<seed> to run a printed schedule again
             let mut parts = other["chaos:".len()..].splitn(2, ':');
-            let minutes: u64 = parts.next().unwrap_or_default().parse().context("chaos:<minutes>[:<seed>]")?;
-            let seed = parts.next().map(str::parse::<u64>).transpose().context("chaos:<minutes>:<seed>")?;
+            let minutes: u64 = parts
+                .next()
+                .unwrap_or_default()
+                .parse()
+                .context("chaos:<minutes>[:<seed>]")?;
+            let seed = parts
+                .next()
+                .map(str::parse::<u64>)
+                .transpose()
+                .context("chaos:<minutes>:<seed>")?;
             Box::pin(chaos::run(h, minutes, seed)).await
         }
         other => bail!("no scenario {other}"),

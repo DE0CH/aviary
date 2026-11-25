@@ -314,7 +314,10 @@ async fn chaos_loop(h: &Harness, stop: Instant) -> anyhow::Result<Vec<String>> {
 
 /// Runs the chaos scenario for `minutes`.
 pub async fn run(h: &Harness, minutes: u64, seed_given: Option<u64>) -> anyhow::Result<()> {
-    eprintln!("chaos: seed {} (chaos:{minutes}:<seed> runs this schedule again)", seed(seed_given));
+    eprintln!(
+        "chaos: seed {} (chaos:{minutes}:<seed> runs this schedule again)",
+        seed(seed_given)
+    );
     let m = marker("CHAOS");
     h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
                     "reply": [{"text": "Chaos turn."}, {"sleepMs": 15_000}, {"text": DONE}],
