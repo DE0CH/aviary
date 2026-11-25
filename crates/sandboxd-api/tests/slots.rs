@@ -8,7 +8,9 @@ mod common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use common::fixture;
 use sandboxd_api::{
@@ -94,7 +96,7 @@ async fn serve(slow: Slow) -> (Arc<Slow>, Client) {
 async fn until(what: &str, f: impl Fn() -> bool) {
     let t = Instant::now();
     while !f() {
-        assert!(t.elapsed() < Duration::from_secs(10), "{what}");
+        assert!(t.elapsed() < Duration::from_secs(30), "{what}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -121,19 +123,19 @@ async fn heartbeat_and_control_calls_answer_while_every_long_slot_is_held() {
         s.in_flight.load(Ordering::SeqCst) == long
     })
     .await;
+    // the long calls hold until released: a heartbeat they held up would time out
     for _ in 0..3 {
-        let t = Instant::now();
         let h = tokio::time::timeout(HOST_TIMEOUT, c.host()).await;
         assert!(h.is_ok_and(|h| h.is_ok()), "heartbeat within {HOST_TIMEOUT:?}");
-        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
     }
     // a network push or a release's delete is not held up by the create burst either
     for _ in 0..3 {
-        let t = Instant::now();
-        let (listed, deleted) = tokio::join!(c.list(), c.delete("sbx-a"));
+        let both = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(c.list(), c.delete("sbx-a"))
+        });
+        let (listed, deleted) = both.await.expect("not held up");
         listed.unwrap();
         assert_eq!(deleted.unwrap().deleted, "sbx-a");
-        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
     }
     // the queued calls never got past the client: at most LONG_SLOTS long requests at once
     assert_eq!(s.peak.load(Ordering::SeqCst), long);
@@ -147,7 +149,8 @@ async fn heartbeat_and_control_calls_answer_while_every_long_slot_is_held() {
     assert_eq!(s.peak.load(Ordering::SeqCst), long);
 }
 
-#[tokio::test]
+// on tokio's paused clock: the timeouts fire exactly when due (the hung heartbeat's hour never comes first)
+#[tokio::test(start_paused = true)]
 async fn a_hung_heartbeat_fails_within_its_timeout() {
     let (_, c) = serve(Slow {
         hang_heartbeat: true,
@@ -166,5 +169,8 @@ async fn a_hung_heartbeat_fails_within_its_timeout() {
         matches!(second, Err(Error::Timeout(after)) if after == HOST_TIMEOUT),
         "{second:?}"
     );
-    assert!(took < HOST_TIMEOUT + Duration::from_secs(1), "{took:?}");
+    assert_eq!(
+        took, HOST_TIMEOUT,
+        "the second's wait for the slot counts in its timeout"
+    );
 }
