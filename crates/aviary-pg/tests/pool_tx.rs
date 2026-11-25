@@ -459,3 +459,59 @@ async fn a_test_database_is_dropped_with_its_guard() {
     drop(db);
     assert!(!common::database_exists(&name).await);
 }
+
+/// `Pool::counts`: every statement (a `Conn`'s or a transaction's) and every committed transaction, through every
+/// clone of the pool; a rolled-back transaction's statements count, the transaction does not.
+#[tokio::test]
+async fn the_pool_counts_its_statements_and_committed_transactions() {
+    let url = common::fresh_db("counts").await;
+    let pool = common::pool(&url, "counts-test");
+    let start = pool.counts();
+    let conn = pool.get().await.unwrap();
+    conn.batch_execute("create table c (id int primary key)").await.unwrap();
+    conn.execute("insert into c values (1)", &[]).await.unwrap();
+    drop(conn);
+    assert_eq!(
+        pool.counts() - start,
+        aviary_pg::Counts {
+            statements: 2,
+            transactions: 0,
+            rows: 0
+        }
+    );
+
+    let clone = pool.clone();
+    let before = pool.counts();
+    aviary_pg::tx!(&clone, |t| {
+        t.execute("insert into c values (2)", &[]).await?;
+        t.query("select id from c", &[]).await?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    // the select returns both rows
+    assert_eq!(
+        pool.counts() - before,
+        aviary_pg::Counts {
+            statements: 2,
+            transactions: 1,
+            rows: 2
+        }
+    );
+
+    let before = pool.counts();
+    let out = aviary_pg::tx!(&pool, |t| -> Result<(), Mine> {
+        t.execute("insert into c values (3)", &[]).await?;
+        Err(Mine::Refused)
+    })
+    .await;
+    assert!(matches!(out, Err(Mine::Refused)));
+    assert_eq!(
+        pool.counts() - before,
+        aviary_pg::Counts {
+            statements: 1,
+            transactions: 0,
+            rows: 0
+        }
+    );
+}

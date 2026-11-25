@@ -36,11 +36,12 @@ use super::{State, Turn, load, secs, start_turn_status};
 use crate::error::Result;
 use crate::limits;
 
-/// Starts the sweeper loop of this replica.
+/// Starts the sweeper loop of this replica: a pass every `every` ([`limits::SWEEP_EVERY`] in production), the first
+/// one `every` after the start.
 #[must_use]
-pub fn start(d: Driver) -> JoinHandle<()> {
+pub fn start(d: Driver, every: std::time::Duration) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(limits::SWEEP_EVERY);
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;

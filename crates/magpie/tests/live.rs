@@ -233,11 +233,16 @@ async fn frames_build_the_live_state_and_the_durable_row_supersedes_them() {
                 .unwrap()
         })
     };
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let sent = Instant::now();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || w.a.app().fanout.held() >= 1).await,
+        "the poll is held"
+    );
     w.send(w.turn, vec![start(6, 1), delta(7, 1, 0, "next")]).await.unwrap();
-    let p = poll.await.unwrap();
-    assert!(sent.elapsed() < Duration::from_secs(1));
+    // the poll waits 20 s: answered within 15 s is the frame's wake-up
+    let p = tokio::time::timeout(Duration::from_secs(15), poll)
+        .await
+        .unwrap_or_else(|_| panic!("the frame wakes the poll"))
+        .unwrap();
     let l = p.live.unwrap();
     assert_eq!(l.blocks.len(), 1);
     assert_eq!((l.blocks[0].block_index, l.blocks[0].text.as_str()), (1, "next"));
