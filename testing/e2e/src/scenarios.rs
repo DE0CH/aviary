@@ -1155,9 +1155,12 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
             .collect();
         Ok::<_, anyhow::Error>(hosts)
     };
-    let first = eventually("hermit's first snapshot", Duration::from_secs(60), Duration::from_secs(1), || async {
-        Ok(heard().await.ok().filter(|hs| !hs.is_empty()))
-    })
+    let first = eventually(
+        "hermit's first snapshot",
+        Duration::from_secs(60),
+        Duration::from_secs(1),
+        || async { Ok(heard().await.ok().filter(|hs| !hs.is_empty())) },
+    )
     .await?;
     eventually(
         "every host heard from after hermit's return",
