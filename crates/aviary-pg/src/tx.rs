@@ -47,6 +47,8 @@ pub type TxFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send +
 pub struct Tx<'env> {
     client: Option<Object>,
     pool: deadpool_postgres::Pool,
+    /// The pool's [`crate::Pool::counts`].
+    counts: std::sync::Arc<crate::pool::Counters>,
     /// Statements started so far.
     started: AtomicU32,
     /// A statement failed or was cancelled: the transaction may be aborted.
@@ -114,6 +116,7 @@ impl Tx<'_> {
 
     fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
         stmt::refuse_control(sql, true)?;
+        self.counts.statements.fetch_add(1, Ordering::Relaxed);
         let first = self.started.fetch_add(1, Ordering::SeqCst) == 0;
         Ok(StmtGuard::new(&self.doubt, first))
     }
@@ -151,8 +154,13 @@ impl Tx<'_> {
     /// # Errors
     /// When the query fails.
     pub async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query)
+        let rows: Vec<Row> = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query)
+        }
+        .await?;
+        self.counts.rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs one query that returns exactly one row.
@@ -160,8 +168,13 @@ impl Tx<'_> {
     /// # Errors
     /// When the query fails or does not return exactly one row.
     pub async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query_one)
+        let rows: Row = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query_one)
+        }
+        .await?;
+        self.counts.rows.fetch_add(1, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs one query that returns at most one row.
@@ -169,8 +182,15 @@ impl Tx<'_> {
     /// # Errors
     /// When the query fails or returns more than one row.
     pub async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query_opt)
+        let rows: Option<Row> = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query_opt)
+        }
+        .await?;
+        self.counts
+            .rows
+            .fetch_add(usize::from(rows.is_some()) as u64, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs statements without parameters (the simple query protocol).
@@ -296,6 +316,7 @@ where
     let tx = Tx {
         client: Some(client),
         pool: pool.deadpool().clone(),
+        counts: pool.counters().clone(),
         started: AtomicU32::new(0),
         doubt: AtomicBool::new(false),
         lost: AtomicBool::new(false),
@@ -318,9 +339,12 @@ where
         Err(_) => return (Err(tx.timed_out().await.into()), false),
     }
     match f(&tx).await {
-        Ok(v) => match tx.commit().await {
-            Ok(()) => (Ok(v), false),
-            Err((e, again)) => (Err(e.into()), again),
+        Ok(v) => match (tx.counts.clone(), tx.commit().await) {
+            (counts, Ok(())) => {
+                counts.transactions.fetch_add(1, Ordering::Relaxed);
+                (Ok(v), false)
+            }
+            (_, Err((e, again))) => (Err(e.into()), again),
         },
         Err(e) => {
             let again = tx.lost.load(Ordering::SeqCst);

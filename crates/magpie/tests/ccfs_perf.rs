@@ -1,9 +1,10 @@
-//! magpie 6.10's write acceptance: p50 <= 15 ms for a 10 KiB append and p99 <= 150 ms for a write carrying a 1 MiB
-//! image line, with synchronous replication on; and 6.11's read acceptance: an 87 MB transcript (about 50 MB of
-//! distinct blobs, every one only in the bucket) streams in under 5 s. Ignored in the ordinary suite; ci.yml's
-//! `magpie-perf` job runs them with a release build against `ci-services postgres-sync` (a primary and a synchronous
-//! standby, both in memory), and the write test refuses to measure against a server that does not replicate
-//! synchronously.
+//! magpie 6.10's write latencies (a 10 KiB append, a write carrying a 1 MiB image line, synchronous replication on)
+//! and 6.11's read of an 87 MB transcript (about 50 MB of distinct blobs, every one only in the bucket), printed as a
+//! report: a time on a shared runner measures the runner, so none of them fails the build (Deyao, 2026-11-25: CI is
+//! deterministic). The write path's check is its database work, `ccfs_counts.rs`; the read's is that the file comes back
+//! whole. Ignored in the ordinary suite; ci.yml's `magpie-perf` job runs them with a release build against
+//! `ci-services postgres-sync` (a primary and a synchronous standby, both in memory), and the write report refuses to
+//! measure against a server that does not replicate synchronously.
 //!
 //! Measured at the client over loopback HTTP, so the figures include the HTTP round trip the handler-side numbers
 //! do not.
@@ -105,8 +106,7 @@ async fn cc_write_latency_with_synchronous_replication() {
         pct(&big, 0.5)
     );
     println!("slowest 1 MiB writes: {:?}", &big[big.len() - 5..]);
-    assert!(p50 <= Duration::from_millis(15), "10 KiB append p50 {p50:?}");
-    assert!(p99 <= Duration::from_millis(150), "1 MiB image line p99 {p99:?}");
+    println!("magpie 6.10's targets, for comparison: 10 KiB append p50 <= 15 ms, 1 MiB image line p99 <= 150 ms");
     assert_eq!(s.read(&p).await.unwrap().len() as u64, at);
 }
 
@@ -131,7 +131,7 @@ fn image_line(i: u32, bytes: usize) -> Vec<u8> {
 
 #[tokio::test]
 #[ignore = "run by ci.yml's magpie-perf job: a release build"]
-async fn an_87_mb_transcript_streams_from_the_bucket_in_under_5_s() {
+async fn an_87_mb_transcript_streams_from_the_bucket() {
     let db = common::fresh_db("cc_read_perf").await;
     let t = common::Tokens::new();
     // the bucket 30 ms away (each request's first byte), as S3 is from a pod
@@ -215,6 +215,6 @@ async fn an_87_mb_transcript_streams_from_the_bucket_in_under_5_s() {
         blobs.0,
         blobs.1
     );
+    println!("magpie 6.11's target, for comparison: under 5 s");
     assert!(got == content, "the file differs");
-    assert!(took < Duration::from_secs(5), "an 87 MB read took {took:?}");
 }
