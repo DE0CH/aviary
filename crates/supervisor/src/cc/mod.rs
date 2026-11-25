@@ -50,6 +50,11 @@ pub trait Transcript: Send + Sync + 'static {
     fn set_main_transcript(&self, _path: Option<String>) {}
     /// A heartbeat magpie answered: the stuck rule's evidence that magpie answers other calls (9.5 item 4).
     fn heartbeat_ok(&self) {}
+    /// Whether the main transcript `path` (a path of the mount, [`crate::harness::main_transcript`]) is there: a
+    /// session with none has nothing to resume.
+    fn has(&self, _path: &str) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
 }
 
 /// The `~/.claude` layer of WP-22: the uuids of the lines magpie acknowledged come from its write path
@@ -105,6 +110,18 @@ impl Transcript for crate::fuse::FuseFs {
             blocked_writes: blocked,
             oldest_blocked_ms: oldest.map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
         }
+    }
+    fn has(&self, path: &str) -> BoxFuture<'_, bool> {
+        let p = self.mount().join(path);
+        Box::pin(async move {
+            // a stat through the mount (magpie's tree); a mount that does not answer is taken as having it, as
+            // before this check
+            let stat = tokio::task::spawn_blocking(move || p.try_exists());
+            match tokio::time::timeout(std::time::Duration::from_secs(10), stat).await {
+                Ok(Ok(Ok(there))) => there,
+                _ => true,
+            }
+        })
     }
     fn lease(&self) -> Option<Uuid> {
         self.remote().lease().map(|l| l.id)

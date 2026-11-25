@@ -3845,3 +3845,40 @@ fn a_result_that_is_a_model_error_ends_the_turn_with_the_models_code() {
     let e = result_error(&r("boom", None));
     assert_eq!((e.code, e.message.as_str()), (DataCode::RunError, "success: boom"));
 }
+
+/// The `~/.claude` layer of a sandbox whose conversation's earlier sandbox was lost before Claude Code's first
+/// transcript write: no session has a transcript.
+struct NoTranscripts;
+
+impl Transcript for NoTranscripts {
+    fn set_turn(&self, _turn: Option<Uuid>) {}
+    fn wait_stored(&self, _uuids: Vec<String>) -> BoxFuture<'_, crate::cc::Stored> {
+        Box::pin(async { crate::cc::Stored::All })
+    }
+    fn facts(&self) -> magpie_api::sandbox::CcFacts {
+        crate::cc::Stored0.facts()
+    }
+    fn has(&self, _path: &str) -> BoxFuture<'_, bool> {
+        Box::pin(async { false })
+    }
+}
+
+/// A turn that resumes a session magpie holds no transcript of starts that session anew: Claude Code refuses to
+/// resume it ("No conversation found"), and the conversation's every later turn would fail with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_session_with_no_transcript_starts_anew_instead_of_resuming() {
+    let w = world().await;
+    let sup = w
+        .attach_with(None, crate::start::Reattach::Nothing, Arc::new(NoTranscripts))
+        .await;
+    let session = Uuid::new_v4().to_string();
+    let (t, _) = w.turn_with("say:hello", Some(session.clone()), vec![], vec![]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    let spawns = w.spawns();
+    let last = spawns.last().unwrap();
+    assert!(
+        last.contains(&format!("--session-id {session}")) && !last.contains("--resume"),
+        "{spawns:#?}"
+    );
+    w.idle(&sup).await;
+}
