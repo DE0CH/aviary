@@ -1,4 +1,4 @@
-//! `chaos` (platform 6.2 `e2e-chaos`, nightly): two people send turns continuously while a chaos loop rolls pigeon,
+//! `chaos` (platform 6.1, ci.yml's `e2e-chaos` on every push): two people send turns continuously while a chaos loop rolls pigeon,
 //! magpie, hermit and the gateway in random order every 2-5 min and kills a random supervisor every 10 min. Passes
 //! when every turn completes (no `error` row, every reply's end in the timeline), every row is seen exactly once by
 //! each person's socket (reopened and resumed whenever a drain closes it), and every send is accepted within 180 s (a
@@ -18,10 +18,25 @@ use crate::{ALICE, Harness, PIGEON, TURN_MODEL};
 /// The reply every chaos turn gets.
 const DONE: &str = "Chaos turn done.";
 
-/// A random number below `n` (uuid v4's random bits: the driver needs no other source).
+/// The run's random state (splitmix64): seeded once per run from the scenario's seed (`chaos:<minutes>:<seed>`), else
+/// from a fresh uuid, and the seed printed, so a failing run's schedule (each pause, the order of the rollouts, which
+/// supervisor is killed) can be run again.
+static STATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn seed(given: Option<u64>) -> u64 {
+    let s = given.unwrap_or_else(|| u64::try_from(uuid::Uuid::new_v4().as_u128() >> 64).unwrap_or(0));
+    STATE.store(s, std::sync::atomic::Ordering::Relaxed);
+    s
+}
+
+/// A number below `n`, the next one from the seeded state.
 fn below(n: u64) -> u64 {
-    let b = uuid::Uuid::new_v4().as_u128();
-    u64::try_from(b % u128::from(n.max(1))).unwrap_or(0)
+    let mut z = STATE
+        .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
+        .wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) % n.max(1)
 }
 
 /// One person's conversation and socket.
@@ -128,7 +143,8 @@ impl Rider {
                 }
                 match (v["message"]["type"].as_str(), p["event"]["type"].as_str()) {
                     (Some("agent.timeline.replacement"), _) => bail!("a timeline replacement in a chaos run: {p}"),
-                    (Some("agent_stream"), Some("timeline")) => {
+                    // a row (live text, a timeline push without a seq, is none: it carries no epoch either)
+                    (Some("agent_stream"), Some("timeline")) if p["seq"].is_u64() => {
                         ensure!(
                             p["epoch"] == self.epoch,
                             "a row of epoch {} in {}",
@@ -297,7 +313,8 @@ async fn chaos_loop(h: &Harness, stop: Instant) -> anyhow::Result<Vec<String>> {
 }
 
 /// Runs the chaos scenario for `minutes`.
-pub async fn run(h: &Harness, minutes: u64) -> anyhow::Result<()> {
+pub async fn run(h: &Harness, minutes: u64, seed_given: Option<u64>) -> anyhow::Result<()> {
+    eprintln!("chaos: seed {} (chaos:{minutes}:<seed> runs this schedule again)", seed(seed_given));
     let m = marker("CHAOS");
     h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
                     "reply": [{"text": "Chaos turn."}, {"sleepMs": 15_000}, {"text": DONE}],
@@ -315,4 +332,18 @@ pub async fn run(h: &Harness, minutes: u64) -> anyhow::Result<()> {
     eprintln!("chaos: {alice}");
     eprintln!("chaos: {bob}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_seed_repeats_its_schedule() {
+        super::seed(Some(42));
+        let a: Vec<u64> = (0..16).map(|_| super::below(1000)).collect();
+        super::seed(Some(42));
+        let b: Vec<u64> = (0..16).map(|_| super::below(1000)).collect();
+        assert_eq!(a, b);
+        assert!(a.iter().any(|&x| x != a[0]), "{a:?}");
+        assert!(a.iter().all(|&x| x < 1000));
+    }
 }

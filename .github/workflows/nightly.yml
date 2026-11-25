@@ -8,9 +8,6 @@ on:
     - cron: "0 18 * * *"
   workflow_dispatch:
     inputs:
-      chaos_minutes:
-        description: e2e-chaos length in minutes (platform 6.2 says 60)
-        default: "60"
       soak_seconds:
         description: supervisor-soak length in seconds (platform 6.2 says 5 h)
         default: "18000"
@@ -96,40 +93,6 @@ jobs:
           cargo deny --locked check advisories 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || code=$?
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
-
-  e2e-chaos:
-    # platform 6.2: the harness for 60 min with two people sending turns continuously while pigeon, magpie, hermit and
-    # the gateway roll in random order every 2-5 min and a random supervisor is killed every 10 min (the driver's
-    # `chaos` scenario, testing/e2e/src/scenarios/chaos.rs)
-    needs: release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    env:
-      CHAOS_MINUTES: ${{ inputs.chaos_minutes || '60' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release.outputs.sha }}
-      - run: .github/ci/e2e-tools.sh
-      - run: .github/ci/release-images.sh "${{ needs.release.outputs.sha12 }}"
-      - name: up
-        run: |
-          s=${{ needs.release.outputs.sha12 }}
-          timeout 1500 testing/e2e/run.sh up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
-      - name: chaos
-        run: E2E_DRIVER_SECONDS=$((CHAOS_MINUTES * 60 + 1200)) timeout $((CHAOS_MINUTES * 60 + 1500)) testing/e2e/run.sh test "chaos:$CHAOS_MINUTES"
-      - name: artifacts
-        if: failure()
-        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: failure()
-        with:
-          name: e2e-chaos
-          path: ${{ runner.temp }}/e2e/
-          if-no-files-found: warn
-      - name: down
-        if: always()
-        run: timeout 300 testing/e2e/run.sh down
 
   claude-code-gate:
     # supervisor spec 22 / magpie 20, the Claude Code release gate: the harness's real-binary scenarios (`cc`: a

@@ -694,6 +694,49 @@ jobs:
         if: always()
         run: timeout 300 testing/e2e/run.sh down
 
+  e2e-chaos:
+    # the harness for 60 min with two people sending turns continuously while pigeon, magpie, hermit and the gateway
+    # roll in a random order every 2-5 min and a random supervisor is killed every 10 min (the driver's `chaos` scenario,
+    # testing/e2e/src/scenarios/chaos.rs). On every push, as every other check (Deyao, 2026-11-25: in the nightly it broke
+    # unseen for two weeks); the run prints its seed, and `chaos:<minutes>:<seed>` runs the same schedule again
+    needs: [build, images, tags]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      SHA12: ${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-services
+          path: ${{ runner.temp }}/images
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images
+      - name: k3d 5.8.3 and juicefs 1.4.1 (sha256-checked)
+        run: .github/ci/e2e-tools.sh
+      - name: load the images, removing each tar (the disk would hold every image three times)
+        run: for t in "$RUNNER_TEMP"/images/*.tar; do docker load -i "$t" && rm -f "$t"; done; df -h / | tail -1
+      - name: up
+        run: |
+          s=$SHA12
+          timeout 1500 testing/e2e/run.sh up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
+      - name: chaos (60 min)
+        run: E2E_DRIVER_SECONDS=4800 timeout 5100 testing/e2e/run.sh test chaos:60
+      - name: artifacts
+        if: failure()
+        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e-chaos
+          path: ${{ runner.temp }}/e2e/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: timeout 300 testing/e2e/run.sh down
+
   publish:
     # platform 6.1 `publish` and 5.4 (WP-28): every pushed branch, after every gate. Pushes each image as <name>:<sha12>
     # (never `latest`; sha12 = the part's last commit, docs/DEPLOY.md) with a build-provenance attestation, then the
@@ -702,7 +745,7 @@ jobs:
     # A run started by workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push
     # that starts no workflow) and dispatches this workflow on main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
+    needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e, e2e-chaos]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
