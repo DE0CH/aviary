@@ -863,7 +863,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 - **Goal**: k3d harness with the real pigeon, magpie and hermit images, the real sandbox image as Pods created by
   `fake-sandboxd`, the reference gateway, mock model, fake tools and fake Access; scenarios E1-E24 gating every
   image push; images, labels, the `aviary-<sha12>` release, `nightly.yml` (soaks, Claude Code release gate).
-- **Paths**: `testing/fake-sandboxd`, `testing/e2e` (k3d config, manifests, `gen.sh`, driver crate `aviary-e2e`),
+- **Paths**: `testing/fake-sandboxd`, `testing/e2e` (k3d config, manifests, driver crate `aviary-e2e`), `testing/e2e-harness`,
   `.github/workflows/{ci.yml,nightly.yml}`, `images/*`.
 - **Inputs**: platform 5, 6, 7; supervisor 22 soak and `claude-code-gate`; every service package.
 - **Acceptance**: E1-E24 green on `main`; artefacts on failure (logs, events, admin dumps, frame log); images pushed

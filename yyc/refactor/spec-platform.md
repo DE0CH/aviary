@@ -658,7 +658,7 @@ are Deyao's own code and take the repo's licence.
 
 The repo is public. It holds no keys, no tokens, no store layouts and no private names beyond what DE0CH/YYC already
 publishes (YYC's own values live in DE0CH/YYC, not here). The harness generates its PKI, tokens and Access keys at run
-time (`testing/e2e/gen.sh`, output in the runner's temp dir, never committed). A CI job runs `gitleaks detect` on every
+time (`testing/e2e-harness`, output in the runner's temp dir, never committed). A CI job runs `gitleaks detect` on every
 push.
 
 ---
@@ -777,7 +777,7 @@ supply-chain hygiene), refreshed by the `deps` job's report.
 Purpose: run the real turn path (app protocol → pigeon → magpie → hermit → supervisor in the real sandbox image →
 Claude Code → gateway → model) on one GitHub runner, with real Postgres, a real S3, real JuiceFS for `/workspace`, real
 NetworkPolicies and real rollouts, no cloud account and no model cost. The same harness runs on a laptop
-(`testing/e2e/run.sh`, Docker + k3d).
+(`testing/e2e-harness`, Docker + k3d).
 
 ### 7.1 Topology
 
@@ -802,7 +802,7 @@ runner host
       driver Job        aviary-e2e (Rust) + paseo-contract (Node)
 ```
 
-Everything is created by `testing/e2e/run.sh up` from `testing/e2e/k8s/` (plain YAML plus a generated
+Everything is created by `e2e-harness up` from `testing/e2e/k8s/` (plain YAML plus a generated
 `secrets.yaml`), images imported with `k3d image import`. Tokens, PKI (`fabric/host/make-certs.sh` into the temp dir)
 and the Access key pair are generated per run.
 

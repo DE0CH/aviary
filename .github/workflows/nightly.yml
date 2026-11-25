@@ -114,6 +114,11 @@ jobs:
           ref: ${{ needs.release.outputs.sha }}
       - run: .github/ci/e2e-tools.sh
       - run: .github/ci/release-images.sh "${{ needs.release.outputs.sha12 }}"
+      - name: the harness (testing/e2e-harness)
+        run: |
+          rustup toolchain install
+          cargo build --locked --release -q -p aviary-e2e-harness
+          sudo install -m 755 target/release/e2e-harness /usr/local/bin/e2e-harness
       - name: the sandbox image with the newest Claude Code
         if: matrix.claude == 'newest'
         run: |
@@ -133,7 +138,7 @@ jobs:
         run: |
           s=${{ needs.release.outputs.sha12 }}
           if [ "${{ matrix.claude }}" = newest ]; then image=hermit-sandbox-newest:$s; else image=hermit-sandbox:$s; fi
-          .github/ci/claude-code-gate.sh "$s" "$image" "$RUNNER_TEMP/gate"
+          e2e-harness gate "$s" "$image" "$RUNNER_TEMP/gate"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -142,7 +147,7 @@ jobs:
           if-no-files-found: warn
       - name: artifacts
         if: failure()
-        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
+        run: timeout 300 e2e-harness artifacts "$RUNNER_TEMP/e2e"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -151,7 +156,7 @@ jobs:
           if-no-files-found: warn
       - name: down
         if: always()
-        run: timeout 300 testing/e2e/run.sh down
+        run: timeout 300 e2e-harness down
 
   claude-code-verdict:
     needs: [release, claude-code-gate]

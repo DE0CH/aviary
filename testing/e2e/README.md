@@ -3,16 +3,17 @@
 The real turn path on one machine: the app protocol into pigeon, magpie, hermit, the supervisor in the real sandbox
 image, Claude Code 2.1.325, the reference gateway and mock-model, with real Postgres, a real S3, real JuiceFS for
 `/workspace`, real NetworkPolicies and real rollouts. No cloud account, no model cost. ci.yml's `e2e` job runs it on
-every push; the same script runs on a laptop with Docker.
+every push; the same harness runs on a laptop with Docker.
 
 ```
-testing/e2e/run.sh up <pigeon> <magpie> <hermit> <aviary-testing> <hermit-sandbox>   # images by local tag
-testing/e2e/run.sh test [e1 e2 …]                                                      # the driver Job
-testing/e2e/run.sh artifacts <dir>                                                     # logs, events
-testing/e2e/run.sh down
+cargo build --release -p aviary-e2e-harness        # testing/e2e-harness; run it from the repository's root
+e2e-harness up <pigeon> <magpie> <hermit> <aviary-testing> <hermit-sandbox>   # images by local tag
+e2e-harness test [e1 e2 …]                                                      # the driver Job
+e2e-harness artifacts <dir>                                                     # logs, events
+e2e-harness down
 ```
 
-Needs docker, k3d 5.8.3, kubectl, jq, openssl, juicefs 1.4.1 and sudo (the FUSE mounts). Every wait has a bound.
+Needs docker, k3d 5.8.3, kubectl, openssl, juicefs 1.4.1 and sudo (the FUSE mounts). Every command has a bound and its exit status is read; a download or a pull is tried again. Images go into the node by `docker save | ctr import`, and the node is checked to have each.
 `E2E_PRELOAD=1` copies the cluster's own images (Calico's, k3s's) from the local Docker into the node, for a
 machine whose containers cannot pull (an IPv6-only build host).
 
@@ -31,7 +32,7 @@ machine whose containers cannot pull (an IPv6-only build host).
 | sandboxes | Pods of `hermit-sandbox` at the addresses hermit chose (10.52.128.0/17) | privileged (FUSE, Docker), `/workspace` from the hosts' mount, no DNS |
 | driver | Job `driver` of `aviary-testing` (`aviary-e2e`) | Paseo over `ws://pigeon/paseo-ws`, magpie's and hermit's admin routes, the Kubernetes API for probes |
 
-`gen.sh` makes every credential per run: pair tokens, hermit's token keys, the fabric PKI, the harness CA with
+The harness (`testing/e2e-harness/src/secrets.rs`) makes every credential per run: pair tokens, hermit's token keys, the fabric PKI, the harness CA with
 fake-access's and EC2's certificates, the Access RSA keys, `hermit.json` with the run's image digest.
 
 ## Where this differs from platform 7 (and why)
@@ -110,7 +111,7 @@ printed). `run.sh test` bounds the driver Job by `E2E_DRIVER_SECONDS` (default 2
 
 The `cc` scenario prints `cc-counts {"events": …, "rows": …}` (magpie's events by kind without the timing-dependent
 `sandbox.*` and the title, and the rows by kind). nightly.yml's `claude-code-gate` runs `cc`, `e21` and `e22` with the
-release's sandbox image and with its Claude Code replaced by the newest release (`.github/ci/claude-code-gate.sh`),
+release's sandbox image and with its Claude Code replaced by the newest release (`e2e-harness gate`),
 and `claude-code-verdict` fails on an `unclassified path` or an `unanswered opcode` (the supervisor's once-per-opcode
 log of what the mount refuses: ENOSYS, ENOTSUP, EOPNOTSUPP, and EPERM for LINK and MKNOD) that the pinned release did
 not log, or on any change in those counts.

@@ -277,6 +277,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviary-e2e-harness"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "aviary-fakes"
 version = "0.0.0"
 dependencies = [
