@@ -36,6 +36,8 @@ async fn run_seen(
     upstream_idle: std::time::Duration,
 ) -> (Report, Vec<test_gateway::Seen>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // the gateway's liveness cache on a clock the suite moves
+    let clock = aviary_core::clock::Clock::manual();
     let tokens = Tokens {
         gateway_to_magpie: token("magpie"),
         gateway_to_hermit: token("hermit"),
@@ -90,6 +92,7 @@ async fn run_seen(
         upload_cap: test_gateway::UPLOAD_CAP,
         upstream_idle,
         faults,
+        clock: clock.clone(),
     };
     let mut registry = prometheus_client::registry::Registry::default();
     let running: Arc<Running> = Arc::new(test_gateway::start(cfg, &mut registry).await.unwrap());
@@ -110,6 +113,7 @@ async fn run_seen(
             })
         })),
         durations: Durations::quick(),
+        clock: Some(clock),
     };
     let report = Report::new("gateway", only.iter().map(|s| (*s).to_owned()).collect(), true);
     gateway::run(o, fakes, &report).await;

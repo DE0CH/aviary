@@ -356,7 +356,13 @@ async fn readiness_waits_for_migrations_and_listen() {
         let draining = drain.draining();
         tokio::spawn(async move { magpie::app::Service::start(cfg, &readiness, draining).await })
     };
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        common::eventually(Duration::from_secs(30), async || readiness
+            .why()
+            .contains(&"listen".to_owned()))
+        .await,
+        "the start is waiting for the database"
+    );
     assert!(
         readiness.why().contains(&"migrations".to_owned()),
         "{:?}",

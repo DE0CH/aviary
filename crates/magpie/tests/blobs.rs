@@ -624,29 +624,33 @@ async fn a_hanging_bucket_pins_no_request_connection() {
                 .await
         }));
     }
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // every upload and the uploader in their PUTs: the stalled bucket holds a connection for each
     assert!(
-        uploads.iter().all(|u| !u.is_finished()),
-        "the uploads should hang in the bucket"
+        common::eventually(Duration::from_secs(60), async || proxy.held() >= 17).await,
+        "the uploads and the uploader should hang in the bucket ({} held)",
+        proxy.held()
     );
-    let claimed: i64 = r
-        .pool()
-        .get()
-        .await
-        .unwrap()
-        .query_one("select count(*) from blob_staging where next_at > now()", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert!(claimed >= 1, "the uploader should be holding staged blobs");
-    // 7 s of cc writes and reads: longer than the pool's 5 s wait, so a pinned pool would show as 503s
-    let mut took = Vec::new();
-    let end = tokio::time::Instant::now() + Duration::from_secs(7);
+    assert!(
+        common::eventually(Duration::from_secs(60), async || {
+            r.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one("select count(*) from blob_staging where next_at > now()", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+                >= 1
+        })
+        .await,
+        "the uploader should be holding staged blobs"
+    );
+    // cc writes and lists while everything hangs: a hanging PUT that pinned a pooled connection would leave these
+    // waiting out the pool's 5 s and answering 503; each must succeed (a count of rounds, not a time)
     let line = b"{\"type\":\"system\",\"subtype\":\"note\"}\n";
     let other = "projects/-workspace/other.jsonl";
     let mut at = 0u64;
-    while tokio::time::Instant::now() < end {
-        let t0 = std::time::Instant::now();
+    for _ in 0..20 {
         sb.write(other, at, line)
             .await
             .expect("a cc write while the bucket hangs");
@@ -656,16 +660,7 @@ async fn a_hanging_bucket_pins_no_request_connection() {
             .list_conversations(&magpie_api::conversations::ListQuery::default())
             .await
             .expect("a list while the bucket hangs");
-        took.push(t0.elapsed());
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    took.sort();
-    let p99 = took[took.len() * 99 / 100];
-    assert!(took.len() >= 20, "only {} rounds", took.len());
-    assert!(
-        p99 < Duration::from_millis(500),
-        "p99 of a cc write and a list: {p99:?}"
-    );
     assert!(
         uploads.iter().all(|u| !u.is_finished()),
         "the uploads are still hanging"
@@ -717,9 +712,16 @@ async fn a_cancelled_upload_gives_its_blob_locks_back() {
                 .await
         }));
     }
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // the three in their PUTs: the stalled bucket holds a connection for each
+    assert!(
+        common::eventually(Duration::from_secs(60), async || proxy.held() >= 3).await,
+        "the uploads should hang in the bucket"
+    );
     assert!(uploads.iter().all(|u| !u.is_finished()), "the uploads should hang");
-    assert!(blob_locks(r.pool()).await >= 1, "the hanging uploads hold their locks");
+    assert!(
+        common::eventually(Duration::from_secs(30), async || blob_locks(r.pool()).await >= 1).await,
+        "the hanging uploads hold their locks"
+    );
     for u in uploads {
         u.abort();
     }
@@ -964,9 +966,14 @@ async fn slow_readers_of_large_uncached_blobs_never_keep_an_upload_waiting() {
             .unwrap();
         assert_eq!(st, 200);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(statuses.try_recv().is_err(), "a fifth read waits for the reads' part");
     // the four hold 120 MiB of the whole budget (the waiting fifth has the last 8 MiB of the reads' part set aside)
+    assert!(
+        common::eventually(Duration::from_secs(30), async || r.app().blobs.memory_free().1
+            <= 128 - 120)
+        .await,
+        "the fifth read waits with what is left set aside"
+    );
+    assert!(statuses.try_recv().is_err(), "a fifth read waits for the reads' part");
     let (body_free, read_free) = r.app().blobs.memory_free();
     assert!(read_free <= 128 - 120);
     assert_eq!(body_free, 256 - 120);

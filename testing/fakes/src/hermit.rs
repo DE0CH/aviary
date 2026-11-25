@@ -489,6 +489,12 @@ impl FakeHermit {
         }
     }
 
+    /// The feed's head: the seq of the newest event (0 before any).
+    #[must_use]
+    pub fn head_seq(&self) -> u64 {
+        self.lock().next_seq - 1
+    }
+
     /// Drop every feed event with `seq < seq` (retention): an `after` older than that answers 410.
     pub fn expire_events_before(&self, seq: u64) {
         let mut m = self.lock();

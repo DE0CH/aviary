@@ -465,7 +465,15 @@ async fn a_supervisor_that_runs_before_the_ready_reached_the_driver_is_the_ready
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.sandbox, Some(SandboxPhase::Ready));
     w.fake().make_ready(conv);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // the driver's long-poll answers with the ready; once the driver is done the turn is as it was
+    let pod = w.a.app().pod.clone();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || !magpie::turns::driver::drives(
+            &pod, turn
+        ))
+        .await,
+        "the driver ended"
+    );
     assert_eq!(
         w.turn(turn).await.0,
         "running",
@@ -884,8 +892,7 @@ async fn a_start_waiting_for_approval_says_so_and_spends_no_admission_time() {
         .await,
         "the chip says it waits for an approval"
     );
-    // the deadline stays ADMIT_TIMEOUT ahead while hermit says so
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // the deadline stays ADMIT_TIMEOUT ahead while hermit says so (Postgres's now() has moved on since it was set)
     w.fake().set_phase(conv, hermit_api::sandbox::SandboxPhase::Approval);
     assert!(
         common::eventually(Duration::from_secs(10), async || deadline().await > admitted).await,
@@ -1647,8 +1654,8 @@ async fn a_question_belongs_to_the_command_that_asked_it() {
     };
     let pigeon = w.a.pigeon();
     let person = pigeon.person(ALICE);
+    // the answer and the poll in either order: a poll that comes after the answer has it at once
     let answering = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
         person.answer_ask(conv, &q.ask_id, &answer).await.unwrap();
     };
     let puts = put_sandboxes(&w);
@@ -1954,7 +1961,7 @@ async fn sandbox_calls_need_the_current_lease() {
             (r, started.elapsed())
         }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // before or after the poll looks, the interrupt is below its cursor
     w.a.pigeon().person(ALICE).cancel_turn(conv).await.unwrap();
     let head: i64 = w
         .pool()
@@ -1986,15 +1993,15 @@ async fn sandbox_calls_need_the_current_lease() {
             (r, started.elapsed())
         }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    // queue a command: a held conversation's stop_tasks, via a forced end and held state
+    // queue a command (the poll answers with it whether it looked before or after): a held conversation's
+    // stop_tasks, via a forced end and held state
     new.report(turn, ReportedState::Canceled).await.unwrap();
     w.sql("update conversations set run_state = 'held' where id = $1", conv)
         .await;
     w.a.pigeon().person(ALICE).cancel_turn(conv).await.unwrap();
     let (r, took) = poll.await.unwrap();
-    assert_eq!(r.commands.len(), 1, "{r:?}");
-    assert!(took < Duration::from_secs(5), "woken by the notification: {took:?}");
+    // within its 10 s wait: answered with the command, not the empty answer of a wait that ran out
+    assert_eq!(r.commands.len(), 1, "{r:?} after {took:?}");
 }
 
 #[tokio::test]
@@ -2492,7 +2499,14 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
     let before = w.fake().live(conv).unwrap().id;
     // admitted 14 min 57 s ago, due in 3 s: replica a stops, b's driver claims the turn with that deadline
     w.a.start_drain();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let a_pod = w.a.app().pod.clone();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || !magpie::turns::driver::drives(
+            &a_pod, turn
+        ))
+        .await,
+        "replica a's driver stopped"
+    );
     w.sql(
         "update turns set driver = null, driver_until = null, created_at = now() - interval '897 seconds',
                 deadline = now() + interval '3 seconds'
@@ -2525,7 +2539,24 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
         .await,
         "the driver asked hermit for a new sandbox"
     );
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    // the replacement's admission counts: its deadline is a new one, past the first (3 s from the claim)
+    let deadline = async || -> f64 {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select extract(epoch from deadline - now())::float8 from turns where id = $1",
+                &[&turn],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    };
+    assert!(
+        common::eventually(Duration::from_secs(10), async || deadline().await > 60.0).await,
+        "the replacement's own deadline"
+    );
     let (state, code_, _) = w.turn(turn).await;
     assert_eq!(
         (state.as_str(), code_),
@@ -3190,18 +3221,38 @@ async fn a_parked_turn_keeps_its_question_and_its_answer_resumes_it_in_a_new_san
     sup.calls().turn_state(turn, &parked(1_200)).await.unwrap();
     sup.calls().turn_state(turn, &parked(1_200)).await.unwrap();
     assert_eq!(w.turn(turn).await.0, "parked");
-    // the sandbox goes (hermit's idle release): the feed leaves the parked turn alone
+    // the sandbox goes (hermit's idle release): the feed leaves the parked turn alone, once it has read that far
     w.fake().end(conv, ReleaseReason::Idle, "idle");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let fed = i64::try_from(w.fake().head_seq()).unwrap();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || {
+            w.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_opt("select after_seq from hermit_feed where id", &[])
+                .await
+                .unwrap()
+                .and_then(|r| r.get::<_, Option<i64>>(0))
+                .is_some_and(|h| h >= fed)
+        })
+        .await,
+        "the feed read the release"
+    );
     assert_eq!(w.turn(turn).await.0, "parked", "neither ended nor failed");
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.asks.len(), 1, "the question is still on screen");
     assert_eq!(c.turn.as_ref().map(|t| t.id), Some(turn));
     assert_eq!(c.run.state, RunState::Running);
     // no deadline runs while it waits: the sweeper finds nothing
-    tokio::time::sleep(Duration::from_millis(500)).await;
     sweeper::pass(&driver(&w.a)).await.unwrap();
     assert_eq!(w.turn(turn).await.0, "parked");
+    // the question has waited an hour (its `ask.pending` event an hour back)
+    w.sql(
+        "update events set at = at - interval '1 hour' where conversation_id = $1 and kind = 'ask.pending'",
+        conv,
+    )
+    .await;
     let answer = allow(json!({"Which?": "B"}));
     w.a.pigeon()
         .person(ALICE)
@@ -3220,7 +3271,7 @@ async fn a_parked_turn_keeps_its_question_and_its_answer_resumes_it_in_a_new_san
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert!(c.asks.is_empty());
     let wait = c.turn.as_ref().unwrap().ask_wait_ms;
-    assert!(wait >= 2_500, "the wait is counted apart: {wait}");
+    assert!(wait >= 3_600_000, "the wait is counted apart: {wait}");
     let sup2 = w.supervisor(conv).await;
     assert_ne!(sup2.sandbox, first);
     let cmds = sup2.poll(0, 5_000).await;

@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         upload_cap: test_gateway::UPLOAD_CAP,
         upstream_idle: gateway_api::limits::IDLE_TIMEOUT,
         faults: test_gateway::Faults::default(),
+        clock: aviary_core::clock::Clock::real(),
     };
     let running = std::sync::Arc::new(test_gateway::start(cfg, &mut registry).await?);
     let ops = ops::Ops::new(build, registry);

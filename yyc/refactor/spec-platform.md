@@ -749,7 +749,8 @@ permissions: contents read (jobs that publish ask for packages: write, contents:
 | `sandbox-smoke` | images | `images/sandbox/smoke.sh` against the built sandbox image under runc: hermit spec 17's list plus supervisor spec 22's image checks (keeper refuses to start without its token with the stated message; `claude` resolves to `/opt/claude-code/bin/claude`, root-owned; a test gateway sees Claude Code's model and MCP calls as proxied `http://model/…`, `http://tools/mcp`) | 8 min |
 | `gvisor` | images | installs `runsc` from DE0CH/gvisor release `precopy-20261021.2` (sha256-checked) as a Docker runtime and runs the sandbox image under it with `/dev/fuse`: the supervisor mounts `~/.claude`, a scripted turn against mock-model writes its transcript through FUSE into a test magpie, bytes compared (supervisor spec 22 items 1, 2, 4, 5 that need no AWS host) | 12 min |
 | `e2e` | images | the harness, section 7 (all scenarios in 7.8) | 25 min |
-| `publish` | lint, test, sandboxd-soak, sandbox-smoke, gvisor, e2e; **main only** | pushes every image tar as `<name>:<sha12>` (never `latest`), `actions/attest-build-provenance` for each digest, then the release of 5.4; writes the digests to the job summary and says whether `dev.de0ch.aviary.supervisor` changed against the previous main commit's sandbox image | 5 min |
+| `e2e-chaos` | images | the harness for 60 min with two drivers sending turns continuously while a chaos loop rolls pigeon, magpie, hermit and the gateway in random order every 2-5 min and kills a random supervisor every 10 min (seeded; the seed is printed and `chaos:<minutes>:<seed>` repeats the schedule); gate: every turn ends `completed`, every row seen exactly once by every socket, every send accepted within 180 s. On every push (Deyao, 2026-11-25) | 75 min |
+| `publish` | lint, test, sandboxd-soak, sandbox-smoke, gvisor, e2e, e2e-chaos; **main only** | pushes every image tar as `<name>:<sha12>` (never `latest`), `actions/attest-build-provenance` for each digest, then the release of 5.4; writes the digests to the job summary and says whether `dev.de0ch.aviary.supervisor` changed against the previous main commit's sandbox image | 5 min |
 
 Never cancelled on `main` (a half-published set would leave a tag without its release). A failed gate means nothing of
 that commit is published: every tag that exists has passed the harness, so YYC can pin any existing tag.
@@ -759,7 +760,6 @@ that commit is published: every tag that exists has passed the harness, so YYC c
 | Job | What | Bound |
 |---|---|---|
 | `supervisor-soak` | supervisor spec 22's soak, run for 5 h (the hosted-runner limit is 6 h): synthetic turns with 1 MiB lines, random supervisor kills, fake-magpie outages of 1 s to 10 min, a full scratch disk; gates RSS flat under 64 MiB, no lost or duplicated transcript bytes, no hung FUSE request | 5 h 30 |
-| `e2e-chaos` | the harness for 60 min with two drivers sending turns continuously while a chaos loop rolls pigeon, magpie, hermit and the gateway in random order every 2-5 min and kills a random supervisor every 10 min; gate: every turn ends `completed` (or `canceled` when the driver stopped it), every row seen exactly once by every socket, no 5xx other than the documented `unavailable` with `retry-after` | 75 min |
 | `deps` | `cargo update --dry-run` report and `cargo deny check advisories` against today's database; opens nothing automatically, writes the summary | 5 min |
 
 Public repository: hosted-runner minutes are free; no self-hosted runner is needed.
