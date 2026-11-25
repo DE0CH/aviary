@@ -719,6 +719,20 @@ async fn turn_end_kind(ws: &mut Ws, id: &str, within: Duration) -> anyhow::Resul
     Ok(end["message"]["payload"]["event"].clone())
 }
 
+/// Waits until the turn's first text (a slow reply's head) is on the socket: the turn is in its pause.
+async fn in_the_pause(ws: &mut Ws, id: &str) -> anyhow::Result<()> {
+    let id2 = id.to_owned();
+    ws.wait_for("the reply's first text", TURN_WAIT, move |v| {
+        let p = &v["message"]["payload"];
+        v["message"]["type"] == "agent_stream"
+            && p["agentId"] == id2.as_str()
+            && p["event"]["type"] == "timeline"
+            && p["event"]["item"]["type"] == "assistant_message"
+    })
+    .await?;
+    Ok(())
+}
+
 /// A slow reply: `head`, a pause of `ms`, then `tail`.
 fn slow(m: &str, ms: u64, times: u32) -> Value {
     json!({"match": {"textContains": m, "model": TURN_MODEL},
@@ -761,7 +775,7 @@ async fn e8(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Take a minute ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             let asked = Instant::now();
             let (kind, p) = ws.rpc("cancel_agent_request", json!({"agentId": id})).await?;
             ensure!(
@@ -803,7 +817,7 @@ async fn e10(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Survive a restart ({m})")).await?;
             let pod = sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(6)).await;
+            in_the_pause(&mut ws, &id).await?;
             let (ok, out) = h.exec(&pod, &["sh", "-c", "kill -9 $(pidof supervisor)"]).await?;
             ensure!(ok, "kill -9 the supervisor: {out}");
             let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
@@ -839,7 +853,19 @@ async fn e11(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Lose the computer ({m})")).await?;
             let pod = sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
+            // the person's message is in magpie's transcript (what the next sandbox resumes): a sandbox lost before
+            // that leaves nothing to resume
+            eventually(
+                "the message in the transcript",
+                Duration::from_secs(60),
+                Duration::from_millis(500),
+                || async {
+                    let lines = transcript(h, &pod, &id).await.unwrap_or_default();
+                    Ok(lines.iter().any(|l| l["type"] == "user").then_some(()))
+                },
+            )
+            .await?;
             let deleted = Instant::now();
             h.delete_pod(&pod, 0).await?;
             let end = turn_end_kind(&mut ws, &id, Duration::from_secs(40)).await?;
@@ -1104,7 +1130,7 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Outlive hermit ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             scale(h, "hermit", 0).await?;
             let down = Instant::now();
             let end = turn_end_kind(&mut ws, &id, Duration::from_secs(240)).await;
@@ -1140,9 +1166,38 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
     )
     .await?;
     // a start right after hermit's return fails `hosts_full` until the hosts' next heartbeat (every host looks dead
-    // after an outage longer than hostDeadSeconds): the next scenario waits for that
-    tokio::time::sleep(Duration::from_secs(20)).await;
-    Ok(())
+    // after an outage longer than hostDeadSeconds): the next scenario waits until every host has been heard from
+    // since hermit's first answer
+    let heard = || async {
+        let v: Value = h.hermit_monitor("/ops/snapshot")?.send().await?.json().await?;
+        let hosts: Vec<(String, String)> = v["hosts"]["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|x| (x["name"].as_str().unwrap_or("").to_owned(), x["lastSeenAt"].to_string()))
+            .collect();
+        Ok::<_, anyhow::Error>(hosts)
+    };
+    let first = eventually(
+        "hermit's first snapshot",
+        Duration::from_secs(60),
+        Duration::from_secs(1),
+        || async { Ok(heard().await.ok().filter(|hs| !hs.is_empty())) },
+    )
+    .await?;
+    eventually(
+        "every host heard from after hermit's return",
+        Duration::from_secs(120),
+        Duration::from_secs(1),
+        || async {
+            let now = heard().await?;
+            Ok(now
+                .iter()
+                .all(|(n, at)| first.iter().find(|(m, _)| m == n).is_none_or(|(_, a)| a != at))
+                .then_some(()))
+        },
+    )
+    .await
 }
 
 /// One page of `fetch_agent_timeline_request`.
@@ -1845,7 +1900,7 @@ async fn e23(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Through a gateway drain ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             let pods = kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(h.kube.clone(), crate::NS)
                 .list(&kube::api::ListParams::default().labels("app=test-gateway"))
                 .await?;
