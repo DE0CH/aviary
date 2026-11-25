@@ -128,7 +128,7 @@ impl LocalServer for Local {
             let hold = q
                 .wait_ms
                 .map_or(max, |ms| std::time::Duration::from_millis(u64::from(ms)).min(max));
-            tokio::time::sleep(hold).await;
+            self.agent.clock().sleep(hold).await;
         }
         Ok(())
     }
@@ -189,7 +189,10 @@ impl Local {
                 Err(e) => {
                     tracing::warn!(key, error = %e, attempt, "a person wait's outcome did not reach magpie");
                     if attempt < 4 {
-                        tokio::time::sleep(std::time::Duration::from_secs(1u64 << attempt)).await;
+                        self.agent
+                            .clock()
+                            .sleep(std::time::Duration::from_secs(1u64 << attempt))
+                            .await;
                     }
                 }
             }

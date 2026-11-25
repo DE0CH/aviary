@@ -14,6 +14,18 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
+/// A [`Clock::timeout`] that ran out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Elapsed;
+
+impl fmt::Display for Elapsed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("deadline has elapsed")
+    }
+}
+
+impl std::error::Error for Elapsed {}
+
 /// A service's clock: cheap to clone, every clone the same clock.
 #[derive(Clone)]
 pub struct Clock(Arc<Kind>);
@@ -118,6 +130,27 @@ impl Clock {
         self.sleep_until(at).await;
     }
 
+    /// `f`, unless the clock reads `at` first (`Err`).
+    ///
+    /// # Errors
+    /// The clock reached `at` before `f` finished.
+    pub async fn timeout_at<F: std::future::Future>(&self, at: Instant, f: F) -> Result<F::Output, Elapsed> {
+        tokio::select! {
+            biased;
+            r = f => Ok(r),
+            () = self.sleep_until(at) => Err(Elapsed),
+        }
+    }
+
+    /// `f`, unless `d` of this clock's time passes first (`Err`).
+    ///
+    /// # Errors
+    /// `d` passed before `f` finished.
+    pub async fn timeout<F: std::future::Future>(&self, d: Duration, f: F) -> Result<F::Output, Elapsed> {
+        let at = self.now() + d;
+        self.timeout_at(at, f).await
+    }
+
     /// Moves a manual clock forward by `d`, waking everything whose time has come.
     ///
     /// # Panics
@@ -176,6 +209,36 @@ mod tests {
         c.advance(Duration::from_secs(1));
         c.sleep_until(at).await;
         c.sleep(Duration::ZERO).await;
+    }
+
+    #[tokio::test]
+    async fn a_timeout_ends_only_when_the_clock_says() {
+        let c = Clock::manual();
+        let (tx, rx) = tokio::sync::oneshot::channel::<u8>();
+        let waiting = tokio::spawn({
+            let c = c.clone();
+            async move { c.timeout(Duration::from_secs(5), rx).await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        c.advance(Duration::from_secs(4));
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!waiting.is_finished());
+        tx.send(7).unwrap();
+        assert_eq!(waiting.await.unwrap().unwrap().unwrap(), 7);
+        let (_tx, rx) = tokio::sync::oneshot::channel::<u8>();
+        let late = tokio::spawn({
+            let c = c.clone();
+            async move { c.timeout(Duration::from_secs(5), rx).await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        c.advance(Duration::from_secs(5));
+        assert!(late.await.unwrap().is_err());
     }
 
     #[test]

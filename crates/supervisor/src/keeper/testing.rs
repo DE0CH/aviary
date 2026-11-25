@@ -33,6 +33,15 @@ impl Running {
         stop_grace: Duration,
         supervisor: impl FnOnce(&std::path::Path) -> Option<Vec<String>>,
     ) -> Self {
+        Self::start_with_backoff(stop_grace, &crate::limits::KEEPER_BACKOFF, supervisor)
+    }
+
+    /// With restart delays of its own as well.
+    pub fn start_with_backoff(
+        stop_grace: Duration,
+        backoff: &'static [Duration],
+        supervisor: impl FnOnce(&std::path::Path) -> Option<Vec<String>>,
+    ) -> Self {
         let dir = std::env::temp_dir().join(format!("keeper-test-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let supervisor = supervisor(&dir);
@@ -45,6 +54,7 @@ impl Running {
             protect_self: false,
             signals: Signals::Pipe(stop_r),
             stop_grace,
+            backoff,
         };
         let mut k = Keeper::new(cfg).unwrap();
         let thread = std::thread::spawn(move || k.run());

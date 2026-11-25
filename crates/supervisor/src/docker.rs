@@ -370,14 +370,13 @@ while True:
             api_socket: api,
         };
         let d = Docker::new(k.client.clone(), exits, paths, vec![]);
-        let began = std::time::Instant::now();
-        let why = d.start().await.unwrap_err().to_string();
+        // answered at once, not after the 60 s wait (the bound is well inside it)
+        let why = tokio::time::timeout(Duration::from_secs(30), d.start())
+            .await
+            .expect("not the 60 s wait")
+            .unwrap_err()
+            .to_string();
         assert!(why.contains("exited before it answered (code 3"), "{why}");
-        assert!(
-            began.elapsed() < Duration::from_secs(5),
-            "not the 60 s wait: {:?}",
-            began.elapsed()
-        );
         // once a release has begun: 409, nothing spawned
         let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
         d.gate(&l);

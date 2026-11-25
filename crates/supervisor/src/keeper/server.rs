@@ -63,6 +63,9 @@ pub struct Config {
     /// How long a stop waits for the supervisor to finish its release before it sends SIGKILL to everything
     /// ([`KEEPER_STOP_GRACE`]; tests whose stand-in never finishes one use less).
     pub stop_grace: std::time::Duration,
+    /// The supervisor's restart delays ([`KEEPER_BACKOFF`]; a test that must tell a start at once from one after its
+    /// delay uses one no test outlasts).
+    pub backoff: &'static [std::time::Duration],
 }
 
 /// How the keeper learns it must stop.
@@ -86,6 +89,7 @@ impl Config {
             protect_self: true,
             signals: Signals::Process,
             stop_grace: KEEPER_STOP_GRACE,
+            backoff: &KEEPER_BACKOFF,
         }
     }
 }
@@ -742,7 +746,8 @@ impl Keeper {
         if now.saturating_sub(self.supervisor_started_mono) >= KEEPER_BACKOFF_RESET.as_millis() as u64 {
             self.backoff = 0;
         }
-        let delay = KEEPER_BACKOFF[self.backoff.min(KEEPER_BACKOFF.len() - 1)];
+        let steps = self.cfg.backoff;
+        let delay = steps[self.backoff.min(steps.len() - 1)];
         self.backoff += 1;
         self.next_start_mono = Some(now + delay.as_millis() as u64);
     }
@@ -1736,6 +1741,7 @@ mod tests {
             protect_self: false,
             signals: Signals::Pipe(r),
             stop_grace: KEEPER_STOP_GRACE,
+            backoff: &KEEPER_BACKOFF,
         })
         .unwrap();
         k.children[0] = Child {

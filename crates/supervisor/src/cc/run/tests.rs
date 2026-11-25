@@ -4,11 +4,14 @@
 //!
 //! The fake reads the person's text up to the first blank line as a script of `;`-separated steps:
 //! `say:X`, `echo` (the whole text and the image count), `fail`, `hang` (until an interrupt), `deaf` (ignores
-//! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID:MS` (one that completes after MS and wakes
-//! the agent), `qbg:ID`, `qbgdone:ID:MS` and `qmon:ID:MS` (Qwen Code's: a background shell, one that ends after MS, a
-//! monitor that has an event after MS and goes on; the lines as the fork writes them), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
-//! later), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
-//! same beside a Bash call still running), `sendsh` (a shell call running `send-file`, until an interrupt), `img:N` (a tool result carrying N images). The text `/compact` is the
+//! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID` (one that completes, and wakes the agent,
+//! once the test opens gate `done-ID`), `qbg:ID`, `qbgdone:ID` and `qmon:ID` (Qwen Code's: a background shell, one
+//! that ends at gate `qdone-ID`, a monitor that has an event at gate `qevent-ID` and goes on; the lines as the fork
+//! writes them), `wake` (an agent turn at gate `wake`), `slowwake` (an agent turn at gate `slowwake` whose result
+//! comes at gate `slowend`), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
+//! same beside a Bash call still running), `sendsh` (a shell call running `send-file`, until an interrupt), `cmd` (a shell command whose result comes at gate
+//! `cmd`), `img:N` (a tool result carrying N images). A gate opens when the test writes `.fake-go/<name>` in the
+//! workspace ([`World::go`]): nothing the fake does later depends on how fast either side runs. The text `/compact` is the
 //! command: `status`, 300 ms, then a second `init`, `compact_boundary`, the summary and a `result`. Like Claude Code 2.1.304, the fake answers an open question itself when
 //! its stdin closes ("Tool permission stream closed before response received") and calls the model again.
 
@@ -58,6 +61,8 @@ struct Fake {
     busy: bool,
     waiting: Option<&'static str>,
     timers: Vec<(std::time::Instant, String)>,
+    /// Steps waiting for the test to open their gate: (gate, step).
+    gates: Vec<(String, String)>,
     inited: bool,
     bg: Vec<String>,
     /// The tasks of `bg` that are Qwen Code's.
@@ -91,6 +96,7 @@ impl Fake {
                    "duration_ms": 5, "session_id": self.session})
         };
         out_line(&mut self.out, &v);
+        self.note("result");
         self.busy = false;
         self.waiting = None;
     }
@@ -193,11 +199,7 @@ impl Fake {
                                        "tool_use_id": tool, "task_type": "local_bash", "description": "sleep"}));
                     self.bg.push(id.clone());
                     if cmd == "bgdone" {
-                        let ms: u64 = parts.next().unwrap().parse().unwrap();
-                        self.timers.push((
-                            std::time::Instant::now() + Duration::from_millis(ms),
-                            format!("done:{id}"),
-                        ));
+                        self.gates.push((format!("done-{id}"), format!("done:{id}")));
                     }
                 }
                 "qbg" | "qbgdone" | "qmon" => {
@@ -223,12 +225,9 @@ impl Fake {
                     );
                     self.bg.push(id.clone());
                     self.qwen.push(id.clone());
-                    if let Some(ms) = parts.next() {
+                    if cmd != "qbg" {
                         let what = if cmd == "qmon" { "qevent" } else { "qdone" };
-                        self.timers.push((
-                            std::time::Instant::now() + Duration::from_millis(ms.parse().unwrap()),
-                            format!("{what}:{id}"),
-                        ));
+                        self.gates.push((format!("{what}-{id}"), format!("{what}:{id}")));
                     }
                 }
                 "img" => {
@@ -243,22 +242,16 @@ impl Fake {
                                        {"type": "tool_result", "tool_use_id": "toolu_img", "content": vec![image; n]}]}});
                     out_line(&mut self.out, &v);
                 }
-                "wake" | "slowwake" => {
-                    let ms: u64 = arg.parse().unwrap();
-                    self.timers
-                        .push((std::time::Instant::now() + Duration::from_millis(ms), format!("{cmd}:")));
-                }
-                // a shell command that runs `ms` (the `ask` command waiting on the person, say): its result, then
-                // the steps after it
+                "wake" | "slowwake" => self.gates.push((cmd.to_owned(), format!("{cmd}:"))),
+                // a shell command that runs until gate `cmd` (the `ask` command waiting on the person, say): its
+                // result, then the steps after it
                 "cmd" => {
-                    let ms: u64 = arg.parse().unwrap();
                     self.assistant(
                         "running a command",
                         &[json!({"type": "tool_use", "id": "toolu_cmd", "name": "Bash",
                                                                 "input": {"command": "ask < q.json"}})],
                     );
-                    self.timers
-                        .push((std::time::Instant::now() + Duration::from_millis(ms), "cmddone:".into()));
+                    self.gates.push(("cmd".into(), "cmddone:".into()));
                     self.waiting = Some("cmd");
                     return;
                 }
@@ -366,10 +359,7 @@ impl Fake {
             "slowwake" => {
                 self.busy = true;
                 self.assistant("woke up slowly", &[]);
-                self.timers.push((
-                    std::time::Instant::now() + Duration::from_millis(1500),
-                    "slowend:".into(),
-                ));
+                self.gates.push(("slowend".into(), "slowend:".into()));
             }
             "slowend" => {
                 self.result(true, "agent");
@@ -546,6 +536,7 @@ fn fake_claude() {
         busy: false,
         waiting: None,
         timers: Vec::new(),
+        gates: Vec::new(),
         inited: false,
         bg: Vec::new(),
         qwen: Vec::new(),
@@ -577,6 +568,17 @@ fn fake_claude() {
         fake.timers.retain(|(t, _)| *t > now);
         for d in due {
             fake.timer(&d);
+        }
+        let opened: Vec<(String, String)> = fake
+            .gates
+            .iter()
+            .filter(|(g, _)| Path::new(".fake-go").join(g).exists())
+            .cloned()
+            .collect();
+        for (g, step) in opened {
+            let _ = std::fs::remove_file(Path::new(".fake-go").join(&g));
+            fake.gates.retain(|(x, _)| *x != g);
+            fake.timer(&step);
         }
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(Some(l)) => {
@@ -620,6 +622,8 @@ struct World {
     gateway: test_gateway::Running,
     cid: Uuid,
     keeper: crate::keeper::testing::Running,
+    /// The driver's clock: it stands still until a test moves it.
+    clock: aviary_core::clock::Clock,
 }
 
 async fn world() -> World {
@@ -714,6 +718,7 @@ async fn world_models(hermit: HermitConfig, models: gateway_api::models::Models)
         gateway,
         cid,
         keeper,
+        clock: aviary_core::clock::Clock::manual(),
     }
 }
 
@@ -768,6 +773,7 @@ impl World {
                 uid,
                 gid,
             },
+            clock: self.clock.clone(),
         }
     }
 
@@ -1014,6 +1020,62 @@ impl World {
                 self.fake_log().join("\n")
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+impl World {
+    /// Opens the fake's gate `name` (see the module's steps).
+    fn go(&self, name: &str) {
+        let dir = self.ws.join(".fake-go");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), b"").unwrap();
+    }
+
+    /// Whether every report is answered (on the driver's clock nothing is due: a real-time bound).
+    async fn drained(&self, sup: &Sup) -> bool {
+        let far = self.clock.now() + Duration::from_hours(24);
+        tokio::time::timeout(Duration::from_secs(30), sup.driver.reporter().drain(far))
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Waits until an idle point has run after turn `t` ended.
+    async fn idle_point_after(&self, sup: &Sup, t: Uuid) {
+        let t = t.to_string();
+        until("the idle point after the turn", || {
+            lock(&sup.driver.idle_points).iter().any(|ended| ended.contains(&t))
+        })
+        .await;
+    }
+
+    /// Waits until an idle point has run.
+    async fn an_idle_point(&self, sup: &Sup) {
+        until("an idle point", || !lock(&sup.driver.idle_points).is_empty()).await;
+    }
+
+    /// Moves the clock on by `d` and waits until the driver's tick has run at the new time.
+    async fn advance_to_tick(&self, sup: &Sup, d: Duration) {
+        let ticks = || sup.driver.ticks.load(std::sync::atomic::Ordering::SeqCst);
+        let n = ticks();
+        self.clock.advance(d);
+        until("a tick", || ticks() > n).await;
+    }
+
+    /// `f`, with the clock moved on by `step` whenever it waits: for a wait whose end is a rule's time (a deadline
+    /// the code under test computes when it gets there), the outcome is the same however often the clock moves.
+    async fn advancing<F: std::future::Future>(&self, step: Duration, f: F) -> F::Output {
+        tokio::pin!(f);
+        let guard = Instant::now() + Duration::from_secs(40);
+        loop {
+            tokio::select! {
+                biased;
+                r = &mut f => return r,
+                () = tokio::time::sleep(Duration::from_millis(10)) => {
+                    assert!(Instant::now() < guard, "still waiting");
+                    self.clock.advance(step);
+                }
+            }
         }
     }
 }
@@ -1383,8 +1445,8 @@ async fn a_send_file_command_puts_its_files_on_the_shell_call_that_runs_it() {
     let kept = w.magpie.sent(w.cid);
     assert_eq!(kept.keys().collect::<Vec<_>>(), ["call_send"]);
     assert_eq!(kept["call_send"].request.files[0].path, "/workspace/out.txt");
-    // the call has had its send: a second one in the same command is told so
-    let refused = send().await.unwrap_err();
+    // the call has had its send: a second one in the same command is told so, once the wait for a shell call is over
+    let refused = w.advancing(SEND_FILE_CALL_WAIT, send()).await.unwrap_err();
     assert!(refused.contains("once per shell command"), "{refused}");
     assert_eq!(w.magpie.sent(w.cid).len(), 1);
     w.magpie
@@ -1542,19 +1604,29 @@ async fn a_kill_during_the_prompt_write_ends_the_turn_with_the_kills_reason() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_interrupt_that_does_not_end_the_turn_kills_the_generation_after_15_s() {
     let w = world().await;
-    let _sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     let (t, _) = w.turn("deaf");
     until("running", || w.state_names(t) == ["running"]).await;
-    let started = Instant::now();
     w.magpie
         .push_command(w.cid, Some(t), CommandBody::Interrupt(magpie_api::Empty {}));
+    until("the interrupt sent", || {
+        lock(&sup.driver.st)
+            .turn
+            .as_ref()
+            .is_some_and(|t| t.interrupt_mono.is_some())
+    })
+    .await;
+    // exactly the grace: a tick then still lets the generation be
+    w.advance_to_tick(&sup, INTERRUPT_GRACE).await;
+    assert!(
+        lock(&sup.driver.st).live.as_ref().is_some_and(|g| g.why.is_none()),
+        "not killed within the grace"
+    );
+    assert_eq!(w.state_names(t), ["running"]);
+    // past it: the next tick ends the generation (SIGTERM; the fake dies of it) and the turn
+    w.clock.advance(TICK);
     let end = w.ended(t).await;
     assert_eq!(end["state"], "canceled");
-    let took = started.elapsed();
-    assert!(
-        took >= INTERRUPT_GRACE && took < INTERRUPT_GRACE + Duration::from_secs(8),
-        "{took:?}"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1591,8 +1663,9 @@ async fn a_crash_fails_the_turn_and_a_crash_loop_refuses_new_turns() {
 async fn agent_turns_and_a_start_turn_during_one() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
-    let (t, _) = w.turn("say:later;wake:300");
+    let (t, _) = w.turn("say:later;wake");
     assert_eq!(w.ended(t).await["state"], "completed");
+    w.go("wake");
     // the wake-up opens a turn of origin agent, ended at its result
     let calls = w.magpie.clone();
     until("an agent turn", || !calls.script().calls_to("agent_turn").is_empty()).await;
@@ -1604,8 +1677,9 @@ async fn agent_turns_and_a_start_turn_during_one() {
 
     // a person's start_turn while an agent turn runs: written at once, the agent turn ends at its own result,
     // the person's turn at the next one
-    let (t, _) = w.turn("say:x;slowwake:100");
+    let (t, _) = w.turn("say:x;slowwake");
     w.ended(t).await;
+    w.go("slowwake");
     until("a second agent turn", || {
         calls.script().calls_to("agent_turn").len() == 2
     })
@@ -1615,6 +1689,12 @@ async fn agent_turns_and_a_start_turn_during_one() {
         w.state_names(p).first().is_some_and(|s| s == "running")
     })
     .await;
+    // the person's message is with Claude Code while the agent turn runs; then the agent turn's result
+    until("the message on Claude Code's stdin", || {
+        w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count() == 3
+    })
+    .await;
+    w.go("slowend");
     let agent2: Uuid =
         serde_json::from_value(w.magpie.script().calls_to("agent_turn")[1].body.as_ref().unwrap()["turnId"].clone())
             .unwrap();
@@ -1656,9 +1736,10 @@ async fn the_hold_supersede_stop_tasks_and_a_task_that_ends() {
     w.idle(&sup).await;
 
     // a task that completes by itself ends the hold, then wakes the agent
-    let (t4, _) = w.turn_with("bgdone:t3:1500", Some(w.cid.to_string()), vec![], vec![]);
+    let (t4, _) = w.turn_with("bgdone:t3", Some(w.cid.to_string()), vec![], vec![]);
     let end = w.ended(t4).await;
     assert_eq!(end["held"], true, "{end}\n{}", texts(&w));
+    w.go("done-t3");
     until("the wake-up turn", || {
         w.magpie.script().calls_to("agent_turn").len() == 1
     })
@@ -1808,7 +1889,7 @@ async fn a_continuation_asks_the_harness_to_go_on_and_writes_no_message() {
 async fn qwen_codes_background_shell_holds_the_run_and_wakes_the_agent() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
-    let (t, _) = w.turn_in("qbgdone:s1:1500", magpie_api::Harness::Qwen, Some("vendor/video"), None);
+    let (t, _) = w.turn_in("qbgdone:s1", magpie_api::Harness::Qwen, Some("vendor/video"), None);
     let end = w.ended(t).await;
     assert_eq!(end["state"], "completed");
     assert_eq!(end["held"], true, "{end}\n{}", texts(&w));
@@ -1817,6 +1898,7 @@ async fn qwen_codes_background_shell_holds_the_run_and_wakes_the_agent() {
     assert_eq!(end["tasks"][0]["type"], "local_bash");
     let d = sup.driver.clone();
     until("held", || d.status().borrow().state == ActivityState::Held).await;
+    w.go("qdone-s1");
     let agent = agent_turn(&w, 0).await;
     let end = w.ended(agent).await;
     assert_eq!(end["state"], "completed");
@@ -1846,10 +1928,11 @@ async fn qwen_codes_monitor_goes_on_after_an_event_and_a_send_stops_it() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     let qsid = crate::cc::launch::qwen_session_id(&w.cid.to_string());
-    let (t, _) = w.turn_in("qmon:m1:1500", magpie_api::Harness::Qwen, Some("vendor/video"), None);
+    let (t, _) = w.turn_in("qmon:m1", magpie_api::Harness::Qwen, Some("vendor/video"), None);
     let end = w.ended(t).await;
     assert_eq!(end["held"], true, "{end}\n{}", texts(&w));
     assert_eq!(end["tasks"][0]["type"], "monitor");
+    w.go("qevent-m1");
     let agent = agent_turn(&w, 0).await;
     let end = w.ended(agent).await;
     assert_eq!(end["held"], true, "the monitor goes on: {end}");
@@ -1910,7 +1993,7 @@ async fn a_question_poll_keeps_a_held_run_from_the_silence_ceiling() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     let before = lock(&sup.driver.st).last_output_mono;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    w.clock.advance(Duration::from_secs(1));
     crate::lifecycle::Agent::waiting_on_the_person(&*sup.driver, "q-1", true);
     assert!(lock(&sup.driver.st).last_output_mono > before);
     w.idle(&sup).await;
@@ -2085,7 +2168,7 @@ async fn a_message_with_attachments_joins_the_running_turn() {
         })
     };
     // a command that runs a while (the `ask` command waiting on the person)
-    let (t, _) = w.turn("cmd:5000;say:after");
+    let (t, _) = w.turn("cmd;say:after");
     until("the command", || w.prompts().len() == 1).await;
     // for a turn that is not the running one: not delivered, and no file is written
     let other = w
@@ -2115,6 +2198,7 @@ async fn a_message_with_attachments_joins_the_running_turn() {
     assert_eq!(w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count(), 2);
     // what Claude Code got (this fake answers it in a run of its own after the turn, echoing it): the text with
     // the paths, and the image's model copy as a block
+    w.go("cmd");
     assert_eq!(w.ended(t).await["state"], "completed");
     until("the message's own run", || {
         std::fs::read_to_string(w.dir.join("gens/1/stdout.ndjson")).is_ok_and(|o| o.contains("images=1"))
@@ -2307,8 +2391,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
         if keeper_had_it {
             // Claude Code answers while no supervisor runs, and the new one's tail reads the answer before the
             // command is replayed (the command poll is held back meanwhile)
-            until("answered", || w.fake_log().iter().any(|l| l == "stdin user")).await;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            until("answered", || w.fake_log().iter().any(|l| l == "result")).await;
         }
         let hold = w.magpie.faults().on(
             "commands",
@@ -2322,9 +2405,10 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 "credited to the person's turn before the replay"
             );
         }
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        until("the command poll held back", || w.magpie.faults().hits() >= 1).await;
         w.magpie.faults().remove(hold);
-        w.acked(seq).await;
+        // the poll's pause after a failure is on the clock
+        w.advancing(POLL_RETRY, w.acked(seq)).await;
         assert!(
             w.magpie.script().calls_to("agent_turn").is_empty(),
             "no agent turn for the person's answer"
@@ -2380,11 +2464,18 @@ async fn reports_wait_out_a_magpie_outage_and_are_never_dropped() {
     );
     let (t, _) = w.turn("say:x");
     until("the turn answered", || w.prompts().len() == 1).await;
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // the first try, then two pauses of the retry, each ended by the clock: the report is tried again after each
+    until("a report tried", || w.magpie.faults().hits() >= 1).await;
+    for _ in 0..2 {
+        let before = w.magpie.faults().hits();
+        w.clock.advance(crate::limits::REPORT_RETRY_MAX);
+        until("a report tried again", || w.magpie.faults().hits() > before).await;
+    }
     assert!(w.state_names(t).is_empty(), "every report waits");
     assert!(w.magpie.faults().hits() >= 2, "and is retried");
     w.magpie.faults().remove(fault);
-    assert_eq!(w.ended(t).await["state"], "completed");
+    let end = w.advancing(crate::limits::REPORT_RETRY_MAX, w.ended(t)).await;
+    assert_eq!(end["state"], "completed");
     assert_eq!(w.state_names(t), ["running", "completed"], "delivered once");
     w.idle(&sup).await;
 }
@@ -2466,7 +2557,7 @@ async fn a_person_waits_card_opens_once_and_ends_with_its_outcome() {
             crate::ask::call(
                 &sock,
                 hyper::Method::POST,
-                &format!("/v1/person-waits/{key}?waitMs=10"),
+                &format!("/v1/person-waits/{key}?waitMs=0"),
                 body.map(|b| serde_json::to_vec(&b).unwrap()),
             )
             .await
@@ -2502,7 +2593,8 @@ async fn a_person_waits_card_opens_once_and_ends_with_its_outcome() {
     // ended without an outcome: the card keeps waiting
     assert_eq!(post("inbox-r2", Some(card.clone())).await, 204);
     assert_eq!(delete("/v1/person-waits/inbox-r2".into()).await, 204);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // the end is done by the answer: without an outcome nothing went to magpie
+    assert_eq!(w.magpie.script().calls_to("person_wait_ended").len(), 1);
     assert_eq!(w.magpie.person_waits(w.cid)["inbox-r2"].1, None);
     // no body: no card
     assert_eq!(post("inbox-r3", None).await, 204);
@@ -2533,7 +2625,10 @@ async fn the_ask_command_blocks_until_the_person_answers() {
         let (sock, id) = (sock.clone(), id.clone());
         tokio::spawn(async move { crate::ask::wait(&sock, &id).await })
     };
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    until("the wait asked magpie", || {
+        !w.magpie.script().calls_to("question_get").is_empty()
+    })
+    .await;
     assert!(!waiting.is_finished(), "it blocks while the question waits");
     // a cancelled command leaves the question open: a second wait on its id gets the same answer
     let again = {
@@ -2577,10 +2672,9 @@ async fn a_forced_release_during_a_turn_reports_sandbox_lost() {
         })
         .await;
     assert!(matches!(busy, supervisor_api::control::Outcome::Busy(_)));
-    let started = Instant::now();
+    // on a clock that stands still: done without waiting out any of the release's times
     let done = sup.lifecycle.release(crate::lifecycle::sigterm_release()).await;
     assert_eq!(done, supervisor_api::control::Outcome::Done);
-    assert!(started.elapsed() < crate::limits::SIGTERM_RELEASE_DEADLINE);
     let end = w.ended(t).await;
     assert_eq!(end["state"], "failed");
     assert_eq!(end["error"]["code"], "sandbox.lost");
@@ -2596,7 +2690,9 @@ async fn an_answer_read_before_the_prompt_write_returns_is_the_persons_turn() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     until("pre-spawn", || !w.spawns().is_empty()).await;
-    STDIN_ACK_DELAY_MS.store(800, std::sync::atomic::Ordering::SeqCst);
+    sup.driver
+        .hold_stdin_ack
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     for i in 0..3 {
         let (t, s) = w.turn_with(&format!("say:fast {i}"), Some(w.cid.to_string()), vec![], vec![]);
         assert_eq!(w.ended(t).await["state"], "completed");
@@ -2604,7 +2700,9 @@ async fn an_answer_read_before_the_prompt_write_returns_is_the_persons_turn() {
         assert_eq!(w.state_names(t), ["running", "completed"]);
         w.idle(&sup).await;
     }
-    STDIN_ACK_DELAY_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    sup.driver
+        .hold_stdin_ack
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(w.magpie.script().calls_to("agent_turn").is_empty(), "{}", texts(&w));
 }
 
@@ -2616,8 +2714,9 @@ async fn a_queued_persons_turn_can_be_interrupted_and_killed() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     for kill in [false, true] {
-        let (t, _) = w.turn_with("say:x;slowwake:100", Some(w.cid.to_string()), vec![], vec![]);
+        let (t, _) = w.turn_with("say:x;slowwake", Some(w.cid.to_string()), vec![], vec![]);
         w.ended(t).await;
+        w.go("slowwake");
         let before = w.magpie.script().calls_to("agent_turn").len();
         until("an agent turn", || {
             w.magpie.script().calls_to("agent_turn").len() > before
@@ -2639,14 +2738,21 @@ async fn a_queued_persons_turn_can_be_interrupted_and_killed() {
         } else {
             CommandBody::Interrupt(magpie_api::Empty {})
         };
-        let started = Instant::now();
+        // the clock stands still: a kill that waited out a grace would never end
         let c = w.magpie.push_command(w.cid, Some(p), body);
+        if !kill {
+            // the agent turn's interrupt, then the person's turn's once it is the turn: this fake (`deaf`) answers
+            // the second only with the result the agent turn's wake-up still has to write
+            until("both interrupts", || {
+                w.fake_log().iter().filter(|l| *l == "control interrupt").count() == 2
+            })
+            .await;
+            w.go("slowend");
+        }
         let end = w.ended(p).await;
         assert_eq!(end["state"], "canceled", "kill: {kill}");
         w.acked(c).await;
-        if kill {
-            assert!(started.elapsed() < Duration::from_secs(8), "killed at once");
-        } else {
+        if !kill {
             // the agent turn Claude Code was in, then the person's turn once it is the turn
             let n = w.fake_log().iter().filter(|l| *l == "control interrupt").count();
             assert_eq!(n, 2, "{}", texts(&w));
@@ -2679,9 +2785,12 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
         aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
     );
     let (t, _) = w.turn_with("say:x", Some(w.cid.to_string()), vec![file("a.pdf")], vec![]);
+    until("tried", || w.magpie.faults().hits() >= 1).await;
+    w.clock.advance(crate::limits::REPORT_RETRY_MAX);
     until("retried", || w.magpie.faults().hits() >= 2).await;
     w.magpie.faults().remove(fault);
-    assert_eq!(w.ended(t).await["state"], "completed");
+    let end = w.advancing(crate::limits::REPORT_RETRY_MAX, w.ended(t)).await;
+    assert_eq!(end["state"], "completed");
     assert_eq!(std::fs::read(w.ws.join("uploads/a.pdf")).unwrap(), pdf);
     w.idle(&sup).await;
 
@@ -2694,15 +2803,13 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
     let (t, s) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("b.pdf")], vec![]);
     let d = sup.driver.clone();
     until("starting", || lock(&d.st).starting == Some(t)).await;
-    let started = Instant::now();
     let i = w
         .magpie
         .push_command(w.cid, Some(t), CommandBody::Interrupt(magpie_api::Empty {}));
-    // the outage goes on: the interrupt does not wait for it (7.8)
+    // the outage goes on (its retries wait on the clock, which stands still): the interrupt does not wait for it (7.8)
     assert_eq!(w.ended(t).await["state"], "canceled");
     assert_eq!(w.acked(s).await.delivered, Some(false));
     w.acked(i).await;
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
     w.magpie.faults().remove(fault);
     assert_eq!(w.prompts().len(), prompts, "{}", texts(&w));
     assert!(lock(&d.st).cancel_starting.is_none());
@@ -2722,13 +2829,12 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
     );
     let (t, _) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("c.pdf")], vec![]);
     until("starting", || lock(&d.st).starting == Some(t)).await;
-    let started = Instant::now();
+    // as above: the release does not wait for the outage
     let release = {
         let l = sup.lifecycle.clone();
         tokio::spawn(async move { l.release(crate::lifecycle::sigterm_release()).await })
     };
     let end = w.ended(t).await;
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
     assert_eq!(end["state"], "failed");
     assert_eq!(end["error"]["code"], "sandbox.lost");
     assert_eq!(release.await.unwrap(), supervisor_api::control::Outcome::Done);
@@ -2898,7 +3004,9 @@ async fn the_heartbeat_names_a_turn_whose_end_is_on_its_way() {
         assert_eq!(hb.turn_id, Some(t), "{hb:?}");
         assert_eq!(hb.state, HeartbeatState::Running);
         assert!(!rule_2_fails(&hb, t));
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // a minute on: still waiting for the lines (up to UUID_WAIT_CAP)
+        w.clock.advance(Duration::from_mins(1));
+        tokio::task::yield_now().await;
     }
     // a restart meanwhile: run.json keeps the ending turn, and the next supervisor sends its end
     sup.persisted.flush().await;
@@ -2964,18 +3072,12 @@ async fn an_end_waiting_for_lines_a_dead_generation_never_wrote_is_sent() {
     assert_eq!(w.state_names(t), ["running"]);
     let n = lock(&d.st).live.as_ref().unwrap().n;
     sup.driver.kill_gen(n, Why::Graceful).await;
-    let started = Instant::now();
-    let end = w.ended(t).await;
+    // the end takes one last look for the lines (on the clock), then goes without them
+    let end = w.advancing(crate::cc::report::UUID_LAST_LOOK, w.ended(t)).await;
     assert_eq!(end["state"], "completed");
     assert!(end.get("lastUuid").is_none_or(Value::is_null), "{end}");
-    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
     until("answered by magpie", || lock(&d.st).ending.is_empty()).await;
-    assert!(
-        sup.driver
-            .reporter()
-            .drain(Instant::now() + Duration::from_secs(2))
-            .await
-    );
+    assert!(w.drained(&sup).await);
 }
 
 /// A supervisor restart while a generation initialises: that generation is ended before another starts, never left
@@ -3232,7 +3334,6 @@ async fn a_restart_after_a_failed_hand_over_acks_it_failed_again() {
             assert_eq!(ack.delivered, Some(false));
             assert!(ack.error.is_none());
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(w.prompts().is_empty(), "nothing written: {}", texts(&w));
         assert!(
             w.state_names(turn).is_empty(),
@@ -3317,7 +3418,9 @@ async fn a_replayed_interrupted_turn_is_interrupted_exactly_once() {
         assert_eq!(w.acked(seq).await.delivered, Some(true), "handed: {handed}");
         until("the prompt", || w.prompts() == ["prompt deaf"]).await;
         until("an interrupt", || w.fake_log().iter().any(|l| l == "control interrupt")).await;
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        // the grace runs on from the restore, and nothing sends the interrupt again in it
+        w.advance_to_tick(&second, INTERRUPT_GRACE.checked_sub(TICK).unwrap())
+            .await;
         let interrupts = w.fake_log().iter().filter(|l| *l == "control interrupt").count();
         assert_eq!(interrupts, 1, "handed: {handed}\n{}", texts(&w));
         assert_eq!(w.prompts(), ["prompt deaf"], "the message once");
@@ -3357,7 +3460,7 @@ async fn a_configuration_changed_across_a_restart_ends_the_generation_when_idle(
     let second = w
         .attach(Some(prior.clone()), crate::start::Reattach::Alive { n, pid })
         .await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    w.an_idle_point(&second).await;
     assert_eq!(second.driver.claude_pid(), Some(pid));
     second.persisted.flush().await;
     second.driver.abort_all();
@@ -3401,24 +3504,32 @@ async fn sent_files_refuse_oversized_files_at_once_and_wait_out_a_migration() {
         let p = paths.clone();
         tokio::task::spawn_blocking(move || crate::sent_files::hook(&p, &input))
     };
-    let started = Instant::now();
-    let r = hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_big",
-                        "tool_input": {"files": ["out/huge.bin"]}}))
+    // refused by its size: hashing it would outlast the bound
+    let r = tokio::time::timeout(
+        Duration::from_secs(30),
+        hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_big",
+                    "tool_input": {"files": ["out/huge.bin"]}})),
+    )
     .await
+    .expect("refused before it is read")
     .unwrap();
     assert!(
         matches!(&r, crate::sent_files::HookOutcome::Failed(m) if m.contains("over 64 MiB")),
         "{r:?}"
     );
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     w.magpie.script().once(
         "sent_files",
         aviary_fakes::script::Reply::error(409, "conversation_migrating", "moving").with_header("retry-after", "1"),
     );
-    let r = hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_small",
-                        "tool_input": {"files": ["out/small.txt"]}}))
-    .await
-    .unwrap();
+    // the migration's retry pause is on the clock
+    let r = w
+        .advancing(
+            Duration::from_secs(1),
+            hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_small",
+                        "tool_input": {"files": ["out/small.txt"]}})),
+        )
+        .await
+        .unwrap();
     assert_eq!(r, crate::sent_files::HookOutcome::Sent(1));
     assert_eq!(w.magpie.script().calls_to("sent_files").len(), 2, "retried once");
 }
@@ -3496,7 +3607,7 @@ async fn a_message_sent_into_a_running_turn_is_written_at_once() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     // a command that runs a while (the `ask` command waiting on the person)
-    let (t, _) = w.turn("cmd:3000;say:after");
+    let (t, _) = w.turn("cmd;say:after");
     let calls = w.magpie.clone();
     until("the command", || w.prompts().len() == 1).await;
     // for a turn that is not the running one: not delivered (magpie sends it as a new turn)
@@ -3527,6 +3638,7 @@ async fn a_message_sent_into_a_running_turn_is_written_at_once() {
     );
     // this fake leaves it for after the turn's result, as Claude Code does when the model stops before a tool
     // result: the turn ends with its own result, and the message is answered in a run of its own (an agent turn)
+    w.go("cmd");
     assert_eq!(w.ended(t).await["state"], "completed");
     until("the message's own run", || {
         w.prompts().iter().any(|p| p == "prompt say:scheduled")
@@ -3560,7 +3672,7 @@ async fn the_conversation_is_compacted_at_a_turns_end_once_it_holds_the_configur
     let (t, _) = w.turn("img:2");
     assert_eq!(w.ended(t).await["state"], "completed");
     w.idle(&sup).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.idle_point_after(&sup, t).await;
     assert_eq!((compactions(&w), agent_turns(&w).len()), (0, 0));
     assert_eq!(sup.persisted.read(|s| s.run.images), Some(2));
     // the third: at the turn's end Claude Code is told to compact, as a turn of origin agent that ends at the
@@ -3580,7 +3692,7 @@ async fn the_conversation_is_compacted_at_a_turns_end_once_it_holds_the_configur
     let (t, _) = w.turn("img:2");
     assert_eq!(w.ended(t).await["state"], "completed");
     w.idle(&sup).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.idle_point_after(&sup, t).await;
     assert_eq!(compactions(&w), 1);
     let (t, _) = w.turn("img:4");
     assert_eq!(w.ended(t).await["state"], "completed");
@@ -3607,7 +3719,7 @@ async fn without_the_setting_images_never_compact_and_a_prompts_own_images_count
     let (t, _) = w.turn("img:50");
     assert_eq!(w.ended(t).await["state"], "completed");
     w.idle(&sup).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    w.idle_point_after(&sup, t).await;
     assert_eq!((compactions(&w), agent_turns(&w).len()), (0, 0));
     assert_eq!(sup.persisted.read(|s| s.run.images), Some(50));
     drop(sup);
@@ -3660,7 +3772,7 @@ async fn a_resumed_conversation_counts_the_images_its_transcript_holds() {
     let (t, _) = w.turn_with("img:1", Some(session.clone()), vec![], vec![]);
     assert_eq!(w.ended(t).await["state"], "completed");
     w.idle(&sup).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.idle_point_after(&sup, t).await;
     assert_eq!(
         sup.persisted.read(|s| s.run.images),
         Some(4),

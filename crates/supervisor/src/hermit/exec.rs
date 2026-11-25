@@ -316,10 +316,12 @@ mod tests {
         let none = BTreeMap::new();
         let mut r = req(&["/bin/sh", "-c", "sleep 100 & sleep 100"]);
         r.timeout_ms = Some(300);
-        let t = std::time::Instant::now();
-        let out = e.run(r, &none).await.unwrap();
+        // ended by its own timeout, well inside the bound (the group's sleeps would take 100 s)
+        let out = tokio::time::timeout(Duration::from_secs(30), e.run(r, &none))
+            .await
+            .expect("killed at its timeout")
+            .unwrap();
         assert_eq!(out.signal, Some(libc::SIGKILL));
-        assert!(t.elapsed() < Duration::from_secs(5));
         let out = e
             .run(req(&["/bin/sh", "-c", "head -c 1100000 /dev/zero"]), &none)
             .await
@@ -352,14 +354,31 @@ mod tests {
     async fn at_most_two_at_once() {
         let k = Running::start(None);
         let (e, _h) = exec(&k);
+        // two that run until the test lets them end
+        let flag = k.dir.join("let-them-end");
+        let wait = format!("while [ ! -e '{}' ]; do sleep 0.05; done", flag.display());
         let slow = || {
-            let e = e.clone();
-            tokio::spawn(async move { e.run(req(&["/bin/sleep", "1"]), &BTreeMap::new()).await })
+            let (e, wait) = (e.clone(), wait.clone());
+            tokio::spawn(async move { e.run(req(&["/bin/sh", "-c", &wait]), &BTreeMap::new()).await })
         };
         let (a, b) = (slow(), slow());
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let running = || {
+            k.client
+                .status()
+                .unwrap()
+                .children
+                .iter()
+                .filter(|(_, n)| n == "exec")
+                .count()
+        };
+        let guard = std::time::Instant::now() + Duration::from_secs(30);
+        while running() < 2 {
+            assert!(std::time::Instant::now() < guard, "the two never ran");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         let third = e.run(req(&["/bin/true"]), &BTreeMap::new()).await;
         assert_eq!(third.unwrap_err().status().as_u16(), 429);
+        std::fs::write(&flag, b"").unwrap();
         assert!(a.await.unwrap().is_ok() && b.await.unwrap().is_ok());
         assert!(e.run(req(&["/bin/true"]), &BTreeMap::new()).await.is_ok());
     }

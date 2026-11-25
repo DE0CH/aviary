@@ -136,6 +136,10 @@ pub trait Agent: Send + Sync + 'static {
     fn resume(&self) -> BoxFuture<'_, ()>;
     /// The memory guard killed Claude Code's main process: end the running turn with `run.oom`.
     fn oom_killed(&self);
+    /// The clock the agent's rules read; a release's times are on it too.
+    fn clock(&self) -> aviary_core::clock::Clock {
+        aviary_core::clock::Clock::real()
+    }
     /// `attach` has taken over the previous supervisor's run state (`run.json`'s turns and generation): from then on
     /// `end_turn` and `stop` end them. Until then a release ends them through the start sequence's
     /// [`Lifecycle::on_leftovers`] hook.
@@ -188,9 +192,9 @@ pub trait Filesystem: Send + Sync + 'static {
         restart: bool,
     ) -> BoxFuture<'_, Result<(), String>>;
     fn stats(&self) -> FsStats;
-    /// Waits until every FUSE operation in flight is answered and every write stored, by `deadline`; `false` when
-    /// one is still blocked on magpie then.
-    fn settle(&self, deadline: Instant) -> BoxFuture<'_, bool>;
+    /// Waits until every FUSE operation in flight is answered and every write stored, for at most `within` (a wait
+    /// on the kernel and magpie: real time); `false` when one is still blocked on magpie then.
+    fn settle(&self, within: Duration) -> BoxFuture<'_, bool>;
     /// Before a pause: close every pooled HTTP connection so none is half-open after a long pause.
     fn close_connections(&self);
     /// After a restore: re-take the lease if magpie answers `lease_lost`, re-load the tree, revalidate the cache.
@@ -461,6 +465,7 @@ impl Lifecycle {
             return;
         };
         let told = self.keeper_told.clone();
+        let clock = self.agent.clock();
         tokio::spawn(async move {
             let mut logged = false;
             while !f().await {
@@ -468,7 +473,7 @@ impl Lifecycle {
                     tracing::error!("the keeper did not take RELEASED: retrying; the supervisor does not exit before");
                     logged = true;
                 }
-                tokio::time::sleep(KEEPER_TELL_RETRY).await;
+                clock.sleep(KEEPER_TELL_RETRY).await;
             }
             told.send_replace(true);
         });
@@ -599,10 +604,12 @@ impl Lifecycle {
             }
         };
         tracing::info!(reason = %req.reason, force = req.force, "lifecycle release");
-        let times = ReleaseTimes::new(Instant::now(), req.deadline_ms);
+        let clock = self.agent.clock();
+        let times = ReleaseTimes::new(clock.now(), req.deadline_ms);
         self.phase.send_replace(Phase::Releasing);
         // an exec or dockerd spawn in progress finishes (so the leftovers below find its process); none starts after
-        if tokio::time::timeout_at(times.interrupt_by, self.spawn_gate.write())
+        if clock
+            .timeout_at(times.interrupt_by, self.spawn_gate.write())
             .await
             .is_err()
         {
@@ -610,7 +617,8 @@ impl Lifecycle {
         }
         // an attach in progress sees the phase and is dropped; none starts after this. Bounded all the same: the
         // stop must keep its time whatever an attach does
-        if tokio::time::timeout_at(times.interrupt_by, self.boot_gate.lock())
+        if clock
+            .timeout_at(times.interrupt_by, self.boot_gate.lock())
             .await
             .is_err()
         {
@@ -636,7 +644,11 @@ impl Lifecycle {
             }
         };
         tokio::join!(agent, leftovers);
-        if !self.fs.settle(times.settle_by).await {
+        if !self
+            .fs
+            .settle(times.settle_by.saturating_duration_since(clock.now()))
+            .await
+        {
             tracing::warn!("release: FUSE operations still blocked at the deadline");
         }
         self.phase.send_replace(Phase::Released);
@@ -682,8 +694,7 @@ impl Lifecycle {
                     return Outcome::Busy(busy);
                 }
                 self.agent.quiesce().await;
-                let deadline = Instant::now() + Duration::from_millis(u64::from(req.deadline_ms));
-                if !self.fs.settle(deadline).await && !req.force {
+                if !self.fs.settle(Duration::from_millis(u64::from(req.deadline_ms))).await && !req.force {
                     // a write still blocked on magpie: not now
                     self.agent.resume().await;
                     self.reopen_admission();
@@ -852,7 +863,7 @@ impl Filesystem for UnbuiltFilesystem {
     fn stats(&self) -> FsStats {
         FsStats::default()
     }
-    fn settle(&self, _deadline: Instant) -> BoxFuture<'_, bool> {
+    fn settle(&self, _within: Duration) -> BoxFuture<'_, bool> {
         Box::pin(async { true })
     }
     fn close_connections(&self) {}
@@ -881,15 +892,21 @@ pub(crate) mod tests {
         pub slow: AtomicBool,
         /// How long `attach` takes.
         pub attach_ms: AtomicU32,
+        /// Its clock (the lifecycle's times are on it).
+        pub clock: aviary_core::clock::Clock,
     }
 
     impl FakeAgent {
         pub fn new() -> Arc<Self> {
+            Self::with_clock(aviary_core::clock::Clock::real())
+        }
+        pub fn with_clock(clock: aviary_core::clock::Clock) -> Arc<Self> {
             Arc::new(Self {
                 status: watch::channel(RunStatus::idle()).0,
                 log: Mutex::new(Vec::new()),
                 slow: AtomicBool::new(false),
                 attach_ms: AtomicU32::new(0),
+                clock,
             })
         }
         pub fn set(&self, state: ActivityState) {
@@ -922,7 +939,7 @@ pub(crate) mod tests {
             Box::pin(async move {
                 let ms = self.attach_ms.load(Ordering::SeqCst);
                 if ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(u64::from(ms))).await;
+                    self.clock.sleep(Duration::from_millis(u64::from(ms))).await;
                 }
                 self.note(format!("attach {:?}", ctx.generation));
             })
@@ -940,7 +957,7 @@ pub(crate) mod tests {
             Box::pin(async move {
                 self.note(format!("end_turn {reason}"));
                 if self.slow.load(Ordering::SeqCst) {
-                    tokio::time::sleep_until(deadline).await;
+                    self.clock.sleep_until(deadline).await;
                 }
                 // the interrupt ends the turn: failed, sandbox.lost
                 self.set(ActivityState::Idle);
@@ -949,7 +966,7 @@ pub(crate) mod tests {
         fn stop(&self, _deadline: Instant) -> BoxFuture<'_, ()> {
             Box::pin(async move {
                 if self.slow.load(Ordering::SeqCst) {
-                    tokio::time::sleep(STDIN_CLOSE_GRACE + KILL_AFTER_TERM).await;
+                    self.clock.sleep(STDIN_CLOSE_GRACE + KILL_AFTER_TERM).await;
                 }
                 self.note("stop");
             })
@@ -962,6 +979,9 @@ pub(crate) mod tests {
         }
         fn oom_killed(&self) {
             self.note("oom");
+        }
+        fn clock(&self) -> aviary_core::clock::Clock {
+            self.clock.clone()
         }
     }
 
@@ -991,10 +1011,10 @@ pub(crate) mod tests {
                 ..FsStats::default()
             }
         }
-        fn settle(&self, deadline: Instant) -> BoxFuture<'_, bool> {
+        fn settle(&self, within: Duration) -> BoxFuture<'_, bool> {
             Box::pin(async move {
                 if self.stuck.load(Ordering::SeqCst) {
-                    tokio::time::sleep_until(deadline).await;
+                    tokio::time::sleep(within).await;
                     false
                 } else {
                     true
