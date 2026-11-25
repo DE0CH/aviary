@@ -578,9 +578,9 @@ async fn check_pause(c: &Client, cfg: &hermit::config::Config) -> Result<String>
     c.resume("sbx-ba05e").await.context("resume")?;
     let a = counter("sbx-ba05e")?;
     // it goes on: a later count (one a second), within a bound it would never need
-    let t = Instant::now();
+    let since = Instant::now();
     let mut b = a;
-    while b <= a && t.elapsed() < Duration::from_secs(60) {
+    while b <= a && since.elapsed() < Duration::from_secs(60) {
         tokio::time::sleep(Duration::from_millis(200)).await;
         b = counter("sbx-ba05e")?;
     }
