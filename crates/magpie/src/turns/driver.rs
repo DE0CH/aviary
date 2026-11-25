@@ -76,6 +76,12 @@ fn driving() -> &'static Mutex<HashSet<(String, Uuid)>> {
     DRIVING.get_or_init(Mutex::default)
 }
 
+/// Whether replica `pod` drives `turn` now (its driver task runs).
+#[must_use]
+pub fn drives(pod: &str, turn: Uuid) -> bool {
+    driving().lock().is_ok_and(|s| s.contains(&(pod.to_owned(), turn)))
+}
+
 /// Starts driving `turn` in the background (after the admitting transaction committed), unless this replica already
 /// drives it.
 pub fn spawn(d: Driver, turn: Uuid) {
