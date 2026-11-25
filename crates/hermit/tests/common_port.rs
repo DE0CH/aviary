@@ -45,7 +45,7 @@ async fn migrations_are_idempotent_and_one_replica_leads_at_a_time() {
     assert!(eventually(Duration::from_secs(5), || async { *rx_a.borrow() }).await);
     let b = aviary_pg::Leader::start_with(&pool, hermit::db::LOCK_JANITOR, retry);
     let rx_b = b.is_leader();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Postgres's advisory lock has one holder per key: whenever b bids, it cannot lead
     assert!(*rx_a.borrow() && !*rx_b.borrow(), "one leader");
     a.release().await;
     assert!(

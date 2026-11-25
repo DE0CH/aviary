@@ -38,7 +38,9 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+
+use tokio::time::Instant;
 
 use futures_util::FutureExt as _;
 use futures_util::future::{BoxFuture, Shared};
@@ -1316,7 +1318,8 @@ mod tests {
     }
 
     // a FUSE call that hangs (here: a sleep) is a broken mount after the limit
-    #[tokio::test]
+    // on tokio's paused clock: each time limit fires exactly when due, whatever the machine's speed
+    #[tokio::test(start_paused = true)]
     async fn a_hung_filesystem_call_is_a_broken_mount() {
         let (root, s) = temp_store();
         let t = Instant::now();
@@ -1353,7 +1356,8 @@ mod tests {
 
     // a stat that is simply still running is shared by every check that arrives meanwhile: none fails, and no
     // second stat starts
-    #[tokio::test]
+    // on tokio's paused clock: each time limit fires exactly when due, whatever the machine's speed
+    #[tokio::test(start_paused = true)]
     async fn checks_during_a_healthy_stat_share_its_answer() {
         let (root, s) = temp_store();
         let id = flight(
@@ -1385,7 +1389,8 @@ mod tests {
 
     // a slow listing is not a hung mount: 503 without marking the mount, the scan is joined by the retry (same
     // cursor), and a listing of the same folder from elsewhere waits its turn
-    #[tokio::test]
+    // on tokio's paused clock: each time limit fires exactly when due, whatever the machine's speed
+    #[tokio::test(start_paused = true)]
     async fn a_slow_listing_answers_503_and_leaves_the_mount_alone() {
         let (root, s) = temp_store();
         let wid = Uuid::new_v4();
@@ -1523,7 +1528,7 @@ mod tests {
 
     // a one-shot command's store: the removal an unfinished clone left in the background is waited for before the
     // command exits (the runtime would drop it), and one that outlasts the wait is counted
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn settle_waits_for_what_the_store_spawned() {
         let cli = Arc::new(Slow(Mutex::default(), Duration::from_millis(200)));
         let fs = JuiceFs::new("/nonexistent", cli.clone(), 1, 10);
@@ -1548,7 +1553,7 @@ mod tests {
 
     // a rename that answered after its request gave up: landed, the workspace gets its quota and its tree is kept;
     // failed, the temporary tree is removed (and never while the rename may still run)
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_late_clone_rename_is_settled_when_it_returns() {
         let wid = Uuid::new_v4();
         let rec = Arc::new(Rec::default());

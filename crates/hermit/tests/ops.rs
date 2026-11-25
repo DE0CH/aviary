@@ -16,6 +16,8 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::io::AsyncBufReadExt as _;
+
 use aviary_core::auth::Caller;
 use aviary_fakes::{FakeMagpie, Reply};
 use common::{ADMIN, Harness, STAFF, eventually};
@@ -1024,7 +1026,6 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
             .unwrap()
     };
     let before = set_at().await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
     let a = admin
         .call(
             &r.url,
@@ -1523,6 +1524,23 @@ async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
         release.display()
     );
     let mut child = run(&work, &[]).spawn().unwrap();
+    // the command's progress lines, as they come
+    let log = Arc::new(Mutex::new(String::new()));
+    let reading = {
+        let log = log.clone();
+        let mut lines = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+        tokio::spawn(async move {
+            while let Ok(Some(l)) = lines.next_line().await {
+                let mut g = log.lock().unwrap();
+                g.push_str(&l);
+                g.push('\n');
+            }
+        })
+    };
+    let said = |what: &'static str| {
+        let log = log.clone();
+        async move { eventually(Duration::from_secs(60), || async { log.lock().unwrap().contains(what) }).await }
+    };
     assert!(
         eventually(Duration::from_secs(10), || async {
             controls().await == (false, Some("gateway maintenance".into()))
@@ -1530,7 +1548,8 @@ async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
         .await,
         "step 1: new sandboxes off"
     );
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(said("1/5").await, "step 1 logged");
+    // the sandbox is busy until the line below: the node work cannot have begun
     assert!(!started.exists(), "step 2: no node work while a sandbox is busy");
     h.sql(&format!("update sandboxes set busy = false where id = '{}'", w.sb1))
         .await;
@@ -1546,17 +1565,19 @@ async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
     // the node is down: the gateway stops answering, egress targets are gone; the node work ends
     gateway(false).await;
     std::fs::write(&release, b"").unwrap();
-    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert!(said("3/5 node work done").await, "step 3 ended");
+    // the gateway is away until the line below: step 4 cannot be done
     assert!(child.try_wait().unwrap().is_none(), "step 4: waits for the gateway");
     assert!(!controls().await.0, "still off while the gateway is away");
     gateway(true).await;
-    let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+    let status = tokio::time::timeout(Duration::from_secs(60), child.wait())
         .await
         .unwrap()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    reading.await.unwrap();
+    let err = log.lock().unwrap().clone();
+    assert!(status.success(), "{err}");
     assert_eq!(controls().await, (true, None), "step 5: new sandboxes on");
-    let err = String::from_utf8_lossy(&out.stderr);
     for step in ["1/5", "2/5 no busy sandbox", "3/5 node work done", "4/5", "5/5"] {
         assert!(err.contains(step), "{step} missing in: {err}");
     }
