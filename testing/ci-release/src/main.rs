@@ -290,6 +290,58 @@ async fn body(gh: &Github, tag: &str, sha: &str, digests_path: &Path) -> Result<
     Ok(b)
 }
 
+/// Uploads the assets `names` (files in `dir`) the release lacks; one whose upload broke off is sent again.
+async fn upload(gh: &Github, release: &Value, names: &[String], dir: &Path) -> Result<()> {
+    let id = release["id"].as_u64().context("the release's id")?;
+    let mut have: Vec<(String, u64, String)> = release["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            Some((
+                a["name"].as_str()?.to_owned(),
+                a["id"].as_u64()?,
+                a["state"].as_str().unwrap_or("").to_owned(),
+            ))
+        })
+        .collect();
+    for name in names {
+        if let Some(i) = have.iter().position(|(n, _, _)| n == name) {
+            let (_, asset, state) = have.remove(i);
+            if state == "uploaded" {
+                continue;
+            }
+            // an upload that broke off: removed, then sent whole
+            let gone = gh
+                .call(Method::DELETE, &gh.api(&format!("/releases/assets/{asset}")), None)
+                .await?;
+            if gone.0 != StatusCode::NOT_FOUND {
+                ok(&format!("removing the broken {name}"), &gone)?;
+            }
+        }
+        let bytes = std::fs::read(dir.join(name))?;
+        let url = format!("{UPLOADS}/repos/{}/releases/{id}/assets?name={name}", gh.repo);
+        let up = gh.call(Method::POST, &url, Some(Body::File(bytes))).await?;
+        if up.0 == StatusCode::UNPROCESSABLE_ENTITY {
+            // a try GitHub took but whose answer was lost
+            let r = gh.call(Method::GET, &gh.api(&format!("/releases/{id}")), None).await?;
+            ok("the release", &r)?;
+            let there = r.1["assets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|a| a["name"] == name.as_str() && a["state"] == "uploaded");
+            if !there {
+                bail!("uploading {name}: HTTP 422: {}", up.1);
+            }
+        } else {
+            ok(&format!("uploading {name}"), &up)?;
+        }
+        eprintln!("ci-release: {name} uploaded");
+    }
+    Ok(())
+}
+
 /// A variable of the CI job's environment (the workflow's `env`, not a service's configuration).
 #[allow(clippy::disallowed_methods)] // CI's own environment, as GitHub sets it (platform 4.5 is for services)
 fn job_env(name: &str) -> Option<String> {
@@ -350,54 +402,8 @@ async fn main() -> Result<()> {
         }
         other => bail!("the release {tag}: HTTP {other}: {}", found.1),
     };
-    let id = release["id"].as_u64().context("the release's id")?;
     let names = assets(&cli.dist, &cli.sha, &cli.work.join("assets"))?;
-    let mut have: Vec<(String, u64, String)> = release["assets"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|a| {
-            Some((
-                a["name"].as_str()?.to_owned(),
-                a["id"].as_u64()?,
-                a["state"].as_str().unwrap_or("").to_owned(),
-            ))
-        })
-        .collect();
-    for name in &names {
-        if let Some(i) = have.iter().position(|(n, _, _)| n == name) {
-            let (_, asset, state) = have.remove(i);
-            if state == "uploaded" {
-                continue;
-            }
-            // an upload that broke off: removed, then sent whole
-            let gone = gh
-                .call(Method::DELETE, &gh.api(&format!("/releases/assets/{asset}")), None)
-                .await?;
-            if gone.0 != StatusCode::NOT_FOUND {
-                ok(&format!("removing the broken {name}"), &gone)?;
-            }
-        }
-        let bytes = std::fs::read(cli.work.join("assets").join(name))?;
-        let url = format!("{UPLOADS}/repos/{}/releases/{id}/assets?name={name}", gh.repo);
-        let up = gh.call(Method::POST, &url, Some(Body::File(bytes))).await?;
-        if up.0 == StatusCode::UNPROCESSABLE_ENTITY {
-            // a try GitHub took but whose answer was lost
-            let r = gh.call(Method::GET, &gh.api(&format!("/releases/{id}")), None).await?;
-            ok("the release", &r)?;
-            let there = r.1["assets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|a| a["name"] == name.as_str() && a["state"] == "uploaded");
-            if !there {
-                bail!("uploading {name}: HTTP 422: {}", up.1);
-            }
-        } else {
-            ok(&format!("uploading {name}"), &up)?;
-        }
-        eprintln!("ci-release: {name} uploaded");
-    }
+    upload(&gh, &release, &names, &cli.work.join("assets")).await?;
     let mut out = std::io::stdout().lock();
     out.write_all(body.as_bytes())?;
     if let Some(summary) = job_env("GITHUB_STEP_SUMMARY") {
