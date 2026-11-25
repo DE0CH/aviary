@@ -592,11 +592,10 @@ mod tests {
         assert!(o.timed_out);
         assert_eq!(o.code, -1);
         assert!(run(&["no-such-command-xyz"], &mut out, 100).is_err());
-        // a grandchild keeping stdout open does not hang us
-        let t = mono_ms();
-        let o = run(&["sh", "-c", "sleep 3 & echo x"], &mut out, 10_000).ok().unwrap();
+        // a grandchild keeping stdout open (past the 10 s bound) does not hang us: one that did would time out
+        let o = run(&["sh", "-c", "sleep 30 & echo x"], &mut out, 10_000).ok().unwrap();
+        assert!(!o.timed_out);
         assert_eq!(o.code, 0);
-        assert!(mono_ms() - t < 2000);
         pipeline(&["sh", "-c", "seq 1 100000"], &[], &["sh", "-c", "wc -l >/dev/null"], 10_000).ok().unwrap();
         assert!(pipeline(&["sh", "-c", "seq 1 10"], &[], &["sh", "-c", "exit 4"], 10_000).is_err());
         // a big stderr only keeps its tail

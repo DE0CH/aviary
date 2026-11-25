@@ -212,7 +212,7 @@ impl Service {
                 pod: cfg.pod.clone(),
                 draining: draining.clone(),
             };
-            jobs.push(turns::sweeper::start(driver.clone()));
+            jobs.push(turns::sweeper::start(driver.clone(), intervals.sweep));
             jobs.push(crate::schedules::fire::spawn(
                 jobs.leader(),
                 driver.clone(),
