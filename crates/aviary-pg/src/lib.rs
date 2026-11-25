@@ -46,7 +46,7 @@ pub use leader::Leader;
 pub use listen::{Listener, Waiter};
 pub use lock::LockKey;
 pub use migrate::{MIGRATIONS_TABLE, Migration, migrate};
-pub use pool::{Conn, DEADLINE_MARGIN, Pool, connect, connect_read_only};
+pub use pool::{Conn, Counts, DEADLINE_MARGIN, Pool, connect, connect_read_only};
 pub use tokio_postgres::types::ToSql;
 pub use tokio_postgres::{Row, Statement};
 #[doc(hidden)]
