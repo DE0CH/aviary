@@ -37,6 +37,7 @@
 //! ```
 
 pub mod auth;
+pub mod clock;
 pub mod drain;
 pub mod env;
 pub mod harness;

@@ -167,8 +167,14 @@ impl Secrets {
 /// changes it.
 #[derive(Debug, Clone)]
 pub struct Tuning {
+    /// The clock every rule below runs on: the real one in production, a manual one tests move
+    /// ([`aviary_core::clock`]).
+    pub clock: aviary_core::clock::Clock,
     /// Deployment facts re-read period (60 s).
     pub facts_every: Duration,
+    /// One magpie list call serves every list request of a person with the same cursor and limit for this long (2 s,
+    /// 7.5.2: the two list requests of a connect share it).
+    pub list_cache: Duration,
     /// Retry period before the first successful facts or JWKS read (1 s).
     pub start_retry: Duration,
     /// A team's JWKS is re-read after this (1 h).
@@ -218,7 +224,9 @@ pub struct Tuning {
 impl Default for Tuning {
     fn default() -> Self {
         Self {
+            clock: aviary_core::clock::Clock::real(),
             facts_every: Duration::from_secs(60),
+            list_cache: feeds::LIST_CACHE,
             start_retry: Duration::from_secs(1),
             jwks_ttl: Duration::from_hours(1),
             jwks_cooldown: Duration::from_secs(30),
@@ -383,7 +391,8 @@ impl App {
             secrets.view_as_keys.clone(),
             metrics.clone(),
         );
-        let socket = paseo::transport::PaseoSocket::new(feeds::Hub::new(Arc::new(feeds::NativeOnly)));
+        let socket =
+            paseo::transport::PaseoSocket::new(feeds::Hub::new(Arc::new(feeds::NativeOnly), tuning.clock.clone()));
         let app = Self(Arc::new(Inner {
             build,
             secrets,
@@ -399,7 +408,7 @@ impl App {
             identity,
             shell: shell::Shell::new(bundle.index().to_vec()),
             bundle,
-            warm: http::Warm::new(tuning.warm_every),
+            warm: http::Warm::new(tuning.warm_every, tuning.clock.clone()),
             models: http::Models::default(),
             metrics,
             socket: Arc::new(socket),
@@ -424,8 +433,14 @@ impl App {
     #[must_use]
     pub fn with_owners(self, owners: Arc<dyn feeds::Owners>) -> Self {
         let projector = self.0.projector.clone();
-        let socket = paseo::transport::PaseoSocket::new(feeds::Hub::new(owners));
+        let socket = paseo::transport::PaseoSocket::new(feeds::Hub::new(owners, self.0.tuning.clock.clone()));
         self.with_socket(Arc::new(socket), projector)
+    }
+
+    /// The clock the rules run on ([`Tuning::clock`]).
+    #[must_use]
+    pub fn clock(&self) -> aviary_core::clock::Clock {
+        self.0.tuning.clock.clone()
     }
 
     /// The replica's sockets and pollers (the Paseo socket's hub).
@@ -499,15 +514,19 @@ impl App {
             "listener, requests and transfers",
             bound + Duration::from_secs(1),
             move || async move {
-                let started = std::time::Instant::now();
-                // step 3 (sockets, request-free first) runs beside steps 2 and 4 (the listener and transfers)
                 let tuning = &app.0.tuning;
+                let started = tuning.clock.now();
+                // step 3 (sockets, request-free first) runs beside steps 2 and 4 (the listener and transfers)
                 // the socket drain resolves only when its sockets are gone: a large send arriving across the drain
                 // keeps the process up to the transfer bound like an upload does
                 let sockets = app.0.socket.drain(tuning.drain_jitter, tuning.drain_rpc_wait, bound);
-                let ((), ()) = tokio::join!(sockets, server.drain(bound));
-                let left = bound.saturating_sub(started.elapsed());
-                if tokio::time::timeout(left, app.transfers().idle()).await.is_err() {
+                let ((), ()) = tokio::join!(sockets, server.drain(bound, tuning.clock.clone()));
+                let left = bound.saturating_sub(tuning.clock.elapsed(started));
+                let idle = tokio::select! {
+                    () = app.transfers().idle() => true,
+                    () = tuning.clock.sleep(left) => false,
+                };
+                if !idle {
                     tracing::warn!(
                         transfers = app.transfers().active(),
                         "drain: transfers still running at the bound"

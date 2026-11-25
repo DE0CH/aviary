@@ -100,7 +100,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
         multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(MAX_BODY)),
     );
     let field = loop {
-        match tokio::time::timeout(idle, parts.next_field()).await {
+        match within(&app.0.tuning.clock, idle, parts.next_field()).await {
             Ok(Ok(Some(f))) if f.name() == Some("files") && f.file_name().is_some() => break f,
             Ok(Ok(Some(_))) => {}
             Ok(Ok(None) | Err(_)) | Err(_) => return error(app, StatusCode::BAD_REQUEST, ""),
@@ -116,7 +116,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
     let upstream = calls_upload(calls, kind, &name, &content_type, reqwest::Body::wrap_stream(stream));
     tokio::pin!(upstream);
-    let feeding = feed(field, parts, tx, idle);
+    let feeding = feed(field, parts, tx, idle, &app.0.tuning.clock);
     tokio::pin!(feeding);
     // the feed and magpie's answer run together; magpie answers early only when it refuses or fails
     let ended = tokio::select! {
@@ -198,16 +198,17 @@ async fn feed(
     mut parts: multer::Multipart<'static>,
     tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
     idle: Duration,
+    clock: &aviary_core::clock::Clock,
 ) -> Fed {
     let mut total: u64 = 0;
     let refused = loop {
-        match tokio::time::timeout(idle, field.chunk()).await {
+        match within(clock, idle, field.chunk()).await {
             Ok(Ok(Some(chunk))) => {
                 total += chunk.len() as u64;
                 if total > MAX_FILE {
                     break StatusCode::PAYLOAD_TOO_LARGE;
                 }
-                match tokio::time::timeout(idle, tx.send(Ok(chunk))).await {
+                match within(clock, idle, tx.send(Ok(chunk))).await {
                     Ok(Ok(())) => {}
                     Ok(Err(_)) => return Fed::UpstreamGone,
                     Err(_) => return Fed::UpstreamStalled,
@@ -216,7 +217,7 @@ async fn feed(
             Ok(Ok(None)) => {
                 // exactly one file part (multer hands out the next part once this one is dropped)
                 drop(field);
-                match rest(&mut parts, idle).await {
+                match rest(&mut parts, idle, clock).await {
                     None => {
                         drop(tx);
                         return Fed::Done(total);
@@ -230,22 +231,26 @@ async fn feed(
     };
     // a broken upstream body: magpie stores nothing
     let broken = matches!(
-        tokio::time::timeout(idle, tx.send(Err(std::io::Error::other("upload aborted")))).await,
+        within(clock, idle, tx.send(Err(std::io::Error::other("upload aborted")))).await,
         Ok(Ok(()))
     );
     Fed::Client(refused, broken)
 }
 
 /// Reads the multipart body after the file part: `None` when it ends with no other `files` part, else the refusal.
-async fn rest(parts: &mut multer::Multipart<'static>, idle: Duration) -> Option<StatusCode> {
+async fn rest(
+    parts: &mut multer::Multipart<'static>,
+    idle: Duration,
+    clock: &aviary_core::clock::Clock,
+) -> Option<StatusCode> {
     loop {
-        match tokio::time::timeout(idle, parts.next_field()).await {
+        match within(clock, idle, parts.next_field()).await {
             Ok(Ok(None)) => return None,
             Ok(Ok(Some(f))) if f.name() == Some("files") => return Some(StatusCode::BAD_REQUEST),
             Ok(Ok(Some(mut f))) => {
                 // another field's bytes, each wait bounded on its own
                 loop {
-                    match tokio::time::timeout(idle, f.chunk()).await {
+                    match within(clock, idle, f.chunk()).await {
                         Ok(Ok(Some(_))) => {}
                         Ok(Ok(None)) => break,
                         Ok(Err(multer::Error::StreamSizeExceeded { .. })) => {
@@ -286,6 +291,22 @@ async fn calls_upload(
                 _ => StatusCode::BAD_GATEWAY,
             })
         }
+    }
+}
+
+/// The transfer's idle bound passed with nothing moving.
+#[derive(Debug)]
+struct Idle;
+
+/// `f`, or `Err` once `idle` of the clock passes first (the transfer's idle rule, [`crate::Tuning::transfer_idle`]).
+async fn within<F: std::future::Future>(
+    clock: &aviary_core::clock::Clock,
+    idle: std::time::Duration,
+    f: F,
+) -> Result<F::Output, Idle> {
+    tokio::select! {
+        v = f => Ok(v),
+        () = clock.sleep(idle) => Err(Idle),
     }
 }
 

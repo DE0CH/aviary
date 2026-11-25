@@ -18,7 +18,9 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use magpie_api::conversations::{ListQuery, ListResponse};
 use serde_json::Value;
@@ -95,6 +97,8 @@ struct HubInner {
     app: OnceLock<App>,
     owners: Arc<dyn Owners>,
     large: Arc<tokio::sync::Semaphore>,
+    /// The rules' clock ([`crate::Tuning::clock`]): lingers, the list cache, the drain.
+    clock: aviary_core::clock::Clock,
 }
 
 impl std::fmt::Debug for Hub {
@@ -105,7 +109,7 @@ impl std::fmt::Debug for Hub {
 
 impl Default for Hub {
     fn default() -> Self {
-        Self::new(Arc::new(NativeOnly))
+        Self::new(Arc::new(NativeOnly), aviary_core::clock::Clock::real())
     }
 }
 
@@ -117,11 +121,12 @@ pub const LARGE_MESSAGE: usize = 8 << 20;
 impl Hub {
     /// A hub whose conversations `owners` routes.
     #[must_use]
-    pub fn new(owners: Arc<dyn Owners>) -> Self {
+    pub fn new(owners: Arc<dyn Owners>, clock: aviary_core::clock::Clock) -> Self {
         Self(Arc::new(HubInner {
             st: Mutex::new(State::default()),
             app: OnceLock::new(),
             owners,
+            clock,
             large: Arc::new(tokio::sync::Semaphore::new(LARGE_AT_ONCE)),
         }))
     }
@@ -417,8 +422,9 @@ impl Hub {
             *idle_since = None;
             return false;
         }
-        let since = *idle_since.get_or_insert_with(Instant::now);
-        if since.elapsed() >= linger {
+        let now = self.0.clock.now();
+        let since = *idle_since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= linger {
             st.change_pollers.remove(person);
             return true;
         }
@@ -446,8 +452,9 @@ impl Hub {
             *idle_since = None;
             return false;
         }
-        let since = *idle_since.get_or_insert_with(Instant::now);
-        if since.elapsed() >= linger {
+        let now = self.0.clock.now();
+        let since = *idle_since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= linger {
             st.timeline_pollers.remove(&key);
             return true;
         }
@@ -459,7 +466,7 @@ impl Hub {
         self.st().timeline_pollers.remove(&(person.to_owned(), conversation));
     }
 
-    /// M1 for a person, with one magpie call per (person, cursor, limit) in [`LIST_CACHE`] (7.5.2: the two list
+    /// M1 for a person, with one magpie call per (person, cursor, limit) in [`crate::Tuning::list_cache`] (7.5.2: the two list
     /// requests of a connect share it).
     /// The call carries the socket's identity (the viewer headers of a view-as socket), and a view-as socket shares
     /// answers only with sockets of the same view session. A failed answer is not kept: the next request asks again.
@@ -474,10 +481,12 @@ impl Hub {
         let key = (conn.person.clone(), viewer, cursor.clone(), limit);
         let cell = {
             let mut st = self.st();
-            st.lists.retain(|_, (at, _)| at.elapsed() < LIST_CACHE);
+            let now = self.0.clock.now();
+            let keep = app.0.tuning.list_cache;
+            st.lists.retain(|_, (at, _)| now.saturating_duration_since(*at) < keep);
             st.lists
                 .entry(key.clone())
-                .or_insert_with(|| (Instant::now(), Arc::new(OnceCell::new())))
+                .or_insert_with(|| (now, Arc::new(OnceCell::new())))
                 .1
                 .clone()
         };
@@ -514,13 +523,15 @@ impl Hub {
     /// Returns when every socket is gone, or at `transfer_bound`; a socket that registers after the drain began is
     /// closed 1012 at once ([`Self::register`]).
     pub async fn drain(&self, jitter: Duration, rpc_wait: Duration, transfer_bound: Duration) {
+        // every time below counts from here, taken before the drain shows (`draining`), whenever its tasks first run
+        let clock = self.0.clock.clone();
+        let started = clock.now();
+        let transfer_deadline = started + transfer_bound;
         let conns: Vec<Arc<Conn>> = {
             let mut st = self.st();
             st.draining = true;
             st.conns.values().cloned().collect()
         };
-        let started = Instant::now();
-        let transfer_deadline = tokio::time::Instant::now() + transfer_bound;
         let half = jitter / 2;
         let mut first: Vec<Arc<Conn>> = Vec::new();
         let mut later: Vec<Arc<Conn>> = Vec::new();
@@ -533,9 +544,10 @@ impl Hub {
         }
         let mut tasks = tokio::task::JoinSet::new();
         for c in first {
-            let at = random_within(half);
+            let due = started + random_within(half);
+            let clock = clock.clone();
             tasks.spawn(async move {
-                tokio::time::sleep(at).await;
+                clock.sleep_until(due).await;
                 if !c.request_free() {
                     c.wait_requests(rpc_wait, transfer_deadline).await;
                 }
@@ -543,9 +555,10 @@ impl Hub {
             });
         }
         for c in later {
-            let at = half + random_within(jitter.saturating_sub(half));
+            let due = started + half + random_within(jitter.saturating_sub(half));
+            let clock = clock.clone();
             tasks.spawn(async move {
-                tokio::time::sleep(at).await;
+                clock.sleep_until(due).await;
                 c.wait_requests(rpc_wait, transfer_deadline).await;
                 c.close_for_drain(rpc_wait, transfer_deadline);
             });
@@ -553,13 +566,22 @@ impl Hub {
         while tasks.join_next().await.is_some() {}
         // every socket has been asked to close: give the last ones a moment to answer, longer while one is still busy
         // (its 1012 waits for a send that began while its queue was being written), never past the bound
-        let deadline = (started + jitter + rpc_wait).max(Instant::now() + Duration::from_secs(3));
+        let deadline = (started + jitter + rpc_wait).max(clock.now() + Duration::from_secs(3));
         let bound = started + transfer_bound;
         while self.sockets() > 0
-            && Instant::now() < bound
-            && (Instant::now() < deadline || self.st().conns.values().any(|c| c.busy()))
+            && clock.now() < bound
+            && (clock.now() < deadline || self.st().conns.values().any(|c| c.busy()))
         {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            // looked at again at every 50 ms of real time and at the clock's deadline
+            let next = if self.st().conns.values().any(|c| c.busy()) {
+                bound
+            } else {
+                deadline.min(bound)
+            };
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_millis(50)) => {}
+                () = clock.sleep_until(next) => {}
+            }
         }
         // step 5: the pollers stop (their control channels close)
         let mut st = self.st();

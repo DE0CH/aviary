@@ -36,7 +36,7 @@ impl Drop for Ws {
     }
 }
 
-pub const WAIT: Duration = Duration::from_secs(10);
+pub const WAIT: Duration = Duration::from_secs(60);
 
 impl Ws {
     /// Opens `/paseo-ws` (with `query`, e.g. a view-as token) as the holder of `token`; the HTTP status when the
@@ -192,6 +192,29 @@ impl Ws {
                 }
             }
         }
+    }
+
+    /// Reads until the server's next ping (answered as it is read; other frames are kept for later reads), then makes
+    /// one request: its reply shows the server read the pong before it.
+    pub async fn answer_ping(&mut self) {
+        let wait = async {
+            loop {
+                match self.stream.next().await {
+                    Some(Ok(Message::Ping(_))) => return,
+                    Some(Ok(Message::Text(t))) => {
+                        let v: Value = serde_json::from_str(t.as_str()).unwrap();
+                        self.keep("out", &v);
+                        self.pending.push_back(v);
+                    }
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => panic!("the socket closed before a ping"),
+                    Some(Ok(_)) => {}
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), wait)
+            .await
+            .unwrap_or_else(|_| panic!("no ping"));
+        self.rpc("fetch_agents_request", json!({})).await;
     }
 
     /// Waits for the first frame matching `pred`, keeping the others for later reads.

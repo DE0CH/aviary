@@ -3,7 +3,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
+
+use tokio::time::Instant;
 
 use aviary_core::ops::Gate;
 use axum::http::{HeaderMap, header};
@@ -124,10 +126,11 @@ pub fn percent_decode_bytes(b: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Seconds since the Unix epoch.
+/// Seconds since the Unix epoch, by `clock`.
 #[must_use]
-pub fn now_secs() -> i64 {
-    SystemTime::now()
+pub fn now_secs(clock: &aviary_core::clock::Clock) -> i64 {
+    clock
+        .system_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
@@ -243,16 +246,16 @@ struct TeamState {
 impl TeamState {
     /// Whether a refresh may start: none is running, and the last attempt succeeded or is a cooldown old (a failing
     /// certs endpoint is asked at most once per cooldown).
-    fn may_retry(&self, cooldown: Duration) -> bool {
+    fn may_retry(&self, cooldown: Duration, now: Instant) -> bool {
         !self.in_flight
             && self
                 .last_attempt
-                .is_none_or(|a| self.fetched.is_some_and(|f| f >= a) || a.elapsed() >= cooldown)
+                .is_none_or(|a| self.fetched.is_some_and(|f| f >= a) || now.saturating_duration_since(a) >= cooldown)
     }
 
-    fn begin(&mut self) {
+    fn begin(&mut self, now: Instant) {
         self.in_flight = true;
-        self.last_attempt = Some(Instant::now());
+        self.last_attempt = Some(now);
     }
 }
 
@@ -523,7 +526,7 @@ impl Identities {
             } else {
                 self.0.tuning.facts_every
             };
-            tokio::time::sleep(wait).await;
+            self.0.tuning.clock.sleep(wait).await;
         }
     }
 
@@ -552,7 +555,7 @@ impl Identities {
             };
             let start = match team.st.lock() {
                 Ok(mut s) if s.fetched.is_none() && !s.in_flight => {
-                    s.begin();
+                    s.begin(self.0.tuning.clock.now());
                     true
                 }
                 Ok(s) => {
@@ -587,7 +590,7 @@ impl Identities {
                 s.in_flight = false;
                 got.map(|keys| {
                     s.keys = keys;
-                    s.fetched = Some(Instant::now());
+                    s.fetched = Some(self.0.tuning.clock.now());
                 })
             }
             Err(_) => Err("poisoned".into()),
@@ -641,12 +644,15 @@ impl Identities {
         }
         let team = self.team(domain)?;
         let cooldown = self.0.tuning.jwks_cooldown;
+        let now = self.0.tuning.clock.now();
         let next = {
             let mut s = team.st.lock().ok()?;
             if let Some(key) = s.keys.get(kid).cloned() {
-                let stale = s.fetched.is_none_or(|f| f.elapsed() >= self.0.tuning.jwks_ttl);
-                if stale && s.may_retry(cooldown) {
-                    s.begin();
+                let stale = s
+                    .fetched
+                    .is_none_or(|f| now.saturating_duration_since(f) >= self.0.tuning.jwks_ttl);
+                if stale && s.may_retry(cooldown, now) {
+                    s.begin(now);
                     self.spawn_fetch(domain, &team);
                 }
                 Next::Have(key)
@@ -655,12 +661,13 @@ impl Identities {
                 Next::Wait(team.done.subscribe())
             } else {
                 let allowed = if s.fetched.is_some() {
-                    s.last_kid_fetch.is_none_or(|a| a.elapsed() >= cooldown)
+                    s.last_kid_fetch
+                        .is_none_or(|a| now.saturating_duration_since(a) >= cooldown)
                 } else {
-                    s.may_retry(cooldown)
+                    s.may_retry(cooldown, now)
                 };
                 if allowed {
-                    s.begin();
+                    s.begin(now);
                     if s.fetched.is_some() {
                         s.last_kid_fetch = s.last_attempt;
                     }
@@ -691,13 +698,15 @@ impl Identities {
             .as_ref()
             .try_into()
             .map_err(|_| Refused::Malformed)?;
-        if let Some((v, _)) = self.0.tokens.get(&digest).await
-            && v.exp + LEEWAY_SECS >= now_secs()
+        let clock = &self.0.tuning.clock;
+        if let Some((v, at)) = self.0.tokens.get(&digest).await
+            && clock.elapsed(at) < self.0.tuning.token_cache
+            && v.exp + LEEWAY_SECS >= now_secs(clock)
         {
             return Ok(v);
         }
         let v = self.verify_uncached(token).await?;
-        self.0.tokens.insert(digest, (v.clone(), Instant::now())).await;
+        self.0.tokens.insert(digest, (v.clone(), clock.now())).await;
         Ok(v)
     }
 
@@ -736,7 +745,7 @@ impl Identities {
         if !aud_ok {
             return Err(Refused::Audience);
         }
-        let now = now_secs();
+        let now = now_secs(&self.0.tuning.clock);
         let exp = claims.get("exp").and_then(Value::as_i64).ok_or(Refused::Time)?;
         if exp + LEEWAY_SECS < now {
             return Err(Refused::Time);
@@ -774,7 +783,7 @@ impl Identities {
     pub async fn access(&self, email: &str) -> Option<Access> {
         let cached = self.0.people.get(email).await;
         if let Some(e) = &cached
-            && e.at.elapsed() < self.0.tuning.people_fresh
+            && self.0.tuning.clock.elapsed(e.at) < self.0.tuning.people_fresh
         {
             return Some(e.access);
         }
@@ -794,7 +803,7 @@ impl Identities {
             }
             Ok(Err(_)) | Err(_) => {
                 let e = cached?;
-                if e.at.elapsed() < self.0.tuning.people_fresh + self.0.tuning.people_stale {
+                if self.0.tuning.clock.elapsed(e.at) < self.0.tuning.people_fresh + self.0.tuning.people_stale {
                     self.0.metrics.hermit_stale();
                     Some(e.access)
                 } else {
@@ -811,7 +820,7 @@ impl Identities {
                 email.to_owned(),
                 PeopleEntry {
                     access,
-                    at: Instant::now(),
+                    at: self.0.tuning.clock.now(),
                 },
             )
             .await;
@@ -858,7 +867,7 @@ impl Identities {
 
     /// Spec 6.2's checks for a caller carrying a view-as token.
     async fn view_as(&self, caller: Person, raw: &str) -> Identity {
-        let Some(claims) = viewas::verify(&self.0.view_as_keys, raw, now_secs()) else {
+        let Some(claims) = viewas::verify(&self.0.view_as_keys, raw, now_secs(&self.0.tuning.clock)) else {
             tracing::warn!(person = %aviary_core::log::person_key(&caller.email), "view-as refused: bad token");
             return Identity::ViewAsRefused;
         };
@@ -894,14 +903,14 @@ impl Identities {
                     p.email.clone(),
                     NameEntry {
                         name: Some(n.clone()),
-                        until: Instant::now() + self.0.tuning.first_name_ok,
+                        until: self.0.tuning.clock.now() + self.0.tuning.first_name_ok,
                     },
                 )
                 .await;
             return Some(n);
         }
         if let Some(e) = self.0.names.get(&p.email).await
-            && Instant::now() < e.until
+            && self.0.tuning.clock.now() < e.until
         {
             return e.name;
         }
@@ -926,7 +935,7 @@ impl Identities {
                 p.email.clone(),
                 NameEntry {
                     name: name.clone(),
-                    until: Instant::now() + keep,
+                    until: self.0.tuning.clock.now() + keep,
                 },
             )
             .await;
@@ -939,7 +948,7 @@ impl Identities {
             .names
             .get(email)
             .await
-            .filter(|e| Instant::now() < e.until)
+            .filter(|e| self.0.tuning.clock.now() < e.until)
             .and_then(|e| e.name)
     }
 
