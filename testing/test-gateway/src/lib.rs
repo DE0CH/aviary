@@ -181,6 +181,9 @@ pub struct Config {
     /// head, a cut body after it). `tools` has its own timeout; `model` has none.
     pub upstream_idle: Duration,
     pub faults: Faults,
+    /// The time the liveness view's rules read (its cache, refresh, retry and sweep); real but in a test that moves
+    /// it ([`aviary_core::clock::Clock::manual`]).
+    pub clock: aviary_core::clock::Clock,
 }
 
 /// The default ops summary: gateway-api's fixture.
@@ -847,7 +850,7 @@ async fn verify(inner: &Inner, token: &str) -> Result<Claims, VerifyError> {
 
 /// Whether the liveness view admits a verified token's sandbox, starting a background refresh when one is due.
 fn admits(inner: &Arc<Inner>, sandbox: Uuid) -> bool {
-    let now = Instant::now();
+    let now = inner.cfg.clock.now().into_std();
     let mut live = lock(&inner.live);
     let e = live.entry(sandbox).or_default();
     e.used = Some(now);
@@ -864,7 +867,7 @@ async fn refresh_liveness(inner: Arc<Inner>, sandbox: Uuid) {
     if inner.cfg.faults.hermit_failure_refuses && lookup == Lookup::Failed {
         lookup = Lookup::Unknown;
     }
-    let now = Instant::now();
+    let now = inner.cfg.clock.now().into_std();
     let mut live = lock(&inner.live);
     let e = live.entry(sandbox).or_default();
     e.view.update(&lookup, now);
@@ -873,10 +876,9 @@ async fn refresh_liveness(inner: Arc<Inner>, sandbox: Uuid) {
 }
 
 async fn liveness_sweeper(inner: Arc<Inner>) {
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
-        tick.tick().await;
-        let now = Instant::now();
+        inner.cfg.clock.sleep(Duration::from_secs(1)).await;
+        let now = inner.cfg.clock.now().into_std();
         let mut due = Vec::new();
         {
             let mut live = lock(&inner.live);

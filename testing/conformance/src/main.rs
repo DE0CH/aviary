@@ -211,6 +211,7 @@ async fn main() -> anyhow::Result<ExitCode> {
                 } else {
                     gateway::Durations::spec()
                 },
+                clock: None,
             };
             gateway::run(o, fakes, &report).await;
             ("gateway", report)

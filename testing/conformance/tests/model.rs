@@ -74,6 +74,7 @@ async fn mock_model_through_the_reference_gateway_passes() {
         upload_cap: test_gateway::UPLOAD_CAP,
         upstream_idle: gateway_api::limits::IDLE_TIMEOUT,
         faults: test_gateway::Faults::default(),
+        clock: aviary_core::clock::Clock::real(),
     };
     let mut registry = prometheus_client::registry::Registry::default();
     let gw = Arc::new(test_gateway::start(cfg, &mut registry).await.unwrap());
