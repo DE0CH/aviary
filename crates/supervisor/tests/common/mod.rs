@@ -156,7 +156,7 @@ impl Filesystem for NullFs {
             ..FsStats::default()
         }
     }
-    fn settle(&self, _deadline: tokio::time::Instant) -> BoxFuture<'_, bool> {
+    fn settle(&self, _within: std::time::Duration) -> BoxFuture<'_, bool> {
         Box::pin(async { true })
     }
     fn close_connections(&self) {}
@@ -417,7 +417,7 @@ impl Filesystem for RecordingFs {
             ..FsStats::default()
         }
     }
-    fn settle(&self, _deadline: Instant) -> BoxFuture<'_, bool> {
+    fn settle(&self, _within: std::time::Duration) -> BoxFuture<'_, bool> {
         Box::pin(async { true })
     }
     fn close_connections(&self) {}
@@ -475,6 +475,7 @@ impl KeeperThread {
             protect_self: false,
             signals: Signals::Pipe(stop_r),
             stop_grace: supervisor::limits::KEEPER_STOP_GRACE,
+            backoff: &supervisor::limits::KEEPER_BACKOFF,
         })
         .unwrap();
         let thread = std::thread::spawn(move || k.run());

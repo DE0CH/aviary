@@ -43,8 +43,27 @@ enum Failure {
     Fatal(String),
 }
 
+/// The end of a read's retries, on the driver's clock (the retries' window is a rule; each read's own timeout is the
+/// HTTP client's).
+#[derive(Clone, Debug)]
+pub struct Until {
+    pub clock: aviary_core::clock::Clock,
+    pub at: Instant,
+}
+
+impl Until {
+    /// [`BLOB_RETRY_FOR`] from now on `clock`.
+    #[must_use]
+    pub fn blob_retries(clock: &aviary_core::clock::Clock) -> Self {
+        Self {
+            clock: clock.clone(),
+            at: clock.now() + BLOB_RETRY_FOR,
+        }
+    }
+}
+
 /// Retries `f` on [`Failure::Retry`] until `deadline`.
-async fn retrying<T, F, Fut>(what: &str, deadline: Instant, mut f: F) -> Result<T, String>
+async fn retrying<T, F, Fut>(what: &str, deadline: &Until, mut f: F) -> Result<T, String>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, Failure>>,
@@ -55,11 +74,11 @@ where
             Ok(v) => return Ok(v),
             Err(Failure::Fatal(e)) => return Err(e),
             Err(Failure::Retry(e)) => {
-                if Instant::now() + delay > deadline {
+                if deadline.clock.now() + delay > deadline.at {
                     return Err(e);
                 }
                 tracing::info!(blob = what, error = %e, "blob read failed: retried");
-                tokio::time::sleep(delay).await;
+                deadline.clock.sleep(delay).await;
                 delay = (delay * 2).min(REPORT_RETRY_MAX);
             }
         }
@@ -82,7 +101,7 @@ fn get_failure(sha: &str, e: &ClientError) -> Failure {
 pub async fn blob(
     magpie: &magpie_api::client::SandboxCalls<'_>,
     sha: &str,
-    deadline: Instant,
+    deadline: &Until,
 ) -> Result<Vec<u8>, String> {
     retrying(sha, deadline, || async {
         let res = magpie
@@ -110,7 +129,7 @@ pub async fn blob(
 pub async fn earlier(
     magpie: &magpie_api::client::SandboxCalls<'_>,
     q: &magpie_api::sandbox::EarlierQuery,
-    deadline: Instant,
+    deadline: &Until,
 ) -> Result<Vec<u8>, String> {
     retrying("the earlier conversation", deadline, || async {
         let res = magpie
@@ -337,7 +356,7 @@ impl Uploads {
         &self,
         magpie: &magpie_api::client::SandboxCalls<'_>,
         items: &[Item],
-        deadline: Instant,
+        deadline: &Until,
     ) -> Result<Vec<String>, String> {
         if !items.is_empty() {
             self.sweep().await;
@@ -406,7 +425,7 @@ impl Uploads {
         &self,
         magpie: &magpie_api::client::SandboxCalls<'_>,
         it: &Item,
-        deadline: Instant,
+        deadline: &Until,
     ) -> Result<String, String> {
         let name = upload_name(&it.workspace_path)
             .ok_or_else(|| format!("bad workspace path {:?}", it.workspace_path))?

@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
+use aviary_core::clock::Clock;
 use gateway_api::models::Models;
 use hermit_api::sandbox_surface::{ActivityEvent, ActivityEventKind, ActivityState};
 use magpie_api::errors::DataCode;
@@ -91,6 +92,9 @@ pub struct DriverConfig {
     pub claude_dir: PathBuf,
     /// Qwen Code's managed directory (`/etc/qwen-code`).
     pub qwen_managed_dir: PathBuf,
+    /// The time every rule reads (the interrupt's grace, the hold's silence, the ends of a generation, the
+    /// heartbeat); real in production, a test's manual clock in tests.
+    pub clock: Clock,
 }
 
 impl DriverConfig {
@@ -103,6 +107,7 @@ impl DriverConfig {
             uploads: Uploads::sandbox(),
             claude_dir: PathBuf::from(crate::boot::AGENT_HOME).join(".claude"),
             qwen_managed_dir: PathBuf::from(managed::QWEN_MANAGED_DIR),
+            clock: Clock::real(),
         }
     }
 }
@@ -186,11 +191,11 @@ struct Turn {
 }
 
 impl Turn {
-    fn new(id: Uuid, origin: TurnOrigin) -> Self {
+    fn new(id: Uuid, origin: TurnOrigin, clock: &Clock) -> Self {
         Self {
             id,
             origin,
-            started: Instant::now(),
+            started: clock.now(),
             interrupt_sent: None,
             interrupt_mono: None,
             uuids: Vec::new(),
@@ -200,12 +205,12 @@ impl Turn {
     }
 
     /// Marks the interrupt sent; whether it was not yet.
-    fn mark_interrupt(&mut self) -> bool {
+    fn mark_interrupt(&mut self, clock: &Clock) -> bool {
         if self.interrupt_sent.is_some() {
             return false;
         }
-        self.interrupt_sent = Some(now());
-        self.interrupt_mono = Some(Instant::now());
+        self.interrupt_sent = Some(wall(clock));
+        self.interrupt_mono = Some(clock.now());
         true
     }
 }
@@ -355,6 +360,8 @@ struct Write {
 
 /// The state behind the lock.
 struct St {
+    /// The driver's clock (every rule's time).
+    clock: Clock,
     run: RunKind,
     turn: Option<Turn>,
     /// A person's turn written while an agent turn ran (7.5): it becomes the turn at the agent turn's result.
@@ -413,8 +420,10 @@ struct St {
 }
 
 impl St {
-    fn new() -> Self {
+    fn new(clock: Clock) -> Self {
         Self {
+            last_output_mono: clock.now(),
+            clock,
             run: RunKind::Idle,
             turn: None,
             queued: None,
@@ -433,7 +442,6 @@ impl St {
             cmd_after: 0,
             last_turn: None,
             last_output: OffsetDateTime::now_utc(),
-            last_output_mono: Instant::now(),
             person_waits: HashMap::new(),
             idle_since: Some(OffsetDateTime::now_utc()),
             crashes: VecDeque::new(),
@@ -482,10 +490,6 @@ impl St {
         self.run = k;
     }
 }
-
-/// Tests: how long the writer holds back the keeper's answer to a prompt (Claude Code answers in the meantime).
-#[cfg(test)]
-pub(crate) static STDIN_ACK_DELAY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// What to do once the lock is released.
 enum Fx {
@@ -546,6 +550,18 @@ pub struct Driver {
     /// Tests: a kill lands while a prompt is with the writer, and its exit is handled after the failed write.
     #[cfg(test)]
     race_kill_with_prompt: std::sync::atomic::AtomicBool,
+    /// Tests: the idle points done, each with the turns ended by then.
+    #[cfg(test)]
+    idle_points: Mutex<Vec<Vec<String>>>,
+    /// Tests: how many times the tick has run.
+    #[cfg(test)]
+    ticks: std::sync::atomic::AtomicU64,
+    /// Tests: the writer holds back the keeper's answer to a prompt until Claude Code's answer has ended the turn.
+    #[cfg(test)]
+    pub(crate) hold_stdin_ack: std::sync::atomic::AtomicBool,
+    /// Tests ([`Driver::race_kill_with_prompt`]): a failed prompt write has been handled.
+    #[cfg(test)]
+    race_prompt_handled: tokio::sync::Notify,
 }
 
 impl std::fmt::Debug for Driver {
@@ -562,8 +578,9 @@ fn origin_str(o: TurnOrigin) -> &'static str {
     }
 }
 
-fn now() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
+/// Wall-clock time on `clock` (the rules on timestamps: pseudo-tasks' ends, the hold's silence).
+fn wall(clock: &Clock) -> OffsetDateTime {
+    OffsetDateTime::from(clock.system_now())
 }
 
 fn wire(t: OffsetDateTime) -> magpie_api::Timestamp {
@@ -575,16 +592,15 @@ fn rfc3339(t: OffsetDateTime) -> String {
         .unwrap_or_default()
 }
 
-/// How long ago `m` was, in milliseconds (what `run.json` keeps of a monotonic instant).
-fn elapsed_ms(m: Instant) -> u64 {
-    u64::try_from(m.elapsed().as_millis()).unwrap_or(u64::MAX)
+/// How long ago `m` was on `clock`, in milliseconds (what `run.json` keeps of a monotonic instant).
+fn elapsed_ms(clock: &Clock, m: Instant) -> u64 {
+    u64::try_from(clock.elapsed(m).as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The monotonic instant `ms` milliseconds ago (a restored timer goes on from where it was).
-fn ago(ms: u64) -> Instant {
-    Instant::now()
-        .checked_sub(Duration::from_millis(ms))
-        .unwrap_or_else(Instant::now)
+/// The instant on `clock` `ms` milliseconds ago (a restored timer goes on from where it was).
+fn ago(clock: &Clock, ms: u64) -> Instant {
+    let now = clock.now();
+    now.checked_sub(Duration::from_millis(ms)).unwrap_or(now)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -809,7 +825,8 @@ impl Driver {
         hermit: Hermit,
         transcript: Arc<dyn Transcript>,
     ) -> Arc<Self> {
-        let reporter = Reporter::new(magpie, transcript.clone());
+        let reporter = Reporter::new(magpie, transcript.clone(), cfg.clock.clone());
+        let clock = cfg.clock.clone();
         Arc::new_cyclic(|me| Self {
             cfg,
             model,
@@ -818,7 +835,7 @@ impl Driver {
             transcript,
             reporter,
             status: watch::channel(RunStatus::idle()).0,
-            st: Mutex::new(St::new()),
+            st: Mutex::new(St::new(clock)),
             changed: watch::channel(0).0,
             ctx: OnceLock::new(),
             turn_lane: tokio::sync::Mutex::new(()),
@@ -830,6 +847,14 @@ impl Driver {
             me: me.clone(),
             #[cfg(test)]
             race_kill_with_prompt: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            idle_points: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            ticks: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            hold_stdin_ack: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            race_prompt_handled: tokio::sync::Notify::new(),
         })
     }
 
@@ -925,12 +950,16 @@ impl Driver {
                 origin: t.map(|t| origin_str(t.origin).to_owned()),
                 pending_inputs: st.pending_inputs,
                 interrupt_sent_at: t.and_then(|t| t.interrupt_sent).map(rfc3339),
-                interrupt_elapsed_ms: t.and_then(|t| t.interrupt_mono).map(elapsed_ms),
+                interrupt_elapsed_ms: t.and_then(|t| t.interrupt_mono).map(|m| elapsed_ms(&st.clock, m)),
                 pending_uuids: t.map(|t| t.uuids.clone()).unwrap_or_default(),
                 last_uuid: t.and_then(|t| t.uuids.last().cloned()),
                 queued_turn_id: st.queued.as_ref().map(|q| q.id.to_string()),
                 handed: t.map(|t| t.handed),
-                queued_interrupt_elapsed_ms: st.queued.as_ref().and_then(|q| q.interrupt_mono).map(elapsed_ms),
+                queued_interrupt_elapsed_ms: st
+                    .queued
+                    .as_ref()
+                    .and_then(|q| q.interrupt_mono)
+                    .map(|m| elapsed_ms(&st.clock, m)),
                 queued_handed: st.queued.as_ref().map(|q| q.handed),
                 images: st.images,
             };
@@ -972,11 +1001,11 @@ impl Driver {
                 Fx::MainTranscript(p) => self.transcript.set_main_transcript(Some(p)),
                 Fx::Terminate(pid) => {
                     if let Some(ctx) = self.ctx() {
-                        let k = ctx.keeper.clone();
+                        let (k, clock) = (ctx.keeper.clone(), self.cfg.clock.clone());
                         self.go(async move {
                             let k2 = k.clone();
                             let _ = tokio::task::spawn_blocking(move || k2.signal(-pid, libc::SIGTERM)).await;
-                            tokio::time::sleep(KILL_AFTER_TERM).await;
+                            clock.sleep(KILL_AFTER_TERM).await;
                             let _ = tokio::task::spawn_blocking(move || {
                                 let _ = k.signal(-pid, libc::SIGKILL);
                                 k.signal(pid, libc::SIGKILL)
@@ -1007,7 +1036,7 @@ impl Driver {
             }
             match deadline {
                 Some(d) => {
-                    if tokio::time::timeout_at(d, rx.changed()).await.is_err() {
+                    if self.cfg.clock.timeout_at(d, rx.changed()).await.is_err() {
                         return f(&lock(&self.st));
                     }
                 }
@@ -1043,7 +1072,7 @@ impl Driver {
         tracing::info!(turn = %turn.id, origin = origin_str(turn.origin), outcome = ?out, ms, held, "turn ended");
         let report = TurnStateReport {
             state,
-            at: wire(now()),
+            at: wire(wall(&self.cfg.clock)),
             harness: magpie_api::Harness::default(),
             provider_session_id: None,
             transcript_path: None,
@@ -1133,13 +1162,13 @@ impl Driver {
     /// supervisor that re-reads the line opens the same turn).
     fn open_agent_turn(st: &mut St, fx: &mut Vec<Fx>, id: Uuid) {
         tracing::info!(turn = %id, origin = "agent", "turn started");
-        st.turn = Some(Turn::new(id, TurnOrigin::Agent));
+        st.turn = Some(Turn::new(id, TurnOrigin::Agent, &st.clock));
         st.set_run(RunKind::Running);
         fx.push(Fx::SetTurn(Some(id)));
         fx.push(Fx::Report(Item::AgentTurn(AgentTurnRequest {
             turn_id: id,
             origin: magpie_api::turns::TurnOrigin::Agent,
-            at: wire(now()),
+            at: wire(wall(&st.clock)),
         })));
     }
 
@@ -1172,8 +1201,8 @@ impl Driver {
         let gen_started = g.started_at;
         let gen_key = format!("{gen_n}:{}", line.end);
         if !matches!(line.out, Out::KeepAlive | Out::Unparsed) {
-            st.last_output = now();
-            st.last_output_mono = Instant::now();
+            st.last_output = wall(&self.cfg.clock);
+            st.last_output_mono = self.cfg.clock.now();
         }
         let mut change = match &line.out {
             Out::Init { .. } | Out::Task(_) | Out::Result(_) | Out::Compacted | Out::ControlRequest { .. } => {
@@ -1228,7 +1257,7 @@ impl Driver {
                     st.images = Some(st.images.unwrap_or(0).saturating_add(images));
                 }
                 if main {
-                    let t = now();
+                    let t = wall(&self.cfg.clock);
                     for tu in &tool_uses {
                         st.tracker.on_tool_use(tu, t);
                         if harness::runs_send_file(tu) {
@@ -1259,7 +1288,7 @@ impl Driver {
                 st.compact_tried = None;
             }
             Out::Task(m) => {
-                let change = st.tracker.on_task(&m, now());
+                let change = st.tracker.on_task(&m, wall(&self.cfg.clock));
                 fx.push(Fx::Task(TaskReportEvent {
                     id: gen_key,
                     task_id: m.task_id.clone(),
@@ -1274,7 +1303,7 @@ impl Driver {
                     description: m.description.clone(),
                     summary: m.summary.clone(),
                     output_file: m.output_file.clone(),
-                    at: wire(now()),
+                    at: wire(wall(&self.cfg.clock)),
                 }));
                 if change == TaskChange::Removed {
                     Self::hold_check(st, fx, "tasks done");
@@ -1366,7 +1395,7 @@ impl Driver {
             tracing::info!(gen = gen_n, code = ?exit.and_then(|e| e.code), signal = ?exit.and_then(|e| e.signal), why = ?g.why, "claude exited");
             fx.push(Fx::Activity(ActivityEvent {
                 kind: ActivityEventKind::GenerationExit,
-                at: now().into(),
+                at: wall(&self.cfg.clock).into(),
                 pid: u32::try_from(g.pid).ok(),
                 comm: Some("claude".into()),
                 rss: None,
@@ -1379,7 +1408,7 @@ impl Driver {
             // an exit nobody asked for, or one after a failed initialisation, counts towards the crash loop (7.9;
             // the limits table's "3 exits in 60 s")
             if matches!(g.why, None | Some(Why::Init)) {
-                let t = Instant::now();
+                let t = self.cfg.clock.now();
                 st.crashes.push_back(t);
                 while st.crashes.front().is_some_and(|c| t.duration_since(*c) > CRASH_LOOP_WINDOW) {
                     st.crashes.pop_front();
@@ -1409,8 +1438,8 @@ impl Driver {
 
     fn tick(&self) {
         self.with(Change::State, |st, fx| {
-            let t = now();
-            let mono = Instant::now();
+            let t = wall(&self.cfg.clock);
+            let mono = self.cfg.clock.now();
             // interrupt grace
             if let (Some(turn), Some(g)) = (st.turn.as_ref(), st.live.as_mut())
                 && let Some(sent) = turn.interrupt_mono
@@ -1461,17 +1490,18 @@ impl Driver {
 
     /// The models, waiting for the route (a spawn is part of starting a turn).
     async fn models(&self) -> Result<Models, String> {
-        let deadline = Instant::now() + MODELS_WAIT;
+        let clock = &self.cfg.clock;
+        let deadline = clock.now() + MODELS_WAIT;
         let mut delay = Duration::from_millis(500);
         loop {
             match self.model.models().await {
                 Ok(m) => return Ok(m),
                 Err(e) => {
-                    if Instant::now() + delay > deadline {
+                    if clock.now() + delay > deadline {
                         return Err(format!("the models route is unavailable: {e}"));
                     }
                     tracing::info!(error = %e, "models route unavailable: retried");
-                    tokio::time::sleep(delay).await;
+                    clock.sleep(delay).await;
                     delay = (delay * 2).min(Duration::from_secs(5));
                 }
             }
@@ -1509,7 +1539,7 @@ impl Driver {
                     self.end_for_the_turns_model(n).await;
                 } else {
                     // initialising (a spawn whose turn was stopped meanwhile, or the pre-spawn): wait for it
-                    self.wait_until(Some(Instant::now() + INIT_WAIT), |s| {
+                    self.wait_until(Some(self.cfg.clock.now() + INIT_WAIT), |s| {
                         s.live.as_ref().is_none_or(|g| g.n != n || g.initialized) || s.cancelled(turn)
                     })
                     .await;
@@ -1531,7 +1561,7 @@ impl Driver {
                 tracing::info!(live = %sid, harness = %h, wanted = %session.id(), wanted_harness = %session.harness, "another session: generation ended");
                 self.end_generation(
                     Why::Graceful,
-                    Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+                    self.cfg.clock.now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
                 )
                 .await;
             }
@@ -1562,7 +1592,7 @@ impl Driver {
             )));
         }
         if let Some(until) = lock(&self.st).failing_until
-            && Instant::now() < until
+            && self.cfg.clock.now() < until
         {
             return Err(GenError::Failed("Claude Code would not start".into()));
         }
@@ -1600,7 +1630,7 @@ impl Driver {
         tracing::info!(gen = n, "a generation on another model than the turn's: ended before the turn");
         self.end_generation(
             Why::Graceful,
-            Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+            self.cfg.clock.now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
         )
         .await;
     }
@@ -1719,7 +1749,7 @@ impl Driver {
             bytes: request(&id),
             done: None,
         });
-        match tokio::time::timeout(INIT_WAIT, rx).await {
+        match self.cfg.clock.timeout(INIT_WAIT, rx).await {
             Ok(Ok(r)) => r,
             Ok(Err(_)) => Err("Claude Code exited".into()),
             Err(_) => {
@@ -1818,7 +1848,7 @@ impl Driver {
                 harness: session.harness,
                 session_id: session.id().to_owned(),
                 initialized: false,
-                started_at: now(),
+                started_at: wall(&self.cfg.clock),
                 why: None,
                 writer: tx.clone(),
                 // what the managed files hold now (written at attach and at each start's step 1)
@@ -1840,7 +1870,7 @@ impl Driver {
         // the initialisation is seen through by its own task, so a turn stopped meanwhile does not wait for it
         let me = self.arc();
         self.go(async move {
-            let verdict = match tokio::time::timeout(INIT_WAIT, init_rx).await {
+            let verdict = match me.cfg.clock.timeout(INIT_WAIT, init_rx).await {
                 Ok(Ok(Ok(()))) => Ok(()),
                 Ok(Ok(Err(e))) => Err(format!("Claude Code refused to initialise: {e}")),
                 Ok(Err(_)) => Err("Claude Code exited before it initialised".into()),
@@ -1893,12 +1923,12 @@ impl Driver {
         // the writer: one message at a time, in order
         let k = ctx.keeper.clone();
         #[cfg(test)]
-        let me = self.arc();
+        let (me, exits) = (self.arc(), ctx.exits.clone());
         self.go(async move {
             while let Some(w) = rx.recv().await {
                 #[cfg(test)]
                 if w.done.is_some() && me.race_kill_with_prompt.load(std::sync::atomic::Ordering::SeqCst) {
-                    me.hold_prompt_until_killed(n).await;
+                    me.hold_prompt_until_killed(n, exits.wait(pid, since)).await;
                 }
                 let k = k.clone();
                 let r =
@@ -1910,11 +1940,10 @@ impl Driver {
                     tracing::debug!(gen = n, error = %e, "stdin write failed");
                 }
                 #[cfg(test)]
-                {
-                    let ms = STDIN_ACK_DELAY_MS.load(std::sync::atomic::Ordering::SeqCst);
-                    if ms > 0 && w.done.is_some() {
-                        tokio::time::sleep(Duration::from_millis(ms)).await;
-                    }
+                if w.done.is_some() && me.hold_stdin_ack.load(std::sync::atomic::Ordering::SeqCst) {
+                    let answered =
+                        tokio::time::timeout(Duration::from_secs(30), me.wait_until(None, |s| s.turn.is_none())).await;
+                    assert!(answered.is_ok(), "Claude Code's answer did not end the turn");
                 }
                 if let Some(d) = w.done {
                     let _ = d.send(r);
@@ -1947,7 +1976,9 @@ impl Driver {
                     #[cfg(test)]
                     if me.race_kill_with_prompt.load(std::sync::atomic::Ordering::SeqCst) {
                         // the failed prompt write is handled first
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        let handled =
+                            tokio::time::timeout(Duration::from_secs(30), me.race_prompt_handled.notified()).await;
+                        assert!(handled.is_ok(), "the failed prompt write was never handled");
                     }
                     let rec = (e.name != keeper::watch::LOST).then_some(e);
                     me.on_exit(n, rec.as_ref());
@@ -1958,19 +1989,20 @@ impl Driver {
     }
 
     /// Tests ([`Driver::race_kill_with_prompt`]): the prompt for generation `n` waits until a kill of `n` is
-    /// recorded and its SIGKILL has landed (at most 10 s), so the write fails before the exit is handled.
+    /// recorded and the keeper has the process's exit (`exited`), so the write fails before the exit is handled.
     #[cfg(test)]
-    async fn hold_prompt_until_killed(&self, n: u32) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline
-            && !lock(&self.st)
-                .live
-                .as_ref()
-                .is_some_and(|g| g.n == n && g.why.is_some())
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+    async fn hold_prompt_until_killed(&self, n: u32, exited: impl std::future::Future<Output = keeper::ExitRecord>) {
+        let guard = Instant::now() + Duration::from_secs(30);
+        let killed = tokio::time::timeout_at(
+            guard,
+            self.wait_until(None, |s| s.live.as_ref().is_some_and(|g| g.n == n && g.why.is_some())),
+        )
+        .await;
+        assert!(killed.is_ok(), "no kill of generation {n}");
+        assert!(
+            tokio::time::timeout_at(guard, exited).await.is_ok(),
+            "generation {n} never exited"
+        );
     }
 
     /// SIGKILLs generation `n`'s group at once and waits (at most 5 s) for its exit to be handled.
@@ -1988,7 +2020,7 @@ impl Driver {
                 k.signal(pid, libc::SIGKILL)
             })
             .await;
-        self.wait_until(Some(Instant::now() + Duration::from_secs(5)), |s| {
+        self.wait_until(Some(self.cfg.clock.now() + Duration::from_secs(5)), |s| {
             s.live.as_ref().is_none_or(|g| g.n != n)
         })
         .await;
@@ -2005,12 +2037,13 @@ impl Driver {
         let Some((n, pid)) = g else { return };
         let gone = move |s: &St| s.live.as_ref().is_none_or(|g| g.n != n);
         let _ = self.keeper_call(move |k| k.close_stdin(pid)).await;
-        let first = (Instant::now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
+        let first =
+            (self.cfg.clock.now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
         if self.wait_until(Some(first), gone).await {
             return;
         }
         let _ = self.keeper_call(move |k| k.signal(-pid, libc::SIGTERM)).await;
-        let second = (Instant::now() + KILL_AFTER_TERM).min(deadline);
+        let second = (self.cfg.clock.now() + KILL_AFTER_TERM).min(deadline);
         if self.wait_until(Some(second), gone).await {
             return;
         }
@@ -2020,13 +2053,28 @@ impl Driver {
                 k.signal(pid, libc::SIGKILL)
             })
             .await;
-        self.wait_until(Some(Instant::now() + Duration::from_secs(2)), gone)
+        self.wait_until(Some(self.cfg.clock.now() + Duration::from_secs(2)), gone)
             .await;
     }
 
     /// At an idle point: old generation files go; a changed configuration or an oversized stdout ends the
     /// generation so the next turn resumes with the new instructions (6.4, 4.5).
     async fn idle_point(&self) {
+        self.idle_point_work().await;
+        #[cfg(test)]
+        {
+            // the turns ended by then: those whose end is on its way and the last one magpie has
+            let after = {
+                let st = lock(&self.st);
+                let mut ended: Vec<String> = st.ending.iter().map(|e| e.id.to_string()).collect();
+                ended.extend(st.last_turn.as_ref().map(|l| l.id.clone()));
+                ended
+            };
+            lock(&self.idle_points).push(after);
+        }
+    }
+
+    async fn idle_point_work(&self) {
         // a start_turn in progress owns the generation (its step 1 applies a configuration change itself)
         let Ok(_lane) = self.turn_lane.try_lock() else {
             // the start_turn is still finishing its delivery while its turn has already ended (a quick answer): the
@@ -2063,7 +2111,7 @@ impl Driver {
             if lock(&self.st).live.as_ref().is_some_and(|g| g.n == n) {
                 self.end_generation(
                     Why::Graceful,
-                    Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+                    self.cfg.clock.now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
                 )
                 .await;
             }
@@ -2106,7 +2154,7 @@ impl Driver {
             Self::open_agent_turn(st, fx, id);
             fx.push(Fx::Stdin(prompt::user_line(
                 &Value::String(command.to_owned()),
-                &rfc3339(now()),
+                &rfc3339(wall(&self.cfg.clock)),
             )));
         });
     }
@@ -2184,7 +2232,7 @@ impl Driver {
                 }
                 Ok(Err(e)) => {
                     tracing::debug!(error = %e, "command poll failed");
-                    tokio::time::sleep(POLL_RETRY).await;
+                    self.cfg.clock.sleep(POLL_RETRY).await;
                 }
                 Err(_) => {}
             }
@@ -2293,7 +2341,9 @@ impl Driver {
                 self.ack(seq, r);
             }
             CommandBody::StopTasks(_) => {
-                let n = self.stop_tasks(Instant::now() + CANCEL_HOLD_WAIT, "stopped").await;
+                let n = self
+                    .stop_tasks(self.cfg.clock.now() + CANCEL_HOLD_WAIT, "stopped")
+                    .await;
                 self.ack(
                     seq,
                     AckResult {
@@ -2446,7 +2496,8 @@ impl Driver {
             }
             // a hold is superseded first, so that what follows finds the generation free
             if lock(&self.st).run == RunKind::Held {
-                self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
+                self.stop_tasks(self.cfg.clock.now() + SUPERSEDE_WAIT, "supersede")
+                    .await;
             }
             // the model this turn runs on. A generation on other managed files ends here and the turn resumes the
             // conversation on a new one; so does one on another model that it cannot be switched to in place
@@ -2475,7 +2526,7 @@ impl Driver {
                 tracing::info!("configuration or model changed: generation ended before the turn");
                 self.end_generation(
                     Why::Graceful,
-                    Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+                    self.cfg.clock.now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
                 )
                 .await;
             }
@@ -2507,8 +2558,8 @@ impl Driver {
                     after: c.after,
                     before: c.before,
                 };
-                let deadline = Instant::now() + uploads::BLOB_RETRY_FOR;
-                let earlier = uploads::earlier(&self.reporter.calls(), &q, deadline).await?;
+                let deadline = uploads::Until::blob_retries(&self.cfg.clock);
+                let earlier = uploads::earlier(&self.reporter.calls(), &q, &deadline).await?;
                 let path = self.cfg.uploads.write(&c.name, earlier).await?;
                 tracing::info!(from = %c.from, file = %path, "the conversation carried over from another harness");
                 prompt::carried(&text, &path)
@@ -2539,17 +2590,17 @@ impl Driver {
                 sha: i.blob.clone(),
             });
         }
-        let blob_deadline = Instant::now() + uploads::BLOB_RETRY_FOR;
+        let blob_deadline = uploads::Until::blob_retries(&self.cfg.clock);
         let paths = self
             .cfg
             .uploads
-            .materialise(&self.reporter.calls(), &items, blob_deadline)
+            .materialise(&self.reporter.calls(), &items, &blob_deadline)
             .await?;
         let mut blocks = Vec::new();
         for i in images {
             blocks.push(prompt::ImageBlock {
                 media_type: i.model_mime.clone(),
-                bytes: uploads::blob(&self.reporter.calls(), &i.model_blob, blob_deadline).await?,
+                bytes: uploads::blob(&self.reporter.calls(), &i.model_blob, &blob_deadline).await?,
             });
         }
         let listed: Vec<prompt::Attached> = files
@@ -2796,7 +2847,7 @@ impl Driver {
             }
             if !current {
                 st.pending_inputs = after;
-                let mut t = Turn::new(turn_id, TurnOrigin::Person);
+                let mut t = Turn::new(turn_id, TurnOrigin::Person, &self.cfg.clock);
                 t.handed = false;
                 if st.turn.as_ref().is_some_and(|t| t.origin == TurnOrigin::Agent) {
                     st.queued = Some(t);
@@ -2909,6 +2960,10 @@ impl Driver {
                     )));
                 }
             });
+            #[cfg(test)]
+            if self.race_kill_with_prompt.load(std::sync::atomic::Ordering::SeqCst) {
+                self.race_prompt_handled.notify_one();
+            }
             self.mark_failed(seq, Some(&e));
             self.drop_message(n, seq).await;
             return self.ack_in(Some(turn_id), seq, err_ack(&e));
@@ -2957,7 +3012,7 @@ impl Driver {
                 .into_iter()
                 .flatten()
             {
-                if t.mark_interrupt() && t.handed {
+                if t.mark_interrupt(&self.cfg.clock) && t.handed {
                     send = true;
                 }
             }
@@ -3073,7 +3128,7 @@ impl Driver {
     /// Writes a message into the running turn `turn_id` and acks `seq` (`delivered: false` when that turn no longer
     /// runs).
     fn inject(&self, seq: u64, turn_id: Option<Uuid>, content: &Value) {
-        let message = prompt::user_line(content, &rfc3339(now()));
+        let message = prompt::user_line(content, &rfc3339(wall(&self.cfg.clock)));
         let lane = self.with(Change::State, |st, fx| {
             let t = st.turn.as_ref()?;
             let running = turn_id == Some(t.id)
@@ -3153,8 +3208,10 @@ impl Driver {
 
     async fn tick_loop(self: Arc<Self>) {
         loop {
-            tokio::time::sleep(TICK).await;
+            self.cfg.clock.sleep(TICK).await;
             self.tick();
+            #[cfg(test)]
+            self.ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -3174,7 +3231,7 @@ impl Driver {
                 (None, RunKind::Idle) => HeartbeatState::Idle,
             },
             tasks: u32::try_from(st.tracker.len()).unwrap_or(u32::MAX),
-            waiting: waiting_on_person(&st.person_waits, Instant::now()),
+            waiting: waiting_on_person(&st.person_waits, self.cfg.clock.now()),
             last_turn: st.last_turn.as_ref().and_then(|l| {
                 Some(HeartbeatLastTurn {
                     id: Uuid::parse_str(&l.id).ok()?,
@@ -3204,7 +3261,7 @@ impl Driver {
                 Err(e) => tracing::debug!(error = %e, "heartbeat failed"),
             }
             tokio::select! {
-                () = tokio::time::sleep(HEARTBEAT_EVERY) => {}
+                () = self.cfg.clock.sleep(HEARTBEAT_EVERY) => {}
                 () = self.heartbeat_now.notified() => {}
             }
         }
@@ -3238,12 +3295,13 @@ impl Driver {
                             Some("agent") => TurnOrigin::Agent,
                             _ => TurnOrigin::Person,
                         },
+                        &self.cfg.clock,
                     );
                     t.uuids.clone_from(&prior.run.pending_uuids);
                     if prior.run.interrupt_sent_at.is_some() {
                         // the grace goes on from where it was (the monotonic clock does not survive the process)
-                        t.interrupt_sent = Some(now());
-                        t.interrupt_mono = Some(ago(prior.run.interrupt_elapsed_ms.unwrap_or(0)));
+                        t.interrupt_sent = Some(wall(&self.cfg.clock));
+                        t.interrupt_mono = Some(ago(&self.cfg.clock, prior.run.interrupt_elapsed_ms.unwrap_or(0)));
                     }
                     t.handed = prior.run.handed.unwrap_or(true);
                     t
@@ -3254,10 +3312,10 @@ impl Driver {
                 .as_deref()
                 .and_then(|t| Uuid::parse_str(t).ok())
                 .map(|id| {
-                    let mut t = Turn::new(id, TurnOrigin::Person);
+                    let mut t = Turn::new(id, TurnOrigin::Person, &self.cfg.clock);
                     if let Some(ms) = prior.run.queued_interrupt_elapsed_ms {
-                        t.interrupt_sent = Some(now());
-                        t.interrupt_mono = Some(ago(ms));
+                        t.interrupt_sent = Some(wall(&self.cfg.clock));
+                        t.interrupt_mono = Some(ago(&self.cfg.clock, ms));
                     }
                     t.handed = prior.run.queued_handed.unwrap_or(true);
                     t
@@ -3294,7 +3352,7 @@ impl Driver {
                     session_id: sid.clone(),
                     initialized: g.initialized,
                     started_at: OffsetDateTime::parse(&g.started_at, &time::format_description::well_known::Rfc3339)
-                        .unwrap_or_else(|_| now()),
+                        .unwrap_or_else(|_| wall(&self.cfg.clock)),
                     why: None,
                     // replaced when the writer starts
                     writer: mpsc::unbounded_channel().0,
@@ -3317,7 +3375,7 @@ impl Driver {
                         TurnOrigin::Agent => Item::AgentTurn(AgentTurnRequest {
                             turn_id: t.id,
                             origin: magpie_api::turns::TurnOrigin::Agent,
-                            at: wire(now()),
+                            at: wire(wall(&self.cfg.clock)),
                         }),
                         _ => Item::state(t.id, running_report(g.harness, &sid)),
                     }));
@@ -3332,7 +3390,7 @@ impl Driver {
                 if st.run == RunKind::Starting {
                     st.run = RunKind::Idle;
                 }
-                st.idle_since = (st.run == RunKind::Idle).then(now);
+                st.idle_since = (st.run == RunKind::Idle).then(|| wall(&self.cfg.clock));
             } else {
                 // the generation died while no supervisor watched: its turn failed (7.9), and nothing it wrote is
                 // waited for any more
@@ -3395,7 +3453,7 @@ fn err_ack(e: &str) -> AckResult {
 fn end_report(state: ReportedState, err: Option<ReportError>) -> TurnStateReport {
     TurnStateReport {
         state,
-        at: wire(now()),
+        at: wire(wall(&Clock::real())),
         harness: magpie_api::Harness::default(),
         provider_session_id: None,
         transcript_path: None,
@@ -3460,6 +3518,10 @@ impl StderrCopy {
 }
 
 impl Agent for Driver {
+    fn clock(&self) -> Clock {
+        self.cfg.clock.clone()
+    }
+
     fn attach(&self, ctx: AttachContext) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let k = ctx.keeper.clone();
@@ -3596,7 +3658,7 @@ impl Agent for Driver {
                 }
                 let mut send = false;
                 for t in [st.turn.as_mut(), st.queued.as_mut()].into_iter().flatten() {
-                    if t.mark_interrupt() && t.handed {
+                    if t.mark_interrupt(&self.cfg.clock) && t.handed {
                         send = true;
                     }
                 }
@@ -3651,14 +3713,18 @@ impl Agent for Driver {
             self.with(Change::State, |st, _| st.quiesced = true);
             // a start_turn or spawn in progress finishes (it refuses to start anything now) before the generation
             // is ended, so nothing it spawned outlives the release
-            let _turn = tokio::time::timeout_at(deadline, self.turn_lane.lock()).await;
-            let _gen = tokio::time::timeout_at(deadline, self.gen_lane.lock()).await;
+            let _turn = self.cfg.clock.timeout_at(deadline, self.turn_lane.lock()).await;
+            let _gen = self.cfg.clock.timeout_at(deadline, self.gen_lane.lock()).await;
             self.end_generation(Why::Release, deadline).await;
             if !self.reporter.drain(deadline).await {
                 tracing::warn!("release: reports still unanswered at the deadline");
             }
             let hb = self.heartbeat();
-            let _ = tokio::time::timeout_at(deadline, self.reporter.calls().heartbeat(&hb)).await;
+            let _ = self
+                .cfg
+                .clock
+                .timeout_at(deadline, self.reporter.calls().heartbeat(&hb))
+                .await;
         })
     }
 
@@ -3708,7 +3774,7 @@ impl Agent for Driver {
             if req.tool_use_id.is_empty() {
                 // the `send-file` command: its files go on the shell call that runs it. The harness writes the call
                 // to its output before it runs the command, so the call is known here within moments.
-                let deadline = Instant::now() + SEND_FILE_CALL_WAIT;
+                let deadline = self.cfg.clock.now() + SEND_FILE_CALL_WAIT;
                 req.tool_use_id = loop {
                     let found = {
                         let mut st = lock(&self.st);
@@ -3716,14 +3782,14 @@ impl Agent for Driver {
                     };
                     match found {
                         Some(id) => break id,
-                        None if Instant::now() >= deadline => {
+                        None if !self.wait_until(Some(deadline), |s| !s.open_sends.is_empty()).await => {
                             return Err(
                                 "send-file sends once per shell command: run it as a command of its own, \
                                         with every file to send"
                                     .to_owned(),
                             );
                         }
-                        None => tokio::time::sleep(Duration::from_millis(50)).await,
+                        None => {}
                     }
                 };
             }
@@ -3739,7 +3805,7 @@ impl Agent for Driver {
         // a command that waits on the person is the run's output: a held run is not silent while it waits; magpie
         // learns at once when the first wait begins or the last one ends (the list's needs-you mark)
         let flipped = self.with(Change::Progress, |st, _| {
-            let now = Instant::now();
+            let now = self.cfg.clock.now();
             st.last_output_mono = now;
             let before = waiting_on_person(&st.person_waits, now);
             st.person_waits.retain(|_, until| *until > now);

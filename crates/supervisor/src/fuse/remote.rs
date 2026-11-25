@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// tokio's instant: the same as std's in a build, and a test can run the rules on paused time
+use tokio::time::Instant;
 
 use magpie_api::client::{ClientError, SandboxCalls};
 use tokio::sync::{Notify, Semaphore, watch};
@@ -263,7 +266,7 @@ impl Remote {
         let every = Self::probe_every(&self.timing);
         HealthProbe(rt.spawn(async move {
             let mut probes = tokio::task::JoinSet::new();
-            let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+            let mut tick = tokio::time::interval_at(Instant::now() + every, every);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
@@ -583,7 +586,7 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_streamed_fetch_that_keeps_advancing_is_not_stuck() {
         assert!(matches!(streamed(false).await, Err(CallError::Stuck(_))));
         assert_eq!(streamed(true).await, Ok(()));
@@ -617,9 +620,15 @@ mod tests {
                 .await
             });
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // every stream permit taken, and the fetches beyond them waiting
+        while r.streams.available_permits() > 0 {
+            tokio::task::yield_now().await;
+        }
+        for _ in 0..crate::limits::MAGPIE_CONCURRENCY * 4 {
+            tokio::task::yield_now().await;
+        }
         let w = tokio::time::timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(30),
             r.call(&OpCtl::default(), "cc/write", |_| async { Ok(7) }, &|| {}),
         )
         .await;
@@ -648,7 +657,8 @@ mod tests {
         let r = Arc::new(Remote::new(
             client,
             Timing {
-                attempt: Duration::from_secs(5),
+                // a probe that waited for the one before would never see a third connect
+                attempt: Duration::from_hours(1),
                 retry_first: Duration::from_millis(10),
                 retry_max: Duration::from_millis(20),
                 stuck_op: Duration::from_secs(600),
@@ -656,14 +666,15 @@ mod tests {
             },
         ));
         let probe = r.health_probe(&tokio::runtime::Handle::current());
-        tokio::time::sleep(Duration::from_millis(450)).await;
-        let n = accepted.load(Ordering::SeqCst);
+        let three = tokio::time::timeout(Duration::from_secs(30), async {
+            while accepted.load(Ordering::SeqCst) < 3 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
         drop(probe);
         server.abort();
-        assert!(
-            n >= 3,
-            "{n} probes in 4.5 periods, each still waiting on its own attempt"
-        );
+        assert!(three.is_ok(), "three probes, each still waiting on its own attempt");
         assert!(!r.ok_since(r.base), "nothing answered");
     }
 }

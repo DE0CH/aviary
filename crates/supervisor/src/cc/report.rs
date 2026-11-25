@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use aviary_core::clock::Clock;
 use magpie_api::client::ClientError;
 use magpie_api::errors::ErrorCode;
 use magpie_api::live::{FrameOp, LiveFrame, LiveFramesRequest};
@@ -40,7 +41,7 @@ const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
 pub const UUID_WAIT_CAP: Duration = Duration::from_mins(30);
 /// After the generation exited and the writes in flight are answered: how long to look whether the uuids are
 /// stored after all.
-const UUID_LAST_LOOK: Duration = Duration::from_secs(2);
+pub(crate) const UUID_LAST_LOOK: Duration = Duration::from_secs(2);
 
 /// Called once magpie answered an item (`true`) or it was given up (`false`: the lease was lost).
 pub type Done = Box<dyn FnOnce(bool) + Send>;
@@ -204,6 +205,11 @@ pub struct Reporter {
     gone: watch::Sender<u32>,
     /// Agent-started turns magpie refused (409 `bad_transition`: a person's turn was active, 7.5's race).
     refused: Mutex<HashSet<Uuid>>,
+    /// The time the batches, the retries' pauses and the waits for a turn's lines are on.
+    clock: Clock,
+    /// Tests: how many times the task-event batch has looked for events.
+    #[cfg(test)]
+    task_passes: AtomicU64,
 }
 
 impl std::fmt::Debug for Reporter {
@@ -216,7 +222,7 @@ impl std::fmt::Debug for Reporter {
 
 impl Reporter {
     #[must_use]
-    pub fn new(magpie: magpie_api::client::Client, transcript: Arc<dyn Transcript>) -> Arc<Self> {
+    pub fn new(magpie: magpie_api::client::Client, transcript: Arc<dyn Transcript>, clock: Clock) -> Arc<Self> {
         Arc::new(Self {
             magpie,
             lease: Mutex::new(None),
@@ -231,6 +237,9 @@ impl Reporter {
             live: Mutex::new(LiveQueue::default()),
             gone: watch::channel(0).0,
             refused: Mutex::new(HashSet::new()),
+            clock,
+            #[cfg(test)]
+            task_passes: AtomicU64::new(0),
         })
     }
 
@@ -255,7 +264,7 @@ impl Reporter {
             biased;
             s = self.transcript.wait_stored(uuids.clone()) => Some(s),
             _ = gone.wait_for(|g| *g >= generation) => None,
-            () = tokio::time::sleep(UUID_WAIT_CAP) => {
+            () = self.clock.sleep(UUID_WAIT_CAP) => {
                 tracing::error!(turn = %turn, generation, uuids = uuids.len(), "a turn's lines were not stored in 30 min: its end is sent without lastUuid");
                 return (false, false);
             }
@@ -266,12 +275,21 @@ impl Reporter {
             None => {
                 // the generation is gone: what it wrote is answered first, then one last look
                 self.transcript.settle().await;
-                let last = tokio::time::timeout(UUID_LAST_LOOK, self.transcript.wait_stored(uuids)).await;
+                let last = self
+                    .clock
+                    .timeout(UUID_LAST_LOOK, self.transcript.wait_stored(uuids))
+                    .await;
                 let stored = matches!(last, Ok(Stored::All));
                 tracing::info!(turn = %turn, generation, stored, "the generation exited while the turn's end waited for its lines");
                 (false, stored)
             }
         }
+    }
+
+    /// The clock the reports' rules are on.
+    #[must_use]
+    pub fn clock(&self) -> &Clock {
+        &self.clock
     }
 
     /// The lease the reports carry.
@@ -338,7 +356,7 @@ impl Reporter {
         let mut n = 0u64;
         let mut gap = false;
         loop {
-            tokio::time::sleep(LIVE_BATCH).await;
+            self.clock.sleep(LIVE_BATCH).await;
             let (frames, dropped) = {
                 let mut q = self.live.lock().unwrap_or_else(PoisonError::into_inner);
                 (std::mem::take(&mut q.frames), std::mem::take(&mut q.gap))
@@ -386,12 +404,13 @@ impl Reporter {
     pub async fn drain(&self, deadline: Instant) -> bool {
         let mut a = self.pending.subscribe();
         let mut b = self.tasks_pending.subscribe();
-        tokio::time::timeout_at(deadline, async {
-            let _ = a.wait_for(|n| *n == 0).await;
-            let _ = b.wait_for(|n| *n == 0).await;
-        })
-        .await
-        .is_ok()
+        self.clock
+            .timeout_at(deadline, async {
+                let _ = a.wait_for(|n| *n == 0).await;
+                let _ = b.wait_for(|n| *n == 0).await;
+            })
+            .await
+            .is_ok()
     }
 
     async fn retry<F, Fut>(&self, what: &str, mut f: F) -> bool
@@ -418,7 +437,7 @@ impl Reporter {
                         tracing::info!(report = what, why = %why, "magpie unavailable: report retried");
                         logged = true;
                     }
-                    tokio::time::sleep(after.map_or(delay, |a| a.max(delay))).await;
+                    self.clock.sleep(after.map_or(delay, |a| a.max(delay))).await;
                     delay = (delay * 2).min(REPORT_RETRY_MAX);
                 }
             }
@@ -577,8 +596,10 @@ impl Reporter {
     /// The task-event batches' task.
     pub async fn run_tasks(self: Arc<Self>) {
         loop {
-            tokio::time::sleep(TASKS_BATCH).await;
+            self.clock.sleep(TASKS_BATCH).await;
             self.flush_tasks().await;
+            #[cfg(test)]
+            self.task_passes.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -654,9 +675,29 @@ mod tests {
         ));
     }
 
+    /// Drains `r` on a manual `clock`: every retry's pause is at most [`REPORT_RETRY_MAX`], so the clock moves on by
+    /// that while reports are left (at a real-time pace, for the requests to be answered in between).
+    async fn drained(r: &Reporter, clock: &Clock) -> bool {
+        let far = clock.now() + Duration::from_hours(24);
+        let moving = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                clock.advance(REPORT_RETRY_MAX);
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::select! {
+                ok = r.drain(far) => ok,
+                () = moving => unreachable!(),
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     /// Real reports (an agent turn, its states, an ask, an ack) through fake magpie answering 503 to everything for
-    /// 20 min (paused time): none is dropped, each arrives exactly once, in its lane's order.
-    #[tokio::test(start_paused = true)]
+    /// 20 min (on a manual clock): none is dropped, each arrives exactly once, in its lane's order.
+    #[tokio::test]
     #[allow(clippy::too_many_lines)] // the outage, then every report checked
     async fn real_reports_survive_a_20_minute_fake_magpie_outage() {
         use magpie_api::sandbox::{AgentTurnRequest, CommandBody};
@@ -675,7 +716,8 @@ mod tests {
         let http = reqwest::Client::builder().default_headers(h).build().unwrap();
         let client = magpie_api::client::Client::new(http, served.url(), "t");
         let lease = client.sandbox(None).lease().await.unwrap();
-        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        let clock = Clock::manual();
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0), clock.clone());
         r.set_lease(lease.lease_id);
         let seq = magpie.push_command(cid, None, CommandBody::StopTasks(magpie_api::Empty {}));
         let fault = magpie
@@ -711,21 +753,31 @@ mod tests {
             result: AckResult::default(),
             done: None,
         });
-        let start = Instant::now();
-        tokio::time::sleep(Duration::from_mins(20)).await;
+        // 20 min in steps of the retry's longest pause: every step wakes the paused retries, and the next step waits
+        // until one of them has tried again
+        let start = clock.now();
+        for _ in 0..120 {
+            let before = magpie.faults().hits();
+            clock.advance(REPORT_RETRY_MAX);
+            let tried = tokio::time::timeout(Duration::from_secs(30), async {
+                while magpie.faults().hits() == before {
+                    tokio::task::yield_now().await;
+                }
+            });
+            assert!(tried.await.is_ok(), "no retry after {:?}", clock.elapsed(start));
+        }
         assert_eq!(
             magpie.script().calls().len(),
             1,
             "nothing but the lease got through the outage"
         );
         assert!(
-            magpie.faults().hits() > 100,
+            magpie.faults().hits() >= 120,
             "retried throughout: {}",
             magpie.faults().hits()
         );
         magpie.faults().remove(fault);
-        assert!(r.drain(Instant::now() + Duration::from_secs(60)).await);
-        assert!(start.elapsed() < Duration::from_mins(21));
+        assert!(drained(&r, &clock).await);
         let routes: Vec<&str> = magpie
             .script()
             .calls()
@@ -772,7 +824,8 @@ mod tests {
         fake.script()
             .always("turn_state", Reply::error(404, "not_found", "no such turn"));
         let client = magpie_api::client::Client::new(reqwest::Client::new(), served.url(), "t");
-        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        let clock = Clock::manual();
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0), clock.clone());
         r.set_lease(Uuid::new_v4());
         tokio::spawn(r.clone().run());
         let end = || TurnStateReport {
@@ -797,13 +850,13 @@ mod tests {
             at: magpie_api::Timestamp::now(),
         }));
         r.push(Item::state(agent, end()));
-        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        assert!(drained(&r, &clock).await);
         assert_eq!(r.given_up(), 0, "the refusal and its turn's 404 are settled");
         assert_eq!(fake.script().calls_to("agent_turn").len(), 1, "never retried");
         assert_eq!(fake.script().calls_to("turn_state").len(), 1);
         // a turn magpie did not refuse: its 404 is a report given up
         r.push(Item::state(Uuid::now_v7(), end()));
-        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        assert!(drained(&r, &clock).await);
         assert_eq!(r.given_up(), 1);
     }
 
@@ -817,7 +870,8 @@ mod tests {
         let fake = aviary_fakes::magpie::FakeMagpie::unguarded();
         let served = fake.serve().await.unwrap();
         let client = magpie_api::client::Client::new(reqwest::Client::new(), served.url(), "t");
-        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        let clock = Clock::manual();
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0), clock.clone());
         r.set_lease(Uuid::new_v4());
         tokio::spawn(r.clone().run());
         tokio::spawn(r.clone().run_tasks());
@@ -854,7 +908,7 @@ mod tests {
                 commands: None,
             },
         ));
-        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        assert!(drained(&r, &clock).await);
         let routes: Vec<&str> = fake.script().calls().iter().map(|c| c.route).collect();
         assert_eq!(routes, ["tasks", "turn_state"], "the task events, then the end");
         let sent = fake.script().calls_to("tasks");
@@ -866,7 +920,15 @@ mod tests {
             .collect();
         assert_eq!(ids, ["1:10", "1:20"], "in the order read");
         // the batch task finds nothing left to send
-        tokio::time::sleep(TASKS_BATCH * 2).await;
+        let passes = || r.task_passes.load(Ordering::SeqCst);
+        let n = passes();
+        clock.advance(TASKS_BATCH);
+        let looked = tokio::time::timeout(Duration::from_secs(30), async {
+            while passes() == n {
+                tokio::task::yield_now().await;
+            }
+        });
+        assert!(looked.await.is_ok(), "the batch task never looked");
         assert_eq!(fake.script().calls_to("tasks").len(), 1);
     }
 
@@ -875,7 +937,7 @@ mod tests {
     async fn a_report_survives_a_20_minute_outage() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let client = magpie_api::client::Client::new(reqwest::Client::new(), "http://127.0.0.1:9", "t");
-        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0), Clock::real());
         let start = Instant::now();
         let attempts = AtomicU32::new(0);
         let ok = r

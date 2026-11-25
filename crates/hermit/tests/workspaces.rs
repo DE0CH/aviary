@@ -35,7 +35,8 @@ struct FakeCli {
     /// `clone` copies the tree, then fails (a `juicefs clone` killed midway).
     fail_clone: AtomicBool,
     /// Each `clone` takes the next plan: it copies the tree, waits, then fails or not.
-    clone_plan: Mutex<std::collections::VecDeque<(Duration, bool)>>,
+    /// Each clone's plan, in order: a gate it waits at until the test opens it (`None`: none), and whether it fails.
+    clone_plan: Mutex<std::collections::VecDeque<(Option<Arc<tokio::sync::Notify>>, bool)>>,
     hook: Mutex<Option<Hook>>,
 }
 
@@ -134,8 +135,10 @@ impl JfsCli for Cli {
             self.note("clone");
             let plan = self.fake.clone_plan.lock().unwrap().pop_front();
             copy_tree(from, to).map_err(|e| CliError::Failed(e.to_string()))?;
-            let (wait, fail) = plan.unwrap_or_default();
-            tokio::time::sleep(wait).await;
+            let (gate, fail) = plan.unwrap_or_default();
+            if let Some(g) = gate {
+                g.notified().await;
+            }
             if fail || self.fake.fail_clone.load(Ordering::SeqCst) {
                 return Err(CliError::Failed("juicefs clone: no answer in 900 s".into()));
             }
@@ -784,16 +787,25 @@ async fn two_clones_of_one_id_at_once_never_share_a_tree() {
     for i in 0..50 {
         std::fs::write(s.ws(from).join(format!("d/f{i}")), format!("{i}")).unwrap();
     }
-    // the first fails after the second has finished; both start in the same second
+    // the first fails after the second has finished: it waits at its gate, which opens once the second is done
+    let gate = Arc::new(tokio::sync::Notify::new());
     s.cli
         .clone_plan
         .lock()
         .unwrap()
-        .extend([(Duration::from_millis(400), true), (Duration::ZERO, false)]);
+        .extend([(Some(gate.clone()), true), (None, false)]);
     let first = s.jfs.clone_workspace(wid, from);
     let second = async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        s.jfs.clone_workspace(wid, from).await
+        assert!(
+            eventually(Duration::from_secs(30), || async {
+                s.cli.log.lock().unwrap().iter().any(|l| l == "clone")
+            })
+            .await,
+            "the first clone began"
+        );
+        let r = s.jfs.clone_workspace(wid, from).await;
+        gate.notify_one();
+        r
     };
     let (a, b) = futures_util::future::join(first, second).await;
     assert_eq!(code(a.unwrap_err()).0, 503);
@@ -953,9 +965,11 @@ async fn a_replica_whose_mount_check_hangs_still_reports_and_says_so() {
     let h = Harness::new("ws_hung_probe").await;
     let s = store();
     let r = h.replica_with("hermit-hung", Arc::new(HungProbe(s.jfs.clone()))).await;
-    let t = tokio::time::Instant::now();
-    hermit::app::report_replica(r.core()).await.unwrap();
-    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    // the probe never answers: a report that waited for it would never end
+    tokio::time::timeout(Duration::from_secs(30), hermit::app::report_replica(r.core()))
+        .await
+        .unwrap_or_else(|_| panic!("the report waited for the hung check"))
+        .unwrap();
     let row = h
         .pool()
         .get()
