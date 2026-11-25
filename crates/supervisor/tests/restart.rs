@@ -66,7 +66,8 @@ async fn restart_reattaches_and_a_release_is_final() {
         assert!(std::time::Instant::now() < deadline, "the supervisor did not exit");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // the keeper had RELEASED before the exit, so the exit starts nothing
+    assert!(k.client.status().unwrap().released);
     assert_eq!(k.supervisor(), None, "not restarted after a release");
     assert_eq!(k.client.status().unwrap().supervisor_restarts, 2);
     assert_eq!(
@@ -90,15 +91,9 @@ async fn a_runtime_stop_is_a_clean_forced_release_within_the_keepers_grace() {
     let dir = common::dir("supervisor-sigterm");
     let mut k = KeeperThread::start(&dir, fakes.proxy(), "child");
     k.ready(&fakes).await;
-    // SIGTERM to PID 1: forwarded, a forced release (Claude Code stopped through the keeper), exit 0
-    let t = std::time::Instant::now();
+    // SIGTERM to PID 1: forwarded, a forced release (Claude Code stopped through the keeper), exit 0. One that
+    // outlasted the keeper's grace would be killed before its stop and unmount
     k.stop();
-    assert!(
-        t.elapsed() < Duration::from_secs(5),
-        "{:?}\n{}",
-        t.elapsed(),
-        lines(&dir, "child.log").join("\n")
-    );
     let agent = lines(&dir, "agent.log");
     assert_eq!(agent.last().map(String::as_str), Some("stop"), "{agent:?}");
     assert_eq!(lines(&dir, "fs.log").last().map(String::as_str), Some("unmount"));

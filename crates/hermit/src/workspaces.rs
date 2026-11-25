@@ -38,7 +38,9 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+
+use tokio::time::Instant;
 
 use futures_util::FutureExt as _;
 use futures_util::future::{BoxFuture, Shared};
@@ -1315,18 +1317,19 @@ mod tests {
         id
     }
 
-    // a FUSE call that hangs (here: a sleep) is a broken mount after the limit
+    // a FUSE call that hangs (here: one that waits until the test lets it go) is a broken mount after the limit. Real
+    // time: a blocking call holds tokio's paused clock still
     #[tokio::test]
     async fn a_hung_filesystem_call_is_a_broken_mount() {
         let (root, s) = temp_store();
-        let t = Instant::now();
+        let (go, hung) = std::sync::mpsc::channel::<()>();
         let e = s
-            .blocking("a test call", Duration::from_millis(100), || {
-                std::thread::sleep(Duration::from_millis(400));
+            .blocking("a test call", Duration::from_millis(100), move || {
+                let _ = hung.recv();
             })
             .await
             .unwrap_err();
-        assert!(t.elapsed() < Duration::from_millis(300));
+        let _ = go.send(());
         assert!(
             matches!(&e, WorkspaceError::NotMounted(m) if m == "a test call: no answer in 0 s"),
             "{e:?}"
@@ -1334,7 +1337,14 @@ mod tests {
         assert!(s.health().unmounted.is_some());
         let api: hermit_api::error::ApiError = e.into();
         assert_eq!(api.status().as_u16(), 503);
-        // a stat older than FS_TIMEOUT that has not answered: the mount is hung, the next check fails at once
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // a stat older than FS_TIMEOUT that has not answered: the mount is hung, the next check fails at once; one that
+    // started just now fails once FS_TIMEOUT is over. On tokio's paused clock: each limit fires exactly when due
+    #[tokio::test(start_paused = true)]
+    async fn a_stat_that_never_answers_is_a_hung_mount() {
+        let (root, s) = temp_store();
         let long_ago = Instant::now().checked_sub(FS_TIMEOUT + Duration::from_secs(1)).unwrap();
         flight(&s, long_ago, futures_util::future::pending().boxed());
         let t = Instant::now();
@@ -1353,7 +1363,8 @@ mod tests {
 
     // a stat that is simply still running is shared by every check that arrives meanwhile: none fails, and no
     // second stat starts
-    #[tokio::test]
+    // on tokio's paused clock: each time limit fires exactly when due, whatever the machine's speed
+    #[tokio::test(start_paused = true)]
     async fn checks_during_a_healthy_stat_share_its_answer() {
         let (root, s) = temp_store();
         let id = flight(
@@ -1385,7 +1396,8 @@ mod tests {
 
     // a slow listing is not a hung mount: 503 without marking the mount, the scan is joined by the retry (same
     // cursor), and a listing of the same folder from elsewhere waits its turn
-    #[tokio::test]
+    // on tokio's paused clock: each time limit fires exactly when due, whatever the machine's speed
+    #[tokio::test(start_paused = true)]
     async fn a_slow_listing_answers_503_and_leaves_the_mount_alone() {
         let (root, s) = temp_store();
         let wid = Uuid::new_v4();
@@ -1523,7 +1535,7 @@ mod tests {
 
     // a one-shot command's store: the removal an unfinished clone left in the background is waited for before the
     // command exits (the runtime would drop it), and one that outlasts the wait is counted
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn settle_waits_for_what_the_store_spawned() {
         let cli = Arc::new(Slow(Mutex::default(), Duration::from_millis(200)));
         let fs = JuiceFs::new("/nonexistent", cli.clone(), 1, 10);
@@ -1548,6 +1560,7 @@ mod tests {
 
     // a rename that answered after its request gave up: landed, the workspace gets its quota and its tree is kept;
     // failed, the temporary tree is removed (and never while the rename may still run)
+    // real time: a blocking call holds tokio's paused clock still
     #[tokio::test]
     async fn a_late_clone_rename_is_settled_when_it_returns() {
         let wid = Uuid::new_v4();
@@ -1566,7 +1579,10 @@ mod tests {
             1,
             10,
         ));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // the settling task runs up to its wait on the blocked rename
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
         assert!(
             rec.0.lock().unwrap().is_empty(),
             "nothing is done while the rename is blocked"
@@ -1586,7 +1602,8 @@ mod tests {
     }
 
     async fn crate_eventually(f: impl Fn() -> bool) -> bool {
-        for _ in 0..100 {
+        let guard = std::time::Instant::now() + Duration::from_secs(30);
+        while std::time::Instant::now() < guard {
             if f() {
                 return true;
             }

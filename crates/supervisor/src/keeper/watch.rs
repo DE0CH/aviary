@@ -285,6 +285,18 @@ mod tests {
     use super::*;
     use crate::keeper::testing::Running;
 
+    /// Waits until a wait for `pid` forked at `since` is registered, then lets it run to its first look.
+    async fn registered(exits: &Exits, pid: i32, since: u64) {
+        let guard = Instant::now() + Duration::from_secs(30);
+        while !exits.lock().waiting.contains_key(&(pid, since)) {
+            assert!(Instant::now() < guard, "the wait for {pid} never registered");
+            tokio::task::yield_now().await;
+        }
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_burst_that_overflows_the_ring_does_not_lose_a_waited_pid() {
         let k = Running::start(None);
@@ -295,7 +307,7 @@ mod tests {
             tokio::spawn(async move { e.wait(victim, 0).await })
         };
         // the waiter is registered; the victim dies and 70 tracked exits follow before the next poll
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        registered(&exits, victim, 0).await;
         k.client.signal(victim, libc::SIGKILL).unwrap();
         k.wait_exit(victim);
         let mut last = 0;
@@ -340,7 +352,7 @@ mod tests {
             let e = exits.clone();
             tokio::spawn(async move { e.wait(4242, 5).await })
         };
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        registered(&exits, 4242, 5).await;
         assert!(!w.is_finished());
         assert_eq!(exits.find(4242, 2).map(|e| e.code), Some(Some(1)));
         exits.lock().push(rec(7, 0));
@@ -379,7 +391,7 @@ mod tests {
             let e = exits.clone();
             tokio::spawn(async move { e.wait(alive, 0).await })
         };
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        registered(&exits, alive, 0).await;
         assert!(!w.is_finished());
         w.abort();
         // nothing late: no keeper call needed and no LOST (dropped_upto and lost_upto below `since`)
@@ -388,7 +400,7 @@ mod tests {
             let e = fresh.clone();
             tokio::spawn(async move { e.wait(i32::MAX - 9, 0).await })
         };
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        registered(&fresh, i32::MAX - 9, 0).await;
         assert!(!w.is_finished());
         w.abort();
     }
