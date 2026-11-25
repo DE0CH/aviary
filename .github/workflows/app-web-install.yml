@@ -18,6 +18,8 @@ permissions:
   contents: read
 
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   AGE_RECIPIENT: age12yv9zraqrhap54e0gqe6j38lcthysyhpz5x6c7dggxqkzjzdmeassp2849
   YYC_SITE: https://ai.yyc-internal.com
 
@@ -51,7 +53,7 @@ jobs:
       - name: Encrypt the screenshots
         if: always()
         run: |
-          sudo apt-get install -y -qq age > /dev/null
+          sudo apt-get -o Acquire::Retries=5 install -y -qq age > /dev/null
           [ -d out ] || exit 0
           tar -czf - -C out . | age -r "$AGE_RECIPIENT" > yyc-web-install.tar.age
           ls -l yyc-web-install.tar.age

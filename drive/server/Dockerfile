@@ -17,7 +17,7 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 # ffmpeg draws the previews (a frame of a video, a picture scaled down)
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=server /src/target/release/yyc-drive /usr/local/bin/yyc-drive
 COPY edge/wrangler.jsonc edge/package.json /srv/edge/
 COPY edge/src /srv/edge/src

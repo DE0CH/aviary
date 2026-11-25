@@ -32,6 +32,8 @@ concurrency:
 permissions:
   contents: read
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   PARTS: ci,app,app-tests,app-android,egress,jarvis,drive,yyc
 jobs:
   ready:

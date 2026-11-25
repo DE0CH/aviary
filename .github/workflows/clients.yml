@@ -35,6 +35,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
+
 jobs:
   build:
     runs-on: ubuntu-24.04

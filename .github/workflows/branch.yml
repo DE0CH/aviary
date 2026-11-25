@@ -6,6 +6,10 @@ on:
   push:
     branches-ignore: [main]
 permissions: { contents: read, pull-requests: write, statuses: write }
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
+
 jobs:
   open:
     runs-on: ubuntu-latest

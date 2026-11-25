@@ -17,6 +17,8 @@ concurrency:
   group: yyc-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   FOLDER: yyc/deploy
   SEALED: yyc/deploy/sealed
   NAMESPACES: yyc-ai,yyc-ai-fabric
@@ -91,7 +93,7 @@ jobs:
           python3 yyc/tests/test_openrouter_guardrail.py
           python3 yyc/tests/test_system_prompt.py
           # bridges.sh against a real HAProxy (the bridge box's)
-          sudo apt-get update -qq && sudo apt-get install -y -qq haproxy >/dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq && sudo apt-get -o Acquire::Retries=5 install -y -qq haproxy >/dev/null
           python3 yyc/tests/test_bridges.py
       - name: sealed folder (item 5)
         run: python3 yyc-code/infra/seal.py --check --names-only --allow-unsealed --root . --map yyc/secrets.txt

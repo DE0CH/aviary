@@ -11,6 +11,10 @@ on:
     types: [completed]
 permissions: { contents: read, pull-requests: write, statuses: write, actions: write }
 concurrency: { group: "merge-${{ github.event.workflow_run.head_branch }}", cancel-in-progress: false }
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
+
 jobs:
   merge:
     if: >-
