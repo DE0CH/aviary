@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aviary_core::auth::Caller;
@@ -117,7 +117,7 @@ pub fn sign_jwt(pem: &Pem, claims: &Value) -> String {
 }
 
 pub fn now() -> i64 {
-    pigeon::identity::now_secs()
+    pigeon::identity::now_secs(&aviary_core::clock::Clock::real())
 }
 
 pub struct Team {
@@ -128,8 +128,9 @@ pub struct Team {
     pub jwks_hits: Arc<AtomicUsize>,
     /// The certs endpoint answers (else 503).
     pub certs_up: Arc<AtomicBool>,
-    /// The certs endpoint waits this long before answering, ms.
-    pub certs_delay_ms: Arc<AtomicU64>,
+    /// While set, the certs endpoint holds its answers until [`Team::release_certs`] (a slow or hanging endpoint, as
+    /// long as the test says, never a time).
+    certs_held: Arc<tokio::sync::watch::Sender<bool>>,
     pub served: aviary_fakes::Served,
 }
 
@@ -153,19 +154,16 @@ impl Team {
         let issuer = Issuer::with_audience(domain, keys, Some(aud)).unwrap();
         let hits = Arc::new(AtomicUsize::new(0));
         let certs_up = Arc::new(AtomicBool::new(true));
-        let certs_delay_ms = Arc::new(AtomicU64::new(0));
-        let (h, up, delay) = (hits.clone(), certs_up.clone(), certs_delay_ms.clone());
+        let certs_held = Arc::new(tokio::sync::watch::channel(false).0);
+        let (h, up, held) = (hits.clone(), certs_up.clone(), certs_held.clone());
         let router = issuer
             .router()
             .layer(axum::middleware::from_fn(move |req: Request, next: Next| {
-                let (h, up, delay) = (h.clone(), up.clone(), delay.clone());
+                let (h, up, mut held) = (h.clone(), up.clone(), held.subscribe());
                 async move {
                     if req.uri().path() == fake_access::CERTS {
                         h.fetch_add(1, Ordering::SeqCst);
-                        let ms = delay.load(Ordering::SeqCst);
-                        if ms > 0 {
-                            tokio::time::sleep(Duration::from_millis(ms)).await;
-                        }
+                        let _ = held.wait_for(|on| !*on).await;
                         if !up.load(Ordering::SeqCst) {
                             return Response::builder().status(503).body(axum::body::Body::empty()).unwrap();
                         }
@@ -181,9 +179,19 @@ impl Team {
             pems,
             jwks_hits: hits,
             certs_up,
-            certs_delay_ms,
+            certs_held,
             served,
         }
+    }
+
+    /// From now on the certs endpoint holds its answers.
+    pub fn hold_certs(&self) {
+        self.certs_held.send_replace(true);
+    }
+
+    /// The held certs answers go out, and later ones at once.
+    pub fn release_certs(&self) {
+        self.certs_held.send_replace(false);
     }
 
     /// A token for `email` from this team's first key.
@@ -218,6 +226,8 @@ impl Team {
 }
 
 pub struct Harness {
+    /// pigeon's timings (its clock is a manual one: [`Harness::advance`]).
+    pub tuning: Tuning,
     pub url: String,
     pub http: reqwest::Client,
     pub hermit: HermitRunning,
@@ -263,9 +273,11 @@ impl Default for Opts {
     }
 }
 
-/// Short timings for tests (the specification's are in [`Tuning::default`]).
+/// Short timings for tests (the specification's are in [`Tuning::default`]), on a manual clock: no rule of time
+/// moves unless the test moves the clock ([`Harness::advance`]), so a test never waits for one to pass.
 pub fn tuning() -> Tuning {
     Tuning {
+        clock: aviary_core::clock::Clock::manual(),
         facts_every: Duration::from_millis(200),
         start_retry: Duration::from_millis(50),
         jwks_cooldown: Duration::from_millis(600),
@@ -347,6 +359,25 @@ fn model_stub(
 impl Harness {
     pub async fn start() -> Self {
         Self::start_with(tuning()).await
+    }
+
+    /// Moves pigeon's clock forward by `d` (every rule of time: caches, cooldowns, holds, lingers, pings).
+    pub fn advance(&self, d: Duration) {
+        self.app.clock().advance(d);
+    }
+
+    /// Moves the clock `step` at a time until `f` holds: for a rule that acts at each period (a retry, a re-read),
+    /// whose next act the test wants. 30 s only stops a test that would hang.
+    pub async fn advance_until(&self, step: Duration, what: &str, mut f: impl FnMut() -> bool) {
+        let wait = async {
+            while !f() {
+                self.advance(step);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), wait)
+            .await
+            .unwrap_or_else(|_| panic!("never: {what}"));
     }
 
     pub async fn start_with(tuning: Tuning) -> Self {
@@ -434,7 +465,7 @@ impl Harness {
                 upstreams,
                 secrets,
                 app_dir,
-                tuning,
+                tuning: tuning.clone(),
             },
             &mut registry,
         )
@@ -457,12 +488,13 @@ impl Harness {
         }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let served = pigeon::server::serve(listener, app.router(), app.large_slots());
+        let served = pigeon::server::serve(listener, app.router(), app.large_slots(), app.clock());
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap();
         Self {
+            tuning,
             url,
             http,
             hermit,
@@ -539,13 +571,11 @@ impl Harness {
             f(&mut c.deployment);
             want = Some(c.deployment.clone());
         });
-        for _ in 0..200 {
-            if self.app.identities().facts().as_deref() == want.as_ref() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        panic!("facts not refreshed");
+        // re-read once a period: the clock moves a period at a time until a re-read has the new facts
+        self.advance_until(self.tuning.facts_every, "the facts refreshed", || {
+            self.app.identities().facts().as_deref() == want.as_ref()
+        })
+        .await;
     }
 }
 
@@ -560,4 +590,17 @@ pub async fn code(r: reqwest::Response) -> (u16, String) {
     let s = r.status().as_u16();
     let v = body_json(r).await;
     (s, v["error"]["code"].as_str().unwrap_or("").to_owned())
+}
+
+/// Waits until `f` holds (a background step the test caused has happened): checked again and again, never a time
+/// the test assumes; 30 s only stops a test that would hang.
+pub async fn until(what: &str, mut f: impl FnMut() -> bool) {
+    let wait = async {
+        while !f() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(30), wait)
+        .await
+        .unwrap_or_else(|_| panic!("never: {what}"));
 }

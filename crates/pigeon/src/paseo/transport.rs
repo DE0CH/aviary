@@ -10,7 +10,9 @@ use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use axum::extract::FromRequestParts;
 use axum::extract::Request;
@@ -45,7 +47,7 @@ const CLOSE_MARKER: &str = "\u{0}close:";
 /// A queue entry for the drain's 1012 ([`Conn::close_for_drain`]): when the writer reaches it and the socket is busy
 /// (a send whose first bytes came while the queue was being written), the 1012 waits for that send's reply.
 const DRAIN_MARKER: &str = "\u{0}drain";
-/// The longest one frame write may take before the socket is dropped.
+/// The longest one frame write may take, on the clock, before the socket is dropped (a client that stopped reading).
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// An inbound message at least this big is a transfer (spec 13: "a large inbound send"): while it arrives and until
 /// its handler ends, the drain waits for it up to the transfer bound rather than the in-flight request bound.
@@ -114,6 +116,8 @@ pub struct Conn {
     parked: Mutex<Option<Instant>>,
     /// How long a parked reader counts as alive without a pong ([`crate::Tuning::transfer_bound`]).
     park_bound: Duration,
+    /// The rules' clock ([`crate::Tuning::clock`]).
+    clock: aviary_core::clock::Clock,
     /// The drain's waits for its 1012 ([`Conn::close_for_drain`]): the in-flight request wait and the transfer
     /// deadline.
     drain_close: Mutex<Option<(Duration, tokio::time::Instant)>>,
@@ -261,11 +265,11 @@ impl Conn {
         self.parked
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() < self.park_bound)
+            .is_some_and(|at| self.clock.elapsed(at) < self.park_bound)
     }
 
     fn set_parked(&self, on: bool) {
-        *self.parked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = on.then(Instant::now);
+        *self.parked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = on.then(|| self.clock.now());
     }
 
     /// Whether the socket is closing or closed.
@@ -325,7 +329,7 @@ impl Conn {
         self.frames
             .as_ref()
             .and_then(crate::server::InboundBytes::waiting_since)
-            .is_some_and(|at| at.elapsed() < self.park_bound)
+            .is_some_and(|at| self.clock.elapsed(at) < self.park_bound)
     }
 
     pub(crate) fn transfer(self: &Arc<Self>) -> Transfer {
@@ -336,25 +340,34 @@ impl Conn {
     /// Not [`Self::busy`] and nothing but heartbeats for the quiet time (5 s, DESIGN 9.3).
     #[must_use]
     pub fn request_free(&self) -> bool {
-        !self.busy() && self.st().last_request.elapsed() >= self.quiet
+        !self.busy() && self.clock.elapsed(self.st().last_request) >= self.quiet
     }
 
     /// Waits until no request is in flight and no message is arriving (its handler then counts as in flight): an
     /// ordinary request at most `rpc_wait`, a transfer (a large send arriving or being handled) until
     /// `transfer_deadline` (spec 11.2 step 3: "that wait has the transfer bound of step 4").
     pub async fn wait_requests(&self, rpc_wait: Duration, transfer_deadline: tokio::time::Instant) {
-        let rpc_deadline = (tokio::time::Instant::now() + rpc_wait).min(transfer_deadline);
+        let rpc_deadline = (self.clock.now() + rpc_wait).min(transfer_deadline);
         loop {
             let idle = self.idle.notified();
             if !self.busy() {
                 return;
             }
-            let now = tokio::time::Instant::now();
+            let now = self.clock.now();
             if now >= transfer_deadline || (now >= rpc_deadline && !self.transferring()) {
                 return;
             }
-            let step = (now + Duration::from_millis(50)).min(transfer_deadline);
-            let _ = tokio::time::timeout_at(step, idle).await;
+            let next = if self.transferring() {
+                transfer_deadline
+            } else {
+                rpc_deadline
+            };
+            // the state is looked at again on each idle notice, each deadline of the clock, and every 50 ms of real
+            // time (a transfer that ends notifies nothing)
+            tokio::select! {
+                _ = tokio::time::timeout(Duration::from_millis(50), idle) => {}
+                () = self.clock.sleep_until(next) => {}
+            }
         }
     }
 
@@ -501,7 +514,7 @@ impl Conn {
     }
 
     fn touched(&self) {
-        self.st().last_request = Instant::now();
+        self.st().last_request = self.clock.now();
     }
 
     /// The person calls of this socket (`Aviary-Person`, and the viewer headers for view-as), one request id each.
@@ -619,7 +632,7 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, frames: Option
             timeline_agents: HashSet::new(),
             agents_floor: None,
             workspaces_floor: None,
-            last_request: Instant::now(),
+            last_request: app.0.tuning.clock.now(),
         }),
         inflight: AtomicUsize::new(0),
         idle: tokio::sync::Notify::new(),
@@ -632,6 +645,7 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, frames: Option
         transfers: AtomicUsize::new(0),
         parked: Mutex::new(None),
         park_bound: app.0.tuning.transfer_bound,
+        clock: app.0.tuning.clock.clone(),
         drain_close: Mutex::new(None),
     });
     hub.register(&conn);
@@ -697,8 +711,8 @@ async fn write_loop(
     mut close_rx: watch::Receiver<Option<(u16, String)>>,
     ping_every: Duration,
 ) -> WriterEnd {
-    let mut ping = tokio::time::interval(ping_every);
-    ping.tick().await;
+    let clock = conn.clock.clone();
+    let mut next_ping = clock.now() + ping_every;
     let mut inbound = conn.inbound_bytes();
     // the drain's 1012 reached while the socket was busy: (in-flight request deadline, transfer deadline)
     let mut drain_wait: Option<(tokio::time::Instant, tokio::time::Instant)> = None;
@@ -724,7 +738,7 @@ async fn write_loop(
                 let Some(frame) = frame else { return GONE };
                 if frame == DRAIN_MARKER {
                     let waits = conn.drain_close.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
-                    let now = tokio::time::Instant::now();
+                    let now = clock.now();
                     match waits {
                         Some((rpc_wait, transfer_deadline)) if conn.busy() && now < transfer_deadline => {
                             drain_wait = Some(((now + rpc_wait).min(transfer_deadline), transfer_deadline));
@@ -742,22 +756,26 @@ async fn write_loop(
                     return WriterEnd { code, sent_close: true };
                 }
                 conn.out_bytes.fetch_sub(frame.len(), Ordering::SeqCst);
-                let sent = tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Text(frame.into()))).await;
-                if !matches!(sent, Ok(Ok(()))) {
+                let sent = tokio::select! {
+                    r = sink.send(Message::Text(frame.into())) => r.is_ok(),
+                    () = clock.sleep(WRITE_TIMEOUT) => false,
+                };
+                if !sent {
                     tracing::info!(conn = %conn.id, "socket write failed or timed out");
                     return GONE;
                 }
             }
             _ = recheck.tick(), if drain_wait.is_some() => {
                 let Some((rpc_deadline, transfer_deadline)) = drain_wait else { continue };
-                let now = tokio::time::Instant::now();
+                let now = clock.now();
                 if !conn.busy() || now >= transfer_deadline || (now >= rpc_deadline && !conn.transferring()) {
                     // behind the replies already queued
                     drain_wait = None;
                     conn.close_after_queued(1012, "service restart");
                 }
             }
-            _ = ping.tick() => {
+            () = clock.sleep_until(next_ping) => {
+                next_ping = clock.now() + ping_every;
                 // a client part-way through sending one large frame cannot send a pong until the frame ends (a 40 MiB
                 // image at 2 Mbit/s takes 160 s), and a reader parked on a large-message slot with a further message in
                 // hand reads none: bytes arriving count as alive, and the parked wait does up to the transfer bound
@@ -772,8 +790,11 @@ async fn write_loop(
                     tracing::info!(conn = %conn.id, "socket missed a ping");
                     return GONE;
                 }
-                let sent = tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Ping(Vec::new().into()))).await;
-                if !matches!(sent, Ok(Ok(()))) {
+                let sent = tokio::select! {
+                    r = sink.send(Message::Ping(Vec::new().into())) => r.is_ok(),
+                    () = clock.sleep(WRITE_TIMEOUT) => false,
+                };
+                if !sent {
                     return GONE;
                 }
             }
@@ -785,15 +806,16 @@ async fn write_loop(
 /// `exp` the socket closes 4401, no longer allowed 4403.
 async fn recheck_loop(app: App, conn: Arc<Conn>, exp: i64, mut close_rx: watch::Receiver<Option<(u16, String)>>) {
     let every = app.0.tuning.socket_recheck;
+    let clock = app.0.tuning.clock.clone();
     loop {
-        let now = crate::identity::now_secs();
+        let now = crate::identity::now_secs(&clock);
         let to_exp = Duration::from_secs(u64::try_from(exp.saturating_sub(now)).unwrap_or(0));
         let wait = every.min(to_exp);
         tokio::select! {
-            () = tokio::time::sleep(wait) => {}
+            () = clock.sleep(wait) => {}
             _ = close_rx.changed() => return,
         }
-        if crate::identity::now_secs() >= exp {
+        if crate::identity::now_secs(&clock) >= exp {
             conn.close(4401, "signed out");
             return;
         }
@@ -820,8 +842,7 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn take(&mut self) -> bool {
-        let now = Instant::now();
+    fn take(&mut self, now: Instant) -> bool {
         self.tokens = (self.tokens + now.duration_since(self.at).as_secs_f64() * RATE).min(BURST);
         self.at = now;
         if self.tokens >= 1.0 {
@@ -840,9 +861,10 @@ async fn read_loop(
     mut stream: futures_util::stream::SplitStream<WebSocket>,
     mut close_rx: watch::Receiver<Option<(u16, String)>>,
 ) {
+    let clock = app.0.tuning.clock.clone();
     let mut bucket = Bucket {
         tokens: BURST,
-        at: Instant::now(),
+        at: clock.now(),
         warned: None,
     };
     // a message the reader took while it waited for a large-message slot, handled next
@@ -896,10 +918,10 @@ async fn read_loop(
         };
         // any traffic shows the client is alive
         conn.pong.store(true, Ordering::SeqCst);
-        if !bucket.take() {
-            if bucket.warned.is_none_or(|w| w.elapsed() >= Duration::from_mins(1)) {
+        if !bucket.take(clock.now()) {
+            if bucket.warned.is_none_or(|w| clock.elapsed(w) >= Duration::from_mins(1)) {
                 tracing::warn!(conn = %conn.id, "inbound frames over the rate; dropped");
-                bucket.warned = Some(Instant::now());
+                bucket.warned = Some(clock.now());
             }
             app.0.metrics.frame_dropped("rate");
             continue;
@@ -1018,6 +1040,7 @@ impl Conn {
             transfers: AtomicUsize::new(0),
             parked: Mutex::new(None),
             park_bound: Duration::from_secs(300),
+            clock: aviary_core::clock::Clock::real(),
             drain_close: Mutex::new(None),
         });
         (conn, (rx, close_rx))

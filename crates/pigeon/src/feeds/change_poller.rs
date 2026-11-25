@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
+use tokio::time::Instant;
 
 use magpie_api::changes::{After, Change, ChangeBody, ChangesQuery, ChangesResponse};
 use magpie_api::client::ClientError;
@@ -83,7 +83,7 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
                 if hub.change_poller_done(&person, &mut idle_since, tuning.poller_linger) {
                     return;
                 }
-                tokio::time::sleep(backoff.wait()).await;
+                tuning.clock.sleep(backoff.wait()).await;
             }
         }
     };
@@ -97,12 +97,12 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
         preparing: HashSet::new(),
     };
     let mut poll = step(p.app.clone(), p.person.clone(), Next::Poll(p.pos), None);
-    let mut tick = tokio::time::interval(
-        tuning
-            .poller_linger
-            .min(std::time::Duration::from_secs(1))
-            .max(std::time::Duration::from_millis(20)),
-    );
+    // the linger is looked at once a tick of the clock (a rule's time: a test moves it)
+    let tick = tuning
+        .poller_linger
+        .min(std::time::Duration::from_secs(1))
+        .max(std::time::Duration::from_millis(20));
+    let mut next_tick = tuning.clock.now() + tick;
     loop {
         tokio::select! {
             c = ctl.recv() => match c {
@@ -140,7 +140,8 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
                 };
                 poll = step(p.app.clone(), p.person.clone(), next, delay);
             }
-            _ = tick.tick() => {
+            () = tuning.clock.sleep_until(next_tick) => {
+                next_tick = tuning.clock.now() + tick;
                 if p.hub.change_poller_done(&p.person, &mut idle_since, tuning.poller_linger) {
                     return;
                 }
@@ -164,7 +165,7 @@ type Step = std::pin::Pin<Box<dyn std::future::Future<Output = (Next, Result<Cha
 fn step(app: App, person: String, next: Next, delay: Option<std::time::Duration>) -> Step {
     Box::pin(async move {
         if let Some(d) = delay {
-            tokio::time::sleep(d).await;
+            app.0.tuning.clock.sleep(d).await;
         }
         let r = match next {
             Next::Poll(pos) => fetch(&app, &person, After::Seq(pos), true).await,
@@ -287,7 +288,7 @@ impl Poller {
                     c,
                     timeline_poller::Ctl::Turn {
                         turn: t.clone(),
-                        received: Instant::now(),
+                        received: self.app.0.tuning.clock.now(),
                     },
                 );
                 if ended && self.preparing.remove(&c) {

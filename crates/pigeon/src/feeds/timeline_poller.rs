@@ -16,7 +16,7 @@
 //! of the new epoch are never sent under the old one.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use tokio::time::Instant;
 
 use magpie_api::changes::TurnChange;
 use magpie_api::client::ClientError;
@@ -208,12 +208,12 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
     };
     let wait_ms = u64::try_from(tuning.poll_wait.as_millis()).unwrap_or(25_000);
     let mut fut: PollFut = Box::pin(poll(p.app.clone(), p.person.clone(), c, tail(), false));
-    let mut tick = tokio::time::interval(
-        tuning
-            .poller_linger
-            .min(std::time::Duration::from_secs(1))
-            .max(std::time::Duration::from_millis(20)),
-    );
+    // the linger is looked at once a tick of the clock (a rule's time: a test moves it)
+    let tick = tuning
+        .poller_linger
+        .min(std::time::Duration::from_secs(1))
+        .max(std::time::Duration::from_millis(20));
+    let mut next_tick = tuning.clock.now() + tick;
     loop {
         let next_deadline = p.pending.front().map(|(_, at)| *at + tuning.turn_hold);
         tokio::select! {
@@ -259,13 +259,14 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
                 let (app, person) = (p.app.clone(), p.person.clone());
                 fut = Box::pin(async move {
                     if let Some(delay) = delay {
-                        tokio::time::sleep(delay).await;
+                        app.0.tuning.clock.sleep(delay).await;
                     }
                     poll(app, person, c, query, wait).await
                 });
             }
-            () = sleep_until(next_deadline) => p.release(true),
-            _ = tick.tick() => {
+            () = sleep_until(&tuning.clock, next_deadline) => p.release(true),
+            () = tuning.clock.sleep_until(next_tick) => {
+                next_tick = tuning.clock.now() + tick;
                 if p.hub.timeline_poller_done(&p.person, c, &mut idle_since, tuning.poller_linger) {
                     return;
                 }
@@ -274,9 +275,9 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
     }
 }
 
-async fn sleep_until(at: Option<Instant>) {
+async fn sleep_until(clock: &aviary_core::clock::Clock, at: Option<Instant>) {
     match at {
-        Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+        Some(at) => clock.sleep_until(at).await,
         None => std::future::pending().await,
     }
 }
@@ -392,9 +393,10 @@ impl Poller {
     /// Sends the waiting turn events whose rows have been sent, and (with `expired`) those held 2 s.
     fn release(&mut self, expired: bool) {
         let hold = self.app.0.tuning.turn_hold;
+        let now = self.app.0.tuning.clock.now();
         while let Some((t, at)) = self.pending.front() {
             let due = self.epoch.is_some() && t.timeline_seq <= self.cursor;
-            if !(due || (expired && at.elapsed() >= hold)) {
+            if !(due || (expired && now.saturating_duration_since(*at) >= hold)) {
                 break;
             }
             let Some((t, _)) = self.pending.pop_front() else {

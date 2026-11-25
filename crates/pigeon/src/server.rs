@@ -12,7 +12,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use axum::Router;
 use axum::body::Body;
@@ -150,6 +152,8 @@ pub struct WsFrames {
     slots: std::collections::VecDeque<tokio::sync::OwnedSemaphorePermit>,
     /// See [`InboundBytes::waiting_since`].
     waiting: Option<Instant>,
+    /// The rules' clock ([`crate::Tuning::clock`]), for `waiting`.
+    clock: aviary_core::clock::Clock,
 }
 
 impl WsFrames {
@@ -265,7 +269,7 @@ impl<T> Counted<T> {
             Poll::Pending => {
                 let mut f = self.read.lock();
                 if f.waiting.is_none() {
-                    f.waiting = Some(Instant::now());
+                    f.waiting = Some(f.clock.now());
                 }
                 Poll::Pending
             }
@@ -342,10 +346,14 @@ impl Listener {
     /// Spec 11.2 steps 2 and 4: closes the listener (stragglers connect to another replica), asks every connection
     /// to finish (idle ones close at once, busy ones answer with `connection: close`) and waits for them, at most
     /// `bound`.
-    pub async fn drain(self, bound: Duration) {
-        let started = Instant::now();
+    pub async fn drain(self, bound: Duration, clock: aviary_core::clock::Clock) {
+        let started = std::time::Instant::now();
         let _ = self.stop.send(true);
-        if tokio::time::timeout(bound, self.done).await.is_err() {
+        let finished = tokio::select! {
+            _ = self.done => true,
+            () = clock.sleep(bound) => false,
+        };
+        if !finished {
             tracing::warn!(
                 connections = self.open.load(Ordering::SeqCst),
                 "drain: connections still open at the transfer bound"
@@ -361,7 +369,12 @@ impl Listener {
 /// Serves `router` on `listener` until [`Listener::drain`]. `large`: the replica's large-message slots
 /// ([`crate::feeds::Hub::large_slots`]), which the listener takes for a large WebSocket message before reading it.
 #[must_use]
-pub fn serve(listener: TcpListener, router: Router, large: Arc<tokio::sync::Semaphore>) -> Listener {
+pub fn serve(
+    listener: TcpListener,
+    router: Router,
+    large: Arc<tokio::sync::Semaphore>,
+    clock: aviary_core::clock::Clock,
+) -> Listener {
     let (stop, mut stopped) = watch::channel(false);
     let open = Arc::new(AtomicUsize::new(0));
     let open2 = open.clone();
@@ -376,9 +389,10 @@ pub fn serve(listener: TcpListener, router: Router, large: Arc<tokio::sync::Sema
                         let stop = stopped.clone();
                         let open = open2.clone();
                         let large = large.clone();
+                        let clock = clock.clone();
                         open.fetch_add(1, Ordering::SeqCst);
                         conns.spawn(async move {
-                            connection(stream, router, stop, large).await;
+                            connection(stream, router, stop, large, clock).await;
                             open.fetch_sub(1, Ordering::SeqCst);
                         });
                     }
@@ -405,8 +419,10 @@ async fn connection(
     router: Router,
     mut stop: watch::Receiver<bool>,
     large: Arc<tokio::sync::Semaphore>,
+    clock: aviary_core::clock::Clock,
 ) {
     let inbound = InboundBytes::default();
+    inbound.lock().clock = clock;
     let io = Counted {
         io: stream,
         read: inbound.clone(),

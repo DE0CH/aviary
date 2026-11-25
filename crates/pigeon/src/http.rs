@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use axum::Router;
 use axum::body::Body;
@@ -761,13 +763,15 @@ pub struct Warm(std::sync::Arc<WarmInner>);
 #[derive(Debug)]
 pub struct WarmInner {
     every: Duration,
+    clock: aviary_core::clock::Clock,
     sent: Mutex<HashMap<(String, Option<Uuid>), Instant>>,
 }
 
 impl Warm {
-    pub(crate) fn new(every: Duration) -> Self {
+    pub(crate) fn new(every: Duration, clock: aviary_core::clock::Clock) -> Self {
         Self(std::sync::Arc::new(WarmInner {
             every,
+            clock,
             sent: Mutex::new(HashMap::new()),
         }))
     }
@@ -776,10 +780,13 @@ impl Warm {
     fn take(&self, person: &str, conversation: Option<Uuid>) -> bool {
         let Ok(mut m) = self.0.sent.lock() else { return false };
         let key = (person.to_owned(), conversation);
-        if m.get(&key).is_some_and(|at| at.elapsed() < self.0.every) {
+        let now = self.0.clock.now();
+        if m.get(&key)
+            .is_some_and(|at| now.saturating_duration_since(*at) < self.0.every)
+        {
             return false;
         }
-        m.insert(key, Instant::now());
+        m.insert(key, now);
         if m.len() > WARM_KEYS
             && let Some(oldest) = m.iter().min_by_key(|(_, at)| **at).map(|(k, _)| k.clone())
         {
@@ -1050,12 +1057,13 @@ pub(crate) fn harness_of(models: &Value, id: &str) -> magpie_api::Harness {
 
 /// The cached model list without waiting (a stale one too), starting a refresh when it is stale or missing.
 pub(crate) fn models_cached(app: &App) -> Option<Value> {
+    let clock = &app.0.tuning.clock;
     let mut st = app.0.models.0.st.lock().ok()?;
     let fresh = st
         .value
         .as_ref()
-        .is_some_and(|(at, _)| at.elapsed() < app.0.tuning.model_ttl);
-    if !fresh && !st.refreshing && st.failed_at.is_none_or(|t| t.elapsed() >= MODEL_RETRY) {
+        .is_some_and(|(at, _)| clock.elapsed(*at) < app.0.tuning.model_ttl);
+    if !fresh && !st.refreshing && st.failed_at.is_none_or(|t| clock.elapsed(t) >= MODEL_RETRY) {
         st.refreshing = true;
         tokio::spawn(refresh_models(app.clone()));
     }
@@ -1070,14 +1078,15 @@ pub(crate) async fn models_value(app: &App) -> Option<Value> {
         let Ok(mut st) = app.0.models.0.st.lock() else {
             return None;
         };
+        let clock = &app.0.tuning.clock;
         if let Some((at, v)) = &st.value
-            && at.elapsed() < app.0.tuning.model_ttl
+            && clock.elapsed(*at) < app.0.tuning.model_ttl
         {
             return Some(v.clone());
         }
         // a stale list waits out the retry pause after a failure; with nothing cached every request may try
         let may_start =
-            !st.refreshing && (st.value.is_none() || st.failed_at.is_none_or(|t| t.elapsed() >= MODEL_RETRY));
+            !st.refreshing && (st.value.is_none() || st.failed_at.is_none_or(|t| clock.elapsed(t) >= MODEL_RETRY));
         if may_start {
             st.refreshing = true;
             tokio::spawn(refresh_models(app.clone()));
@@ -1192,10 +1201,10 @@ async fn refresh_models(app: App) {
         st.refreshing = false;
         match value {
             Some(v) => {
-                st.value = Some((Instant::now(), v));
+                st.value = Some((app.0.tuning.clock.now(), v));
                 st.failed_at = None;
             }
-            None => st.failed_at = Some(Instant::now()),
+            None => st.failed_at = Some(app.0.tuning.clock.now()),
         }
     }
     app.0.models.0.done.send_modify(|n| *n += 1);

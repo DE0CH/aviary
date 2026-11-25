@@ -65,12 +65,42 @@ pub struct State {
     pub auto_end: bool,
     /// Each conversation search as magpie got it.
     pub searches: Vec<magpie_api::search::ConversationSearchRequest>,
+    /// Calls waiting now, by what they wait for: `timeline <id>` (a long-poll after a cursor), `changes <person>` (a
+    /// long-poll after a seq) and `hold <route>` (parked at [`Model::hold`]). [`Model::waiting`] waits for one.
+    pub waiting: HashMap<String, usize>,
+    /// Timeline calls so far, by conversation (a poller's every read: its tail and each poll).
+    pub polls: HashMap<Uuid, usize>,
 }
 
 #[derive(Clone, Default)]
 pub struct Model {
     st: Arc<Mutex<State>>,
     changed: Arc<Notify>,
+    /// Woken whenever a call starts or stops waiting ([`State::waiting`]).
+    polls: Arc<Notify>,
+}
+
+/// A call counted in [`State::waiting`] while it waits.
+struct Waiting<'a> {
+    m: &'a Model,
+    key: String,
+}
+
+impl<'a> Waiting<'a> {
+    fn new(m: &'a Model, key: String) -> Self {
+        *m.st().waiting.entry(key.clone()).or_default() += 1;
+        m.polls.notify_waiters();
+        Self { m, key }
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        if let Some(n) = self.m.st().waiting.get_mut(&self.key) {
+            *n -= 1;
+        }
+        self.m.polls.notify_waiters();
+    }
 }
 
 pub const GENERATION: &str = "gen-1";
@@ -90,6 +120,74 @@ impl Model {
 
     fn bump(&self) {
         self.changed.notify_waiters();
+    }
+
+    /// Waits until a call waits on `key` ([`State::waiting`]). The event itself, never a time; 30 s only stops a test
+    /// that would hang.
+    pub async fn waiting(&self, key: &str) {
+        self.waiting_n(key, 1).await;
+    }
+
+    /// Waits until `n` calls wait on `key` at once.
+    pub async fn waiting_n(&self, key: &str, n: usize) {
+        let wait = async {
+            loop {
+                let woken = self.polls.notified();
+                tokio::pin!(woken);
+                woken.as_mut().enable();
+                if self.st().waiting.get(key).copied().unwrap_or(0) >= n {
+                    return;
+                }
+                woken.await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), wait)
+            .await
+            .unwrap_or_else(|_| panic!("nothing waited on {key}"));
+    }
+
+    /// Waits until `f` holds for the stand-in's state (a call pigeon made has arrived): checked on every change of
+    /// the state, never after a time; 30 s only stops a test that would hang.
+    pub async fn until(&self, what: &str, f: impl Fn(&State) -> bool) {
+        let wait = async {
+            loop {
+                if f(&self.st()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), wait)
+            .await
+            .unwrap_or_else(|_| panic!("never: {what}"));
+    }
+
+    /// Waits until a poller holds a timeline long-poll for `id`: it has its cursor, so a row added after this returns
+    /// is pushed to every socket watching `id` (a row added before a new poller's first read of the tail is history the
+    /// app fetches, never pushed).
+    pub async fn polling(&self, id: Uuid) {
+        self.waiting(&format!("timeline {id}")).await;
+    }
+
+    /// Timeline calls for `id` so far ([`State::polls`]).
+    pub fn polls_of(&self, id: Uuid) -> usize {
+        self.st().polls.get(&id).copied().unwrap_or(0)
+    }
+
+    /// Waits until a poller for `id` has read again since `before` ([`Model::polls_of`]) and holds its poll: every row
+    /// added before this was in a page it has handled.
+    pub async fn polled_after(&self, id: Uuid, before: usize) {
+        let key = format!("timeline {id}");
+        self.until("the poller read again and holds", |st| {
+            st.polls.get(&id).copied().unwrap_or(0) > before && st.waiting.get(&key).copied().unwrap_or(0) > 0
+        })
+        .await;
+    }
+
+    /// Waits until `person`'s change poller holds a long-poll after its seq: a change made after this returns is
+    /// pushed to their subscribed sockets.
+    pub async fn polling_changes(&self, person: &str) {
+        self.waiting(&format!("changes {person}")).await;
     }
 
     pub fn calls_to(&self, route: &str) -> usize {
@@ -119,6 +217,7 @@ impl Model {
     async fn held(&self, route: &'static str) {
         let h = self.st().hold.get(route).cloned();
         if let Some(h) = h {
+            let _parked = Waiting::new(self, format!("hold {route}"));
             h.notified().await;
             self.st().hold.remove(route);
         }
@@ -725,8 +824,10 @@ impl Server for Model {
     async fn timeline(&self, ctx: Ctx, id: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
         self.record("timeline", &ctx)?;
         self.mine(&ctx, id)?;
+        *self.st().polls.entry(id).or_default() += 1;
         let wait = Duration::from_millis(query.wait_ms.unwrap_or(0).min(25_000));
         let deadline = tokio::time::Instant::now() + wait;
+        let mut holding = None;
         loop {
             let notified = self.changed.notified();
             {
@@ -738,6 +839,9 @@ impl Server for Model {
                 if query.after.is_none() || !page.rows.is_empty() || page.live.is_some() || wait.is_zero() {
                     return Ok(page);
                 }
+            }
+            if holding.is_none() {
+                holding = Some(Waiting::new(self, format!("timeline {id}")));
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 let st = self.st();
@@ -789,6 +893,7 @@ impl Server for Model {
         let wait = Duration::from_millis(query.wait_ms.unwrap_or(0).min(25_000));
         let deadline = tokio::time::Instant::now() + wait;
         let limit = query.limit.unwrap_or(500) as usize;
+        let mut holding = None;
         loop {
             let notified = self.changed.notified();
             {
@@ -816,6 +921,9 @@ impl Server for Model {
                         changes,
                     });
                 }
+            }
+            if holding.is_none() {
+                holding = Some(Waiting::new(self, format!("changes {person}")));
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 let head = self.st().heads.get(&person).copied().unwrap_or(0);
