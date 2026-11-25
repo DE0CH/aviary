@@ -281,6 +281,9 @@ async function main() {
     shell("logcat", "-G", "32M"); // room for the whole run's log
     // a fresh emulator's Play Store updates itself and starves everything else (the launcher stops responding)
     tryShell("pm", "disable-user", "--user", "0", "com.android.vending");
+    // and the system's own "isn't responding" and crash dialogs are never shown: one over the screen hid the app for the
+    // whole run (main's c5a92b3d82, "Pixel Launcher isn't responding"), and a wait for the emulator to settle is a time
+    shell("settings", "put", "global", "hide_error_dialogs", "1");
     // the emulator has a hardware keyboard: show the on-screen one anyway, as on a phone
     shell("settings", "put", "secure", "show_ime_with_hard_keyboard", "1");
     shell("settings", "put", "system", "accelerometer_rotation", "0");
@@ -289,11 +292,6 @@ async function main() {
 
     // ---- folded: the cover screen ----
     setScreen(COVER);
-    // let the freshly booted emulator settle (its launcher's "isn't responding" comes in the first minute)
-    for (let i = 0; i < 10; i += 1) {
-      answerNuisance(dumpUi());
-      await sleep(3000);
-    }
     // a freshly booted emulator sometimes drops the first start: ask again
     let signIn = null;
     for (let attempt = 0; attempt < 3 && !signIn; attempt += 1) {
