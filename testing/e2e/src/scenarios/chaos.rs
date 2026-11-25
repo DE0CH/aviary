@@ -231,12 +231,29 @@ impl Rider {
             .iter()
             .filter(|r| r["item"]["type"] == "assistant_message" && r["item"]["text"] == DONE)
             .count();
-        ensure!(
-            u32::try_from(done).unwrap_or(0) == self.turns,
-            "{}: {} turns sent, {done} replies ended",
-            self.id,
-            self.turns
-        );
+        if u32::try_from(done).unwrap_or(0) != self.turns {
+            // what the timeline has instead: every row kind counted, and the assistant texts that are neither part of
+            // the scripted reply (the first ones of each)
+            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+            for r in &all {
+                *kinds
+                    .entry(r["item"]["type"].as_str().unwrap_or("?").to_owned())
+                    .or_default() += 1;
+            }
+            let odd: Vec<String> = all
+                .iter()
+                .filter(|r| r["item"]["type"] == "assistant_message")
+                .filter_map(|r| r["item"]["text"].as_str())
+                .filter(|t| *t != DONE && *t != "Chaos turn.")
+                .take(10)
+                .map(|t| t.chars().take(200).collect())
+                .collect();
+            bail!(
+                "{}: {} turns sent, {done} replies ended; rows by kind {kinds:?}; other assistant texts {odd:?}",
+                self.id,
+                self.turns
+            );
+        }
         Ok(format!(
             "{}: {} turns, {} rows, socket reopened {} times, {} sends retried ({:?})",
             self.id,
