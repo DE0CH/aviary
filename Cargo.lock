@@ -1042,6 +1042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ci-release"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aviary-core",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ci-services"
 version = "0.0.0"
 dependencies = [

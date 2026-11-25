@@ -759,7 +759,7 @@ jobs:
       PART_SHA: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {fetch-depth: 0, filter: "blob:none"}  # release.sh reads the part's commit
+        with: {fetch-depth: 0, filter: "blob:none"}  # ci-release reads the part's commit
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -821,7 +821,9 @@ jobs:
       - name: the release aviary-<sha12>
         env:
           GH_TOKEN: ${{ github.token }}
-        run: .github/ci/release.sh dist "${PART_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
+        # testing/ci-release, built with the other binaries into dist/: every GitHub call is tried again, and a
+        # re-run finishes a release an earlier one began
+        run: chmod +x dist/ci-release && dist/ci-release dist "${PART_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
 
   fabric-host:
     # aviary's own fabric replica (testing/fabric-replica, Jarvis 4's PLAN-fabric): the runner becomes one fabric host
