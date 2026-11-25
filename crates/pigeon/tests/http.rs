@@ -5,7 +5,7 @@
 mod common;
 
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aviary_fakes::{FaultKind, Reply};
 use common::*;
@@ -144,7 +144,7 @@ async fn unknown_kid_refetches_with_a_cooldown_and_rotation_works() {
     );
     // rotation: the new key is published; after the cooldown its first token refetches and verifies
     t1.issuer.set_published("t1-b", true).unwrap();
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    h.advance(Duration::from_millis(700));
     let rotated = t1.mint(ADMIN, 3600, None, Some("t1-b"));
     assert_eq!(h.as_token(h.get(me()), &rotated).send().await.unwrap().status(), 200);
     // the old key retired: its tokens keep working while the cached set holds it (cache 1 h), new kid still fine
@@ -161,7 +161,7 @@ async fn a_stale_key_set_is_used_while_one_refresh_runs() {
     })
     .await;
     let t1 = &h.teams[0];
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    h.advance(Duration::from_millis(400));
     let before = t1.jwks_hits.load(Ordering::SeqCst);
     let mut all = Vec::new();
     for i in 0..10 {
@@ -171,7 +171,11 @@ async fn a_stale_key_set_is_used_while_one_refresh_runs() {
     for r in all {
         assert_eq!(r.await.unwrap().unwrap().status(), 200, "the stale set still verifies");
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // the refresh runs in the background; no other may start before the clock moves (the cooldown)
+    common::until("the background refresh", || {
+        t1.jwks_hits.load(Ordering::SeqCst) > before
+    })
+    .await;
     assert_eq!(
         t1.jwks_hits.load(Ordering::SeqCst),
         before + 1,
@@ -188,7 +192,7 @@ async fn a_failing_refresh_of_a_stale_set_is_tried_once_per_cooldown() {
     })
     .await;
     let t1 = &h.teams[0];
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    h.advance(Duration::from_millis(400));
     t1.certs_up.store(false, Ordering::SeqCst);
     let before = t1.jwks_hits.load(Ordering::SeqCst);
     for round in 0..2 {
@@ -209,7 +213,7 @@ async fn a_failing_refresh_of_a_stale_set_is_tried_once_per_cooldown() {
             let want = if i % 2 == 0 { 200 } else { 401 };
             assert_eq!(r.await.unwrap().unwrap().status(), want);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        common::until("the refresh attempt", || t1.jwks_hits.load(Ordering::SeqCst) > before).await;
     }
     assert_eq!(
         t1.jwks_hits.load(Ordering::SeqCst),
@@ -217,10 +221,13 @@ async fn a_failing_refresh_of_a_stale_set_is_tried_once_per_cooldown() {
         "one attempt inside the cooldown, however many requests miss the fresh set"
     );
     // after the cooldown one more attempt; once the certs answer the set is fresh again
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    h.advance(Duration::from_millis(600));
     t1.certs_up.store(true, Ordering::SeqCst);
     assert_eq!(h.get_as(me(), STAFF).await.status(), 200);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    common::until("the attempt after the cooldown", || {
+        t1.jwks_hits.load(Ordering::SeqCst) >= before + 2
+    })
+    .await;
     assert_eq!(t1.jwks_hits.load(Ordering::SeqCst), before + 2);
 }
 
@@ -228,15 +235,17 @@ async fn a_failing_refresh_of_a_stale_set_is_tried_once_per_cooldown() {
 async fn parallel_requests_with_a_new_kid_wait_for_one_fetch() {
     let h = Harness::start().await;
     let t1 = &h.teams[0];
-    // rotation: the new key is published, and the certs answer slowly
+    // rotation: the new key is published, and the certs hold their answer until every request waits on the fetch
     t1.issuer.set_published("t1-b", true).unwrap();
-    t1.certs_delay_ms.store(300, Ordering::SeqCst);
+    t1.hold_certs();
     let before = t1.jwks_hits.load(Ordering::SeqCst);
     let token = t1.mint(STAFF, 3600, None, Some("t1-b"));
     let mut all = Vec::new();
     for path in [me(), "/api/providers/claude/models", me(), me(), me(), me(), me(), me()] {
         all.push(tokio::spawn(h.as_token(h.get(path), &token).send()));
     }
+    common::until("the fetch", || t1.jwks_hits.load(Ordering::SeqCst) > before).await;
+    t1.release_certs();
     for r in all {
         assert_eq!(
             r.await.unwrap().unwrap().status(),
@@ -256,9 +265,9 @@ async fn a_team_without_keys_is_tried_once_per_cooldown_and_blocks_no_other_team
     .await;
     let (t1, t2) = (&h.teams[0], &h.teams[1]);
     assert_eq!(t2.jwks_hits.load(Ordering::SeqCst), 0);
-    // hermit adds the second team, whose certs are down and slow: pigeon's facts refresh tries to load its keys
+    // hermit adds the second team, whose certs are down and hang: pigeon's facts refresh tries to load its keys
     t2.certs_up.store(false, Ordering::SeqCst);
-    t2.certs_delay_ms.store(400, Ordering::SeqCst);
+    t2.hold_certs();
     h.set_facts(|d| {
         d.sign_in.access.push(hermit_api::deployment::AccessApp {
             team_domain: TEAM2.into(),
@@ -266,27 +275,21 @@ async fn a_team_without_keys_is_tried_once_per_cooldown_and_blocks_no_other_team
         });
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        t2.jwks_hits.load(Ordering::SeqCst) >= 1,
-        "loaded after the facts refresh"
-    );
-    // while its fetch hangs, the first team's new kid is fetched and verified at once
+    common::until("the facts refresh asks for the new team's keys", || {
+        t2.jwks_hits.load(Ordering::SeqCst) >= 1
+    })
+    .await;
+    // while its fetch hangs (held: it never answers unless released), the first team's new kid is fetched and verified
     t1.issuer.set_published("t1-b", true).unwrap();
-    let started = std::time::Instant::now();
     let r = h
         .as_token(h.get(me()), &t1.mint(STAFF, 3600, None, Some("t1-b")))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    assert!(
-        started.elapsed() < Duration::from_millis(300),
-        "{:?}",
-        started.elapsed()
-    );
-    // many tokens of the keyless team: refused, at most one attempt per cooldown
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // the hanging fetch fails; many tokens of the keyless team: refused, at most one attempt per cooldown
+    t2.release_certs();
+    h.advance(h.tuning.jwks_cooldown);
     let before = t2.jwks_hits.load(Ordering::SeqCst);
     let mut all = Vec::new();
     for i in 0..20 {
@@ -301,20 +304,20 @@ async fn a_team_without_keys_is_tried_once_per_cooldown_and_blocks_no_other_team
         "{} attempts for 20 requests",
         t2.jwks_hits.load(Ordering::SeqCst) - before
     );
-    // the certs come back: the next facts refresh loads the keys and the team signs in
-    t2.certs_delay_ms.store(0, Ordering::SeqCst);
+    // the certs come back: the next facts refresh (each a period of the clock away) loads the keys and the team signs in
     t2.certs_up.store(true, Ordering::SeqCst);
     let started = std::time::Instant::now();
     loop {
+        h.advance(h.tuning.facts_every);
         let r = h.as_token(h.get(me()), &t2.token(STAFF)).send().await.unwrap();
         if r.status() == 200 {
             break;
         }
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(30),
             "the second team never loaded"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
     }
 }
 
@@ -334,7 +337,7 @@ async fn people_not_allowed_reread_and_stale_on_error() {
         200,
         "within the 15 s (test: 400 ms) cache"
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.advance(Duration::from_millis(500));
     assert_eq!(code(h.get_as(me(), STAFF2).await).await, (403, "NOT_ALLOWED".into()));
     // hermit down: the last answer stands for 300 s (test: 1.5 s) past its expiry, then 503
     assert_eq!(h.get_as(me(), STAFF).await.status(), 200);
@@ -342,9 +345,9 @@ async fn people_not_allowed_reread_and_stale_on_error() {
         hermit_api::routes::PERSON,
         FaultKind::Unavailable { retry_after_secs: 1 },
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.advance(Duration::from_millis(500));
     assert_eq!(h.get_as(me(), STAFF).await.status(), 200, "stale on error");
-    tokio::time::sleep(Duration::from_millis(1600)).await;
+    h.advance(Duration::from_millis(1600));
     let r = h.get_as(me(), STAFF).await;
     assert_eq!(r.headers()["retry-after"], "5");
     assert_eq!(code(r).await, (503, "UNAVAILABLE".into()));
@@ -781,7 +784,7 @@ async fn the_model_list_is_cached_and_kept_on_error() {
     assert_eq!(body_json(h.get_as(path, STAFF).await).await, want);
     assert_eq!(h.models_hits.load(Ordering::SeqCst), 1, "cached");
     h.models_up.store(false, Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    h.advance(Duration::from_millis(300));
     assert_eq!(
         body_json(h.get_as(path, STAFF).await).await,
         want,
@@ -797,19 +800,17 @@ async fn a_stale_model_list_is_answered_at_once_while_one_refresh_hangs() {
     assert_eq!(want["success"], true);
     assert_eq!(h.models_hits.load(Ordering::SeqCst), 1);
     h.models_hang.store(true, Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    h.advance(Duration::from_millis(300));
     for _ in 0..2 {
-        let started = Instant::now();
         let burst = (0..20).map(|_| async { body_json(h.get_as(path, STAFF).await).await });
-        for got in futures_util::future::join_all(burst).await {
+        // the refresh hangs 30 s: a burst that waited for it would not end before then
+        let got = tokio::time::timeout(Duration::from_secs(20), futures_util::future::join_all(burst))
+            .await
+            .unwrap_or_else(|_| panic!("nobody waits for the hanging refresh"));
+        for got in got {
             assert_eq!(got, want, "the stale list");
         }
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "nobody waits for the hanging refresh: {:?}",
-            started.elapsed()
-        );
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        h.advance(Duration::from_millis(300));
     }
     assert_eq!(h.models_hits.load(Ordering::SeqCst), 2, "one refresh for both bursts");
 }
@@ -839,7 +840,7 @@ async fn warm_hints_are_coalesced() {
     }
     let r = h.as_token(h.post(compat::WARM), &t).body("").send().await.unwrap();
     assert_eq!(r.status(), 202, "a new chat (no body) is its own key");
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    common::until("two hints", || h.hermit.fake.hints().len() >= 2).await;
     let hints = h.hermit.fake.hints();
     assert_eq!(hints.len(), 2, "{hints:?}");
     assert!(
@@ -848,13 +849,13 @@ async fn warm_hints_are_coalesced() {
             .any(|w| w.person == STAFF && w.conversation_id == Some(cid))
     );
     assert!(hints.iter().any(|w| w.conversation_id.is_none()));
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    h.advance(Duration::from_millis(600));
     h.as_token(h.post(compat::WARM), &t)
         .json(&json!({"sessionId": cid}))
         .send()
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    common::until("a third hint", || h.hermit.fake.hints().len() >= 3).await;
     assert_eq!(h.hermit.fake.hints().len(), 3, "a new hint after the window");
     // a present but invalid sessionId is no hint at all (not a new-chat hint)
     let other = h.token(STAFF2);
@@ -867,7 +868,14 @@ async fn warm_hints_are_coalesced() {
             .unwrap();
         assert_eq!(r.status(), 202);
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // then a valid hint of someone else's, which the invalid ones went before: once it is in, nothing of them is
+    let marker = h.token(ADMIN);
+    let r = h.as_token(h.post(compat::WARM), &marker).body("").send().await.unwrap();
+    assert_eq!(r.status(), 202);
+    common::until("the marker hint", || {
+        h.hermit.fake.hints().iter().any(|w| w.person == ADMIN)
+    })
+    .await;
     assert!(
         h.hermit.fake.hints().iter().all(|w| w.person != STAFF2),
         "{:?}",
@@ -1056,12 +1064,12 @@ async fn view_as_tokens_are_refused_unless_valid_for_this_admin() {
     h.hermit
         .fake
         .configure(|c| c.users = vec![ADMIN.into(), ADMIN2.into(), STAFF2.into()]);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.advance(Duration::from_millis(500));
     assert_eq!(refused(h.get_as(&path(&good), ADMIN).await).await.1, "VIEW_AS_REFUSED");
     let good2 = h.view_token(ADMIN, STAFF2, now() + 600);
     assert_eq!(h.get_as(&path(&good2), ADMIN).await.status(), 200);
     h.hermit.fake.configure(|c| c.admins = vec![ADMIN2.into()]);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.advance(Duration::from_millis(500));
     assert_eq!(refused(h.get_as(&path(&good2), ADMIN).await).await.1, "VIEW_AS_REFUSED");
 }
 
@@ -1442,7 +1450,6 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         h.magpie.fake.script().calls_to("upload").len(),
         stored,
@@ -1512,7 +1519,6 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         v["error"], "「big.bin」太大（上限 50MB）。",
         "zh-HK deployment: the localized sentence"
     );
-    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         h.magpie.fake.script().calls_to("upload").len(),
         calls_before,
@@ -1550,10 +1556,11 @@ async fn uploads_stream_to_magpie_with_their_limits() {
     assert_eq!(body_json(r).await["error"], "Upload failed. Please try again.");
 }
 
-/// Sends a one-file upload on a raw connection, one `chunk`-byte piece every `every`, `pieces` pieces, while reading
-/// the answer; returns the answer and when it arrived. The sender keeps going (ignoring a closed connection) so an
-/// early answer shows pigeon did not wait for the rest.
-async fn trickle_upload(h: &Harness, chunk: usize, pieces: usize, every: Duration) -> (String, Duration) {
+/// Sends a one-file upload on a raw connection, `pieces` pieces of `chunk` bytes, while reading the answer; returns
+/// the answer. Between pieces pigeon's clock moves `gap` (each shorter than its idle bound, together longer). With
+/// `stop_after_first`, the sender sends one piece and then waits for the answer before anything more: an answer that
+/// waited for the rest of the body would never come.
+async fn trickle_upload(h: &Harness, chunk: usize, pieces: usize, gap: Duration, stop_after_first: bool) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let boundary = "trickle";
     let head = format!(
@@ -1571,20 +1578,25 @@ async fn trickle_upload(h: &Harness, chunk: usize, pieces: usize, every: Duratio
          content-type: multipart/form-data; boundary={boundary}\r\ncontent-length: {len}\r\n\r\n{head}",
         h.token(STAFF)
     );
-    let started = Instant::now();
-    tokio::spawn(async move {
+    let clock = h.app.clock();
+    let (answered, mut answered_rx) = tokio::sync::watch::channel(false);
+    let writer = tokio::spawn(async move {
         if wr.write_all(request.as_bytes()).await.is_err() {
             return;
         }
-        for _ in 0..pieces {
-            tokio::time::sleep(every).await;
+        for i in 0..pieces {
             if wr.write_all(&vec![b'q'; chunk]).await.is_err() {
                 return;
             }
+            if stop_after_first && i == 0 {
+                let _ = answered_rx.wait_for(|a| *a).await;
+                return;
+            }
+            clock.advance(gap);
         }
         let _ = wr.write_all(tail.as_bytes()).await;
-        // hold the write half open until the answer is read
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        // the write half stays open until the answer is read
+        let _ = answered_rx.wait_for(|a| *a).await;
     });
     let mut buf = Vec::new();
     let mut piece = [0u8; 4096];
@@ -1596,15 +1608,17 @@ async fn trickle_upload(h: &Harness, chunk: usize, pieces: usize, every: Duratio
         buf.extend_from_slice(&piece[..n]);
         let text = String::from_utf8_lossy(&buf).into_owned();
         if n == 0 || text.contains('}') {
-            return (text, started.elapsed());
+            answered.send_replace(true);
+            let _ = writer.await;
+            return text;
         }
     }
 }
 
 #[tokio::test]
 async fn a_slow_upload_that_keeps_moving_outlasts_the_idle_bound() {
-    // spec 5.7 / 11.2 step 4 scaled: a 1 s idle bound, a 64 KiB piece every 300 ms for about 3.6 s (the review's
-    // 50 MiB at 2 Mbit/s case: never idle, several idle bounds long)
+    // spec 5.7 / 11.2 step 4 scaled: a 1 s idle bound, a 64 KiB piece every 300 ms of the clock for 3.6 s (the
+    // review's 50 MiB at 2 Mbit/s case: never idle, several idle bounds long)
     let h = Harness::start_with(pigeon::Tuning {
         transfer_idle: Duration::from_secs(1),
         ..tuning()
@@ -1618,9 +1632,8 @@ async fn a_slow_upload_that_keeps_moving_outlasts_the_idle_bound() {
                    "size": 786_432, "mimeType": "application/octet-stream"}),
         ),
     );
-    let (answer, took) = trickle_upload(&h, 65_536, 12, Duration::from_millis(300)).await;
+    let answer = trickle_upload(&h, 65_536, 12, Duration::from_millis(300), false).await;
     assert!(answer.starts_with("HTTP/1.1 201"), "{answer}");
-    assert!(took > Duration::from_secs(3), "{took:?}");
     let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
     assert_eq!(call.bytes.unwrap().len(), 786_432, "every byte reached magpie");
 }
@@ -1628,7 +1641,7 @@ async fn a_slow_upload_that_keeps_moving_outlasts_the_idle_bound() {
 #[tokio::test]
 async fn magpie_refusing_mid_body_is_answered_at_once() {
     // magpie answers before reading the body: pigeon answers its mapped status at once with `connection: close`,
-    // without reading the client's remaining bytes (16 pieces, 300 ms apart, would take about 5 s)
+    // without reading the client's remaining bytes
     let h = Harness::start_with(pigeon::Tuning {
         transfer_idle: Duration::from_secs(1),
         ..tuning()
@@ -1638,11 +1651,11 @@ async fn magpie_refusing_mid_body_is_answered_at_once() {
         .fake
         .faults()
         .on("upload", FaultKind::Unavailable { retry_after_secs: 1 });
-    let (answer, took) = trickle_upload(&h, 65_536, 16, Duration::from_millis(300)).await;
+    // the sender stops after its first piece until the answer comes: it comes before the body ends
+    let answer = trickle_upload(&h, 65_536, 16, Duration::from_millis(300), true).await;
     assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
     assert!(answer.to_ascii_lowercase().contains("connection: close"), "{answer}");
     assert!(answer.contains("上載失敗，請再試一次。"), "{answer}");
-    assert!(took < Duration::from_secs(2), "answered before the body ends: {took:?}");
 }
 
 // ---- Files and blobs (spec 5.8-5.9) ----

@@ -80,13 +80,16 @@ impl Env {
         self.hub().sockets() == n
     }
 
-    fn drain(&self, jitter: Duration, rpc_wait: Duration) -> tokio::task::JoinHandle<()> {
-        self.drain_bound(jitter, rpc_wait, Duration::from_secs(30))
+    async fn drain(&self, jitter: Duration, rpc_wait: Duration) -> tokio::task::JoinHandle<()> {
+        self.drain_bound(jitter, rpc_wait, Duration::from_secs(30)).await
     }
 
-    fn drain_bound(&self, jitter: Duration, rpc_wait: Duration, bound: Duration) -> tokio::task::JoinHandle<()> {
+    /// Starts the socket drain and returns once it has begun: its times count from then, on pigeon's clock.
+    async fn drain_bound(&self, jitter: Duration, rpc_wait: Duration, bound: Duration) -> tokio::task::JoinHandle<()> {
         let socket = self.h.app.socket();
-        tokio::spawn(async move { socket.drain(jitter, rpc_wait, bound).await })
+        let drain = tokio::spawn(async move { socket.drain(jitter, rpc_wait, bound).await });
+        common::until("the drain began", || self.hub().draining()).await;
+        drain
     }
 }
 
@@ -138,35 +141,30 @@ async fn a_socket_that_misses_pings_is_dropped_and_unregistered() {
     watch(&mut gone, &[c]).await;
     assert_eq!(e.hub().sockets(), 2);
     assert_eq!(e.h.metric("pigeon_sockets{viewas=\"false\"}"), 2.0);
-    // `gone` stops reading (a phone that left without a FIN): it never answers a ping. `alive` keeps reading, which
-    // answers them.
-    let started = Instant::now();
-    let reader = tokio::spawn(async move {
-        // reading answers the pings (tungstenite replies as it reads)
-        let _ = tokio::time::timeout(Duration::from_millis(1500), alive.next_raw(Duration::from_secs(5))).await;
-        alive
-    });
-    assert!(
-        e.sockets_become(1, Duration::from_secs(2)).await,
-        "{}",
-        e.hub().sockets()
-    );
-    // within about two ping periods (the one it missed and the next)
-    assert!(
-        started.elapsed() < Duration::from_millis(1200),
-        "{:?}",
-        started.elapsed()
-    );
-    let mut alive = reader.await.unwrap();
+    // `gone` stops reading (a phone that left without a FIN): it never answers a ping. Each ping period of the clock,
+    // `alive` reads the ping and answers it (and makes a request whose reply shows pigeon read the pong first).
+    let ping = e.h.tuning.socket_ping;
+    let mut periods = 0;
+    while e.hub().sockets() > 1 {
+        assert!(
+            periods < 3,
+            "the silent socket is still there after {periods} ping periods"
+        );
+        e.h.advance(ping);
+        periods += 1;
+        alive.answer_ping().await;
+    }
     assert!(alive.closed.is_none(), "a socket that answers pings stays");
     assert_eq!(e.h.metric("pigeon_sockets{viewas=\"false\"}"), 1.0);
     assert_eq!(e.h.metric("pigeon_socket_closes_total{code=\"1006\"}"), 1.0);
-    // the gone socket's subscription went with it: its timeline poller stops after the linger
-    let started = Instant::now();
-    while e.hub().pollers().1 > 0 && started.elapsed() < Duration::from_secs(3) {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // the gone socket's subscription went with it: its timeline poller stops after the linger (ping periods go by,
+    // which `alive` answers)
+    while e.hub().pollers().1 > 0 {
+        assert!(periods < 20, "the poller outlived its linger");
+        e.h.advance(ping);
+        periods += 1;
+        alive.answer_ping().await;
     }
-    assert_eq!(e.hub().pollers().1, 0);
     let (_, r) = alive.rpc("fetch_agents_request", json!({})).await;
     assert!(r["entries"].is_array());
     drop(gone);
@@ -221,9 +219,15 @@ async fn an_open_socket_closes_4403_when_no_longer_allowed() {
     .await;
     let mut ws = e.ws(STAFF).await;
     let mut admin = e.ws(ADMIN).await;
+    let staff = e.hub().conns_of(STAFF);
     e.h.hermit.fake.configure(|c| {
         c.users = vec![ADMIN.into(), common::ADMIN2.into()];
     });
+    // a recheck each period of the clock; the person's answer is cached a while, so it takes a few
+    e.h.advance_until(Duration::from_millis(300), "the 4403", || {
+        staff.iter().all(|c| c.is_closing())
+    })
+    .await;
     assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(4403));
     // still allowed: still open
     admin.raw(json!({"type": "ping"})).await;
@@ -235,27 +239,29 @@ async fn an_open_socket_closes_4403_when_no_longer_allowed() {
 async fn inbound_frames_over_the_rate_are_dropped() {
     let e = env_with(fast()).await;
     let mut ws = e.ws(STAFF).await;
-    let started = Instant::now();
+    // pigeon's clock does not move while they arrive: the burst of 400 frames is answered, the rest dropped
     for _ in 0..1_000 {
         ws.text(r#"{"type":"ping"}"#).await;
     }
-    let sent_in = started.elapsed();
-    let mut pongs = 0usize;
-    while let Some(v) = ws.next_raw(Duration::from_millis(500)).await {
-        if v["type"] == "pong" {
-            pongs += 1;
-        }
-    }
-    // the burst of 400 plus 200/s while they were sent
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let allowed = 400 + (sent_in.as_secs_f64() * 200.0).ceil() as usize + 1;
-    assert!(pongs >= 400 && pongs <= allowed, "{pongs} pongs, {allowed} allowed");
-    assert!(pongs < 1_000);
-    #[allow(clippy::cast_precision_loss)]
-    let dropped = (1_000 - pongs) as f64;
-    assert_eq!(e.h.metric("pigeon_frames_dropped_total{reason=\"rate\"}"), dropped);
-    // the socket stays open and is served again after a moment
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // all read (the last ones are the drops), then 10 ms of the clock refill two frames (200/s): a request whose reply
+    // comes after every answer to the burst
+    common::until("the burst read", || {
+        e.h.metric("pigeon_frames_dropped_total{reason=\"rate\"}") >= 600.0
+    })
+    .await;
+    e.h.advance(Duration::from_millis(10));
+    ws.rpc("fetch_agents_request", json!({})).await;
+    let pongs = ws
+        .drain_for(Duration::ZERO)
+        .await
+        .iter()
+        .filter(|v| v["type"] == "pong")
+        .count();
+    // the burst of 400 frames, the socket's hello the first of them
+    assert_eq!(pongs, 399);
+    assert_eq!(e.h.metric("pigeon_frames_dropped_total{reason=\"rate\"}"), 601.0);
+    // the socket stays open and is served again once the clock refills it
+    e.h.advance(Duration::from_millis(100));
     ws.raw(json!({"type": "ping"})).await;
     ws.wait_for("pong", |v| v["type"] == "pong").await;
 }
@@ -271,7 +277,7 @@ async fn rows_keep_streaming_to_open_sockets_until_their_1012() {
     let mut a = e.ws(STAFF).await;
     let mut b = e.ws(STAFF).await;
     watch(&mut a, &[c1]).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.polling(c1).await;
     // both are busy with a send magpie holds: they close in the drain's second half, after their answers
     let held = e.m.hold("send_turn");
     for (ws, c, id) in [(&mut a, c2, "m-a"), (&mut b, c3, "m-b")] {
@@ -282,10 +288,11 @@ async fn rows_keep_streaming_to_open_sockets_until_their_1012() {
         )
         .await;
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(4));
-    // well past the pollers' 1 s tick: the pollers still run
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    e.m.waiting_n("hold send_turn", 2).await;
+    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(4)).await;
+    // the drain's jitter passes on the clock (not its 4 s rpc wait): both sockets wait for their answers, the pollers
+    // still run
+    e.h.advance(Duration::from_millis(1300));
     let turn = e.m.start_turn(c1, TurnOrigin::Person);
     e.m.row(c1, Some(turn), assistant("during-1"));
     e.m.row(c1, Some(turn), assistant("during-2"));
@@ -298,7 +305,7 @@ async fn rows_keep_streaming_to_open_sockets_until_their_1012() {
     .await;
     // a subscription made during the drain gets live rows too
     watch(&mut b, &[c1]).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.m.polling(c1).await;
     e.m.row(c1, None, assistant("during-3"));
     b.wait_for("row 3", |v| is_row(v, c1, "during-3")).await;
     a.wait_for("row 3", |v| is_row(v, c1, "during-3")).await;
@@ -314,11 +321,10 @@ async fn rows_keep_streaming_to_open_sockets_until_their_1012() {
     drain.await.unwrap();
     // then the pollers stop
     assert_eq!(e.hub().pollers(), (0, 0));
-    let started = Instant::now();
-    while e.h.metric("pigeon_pollers{kind=\"timeline\"}") > 0.0 && started.elapsed() < Duration::from_secs(2) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(e.h.metric("pigeon_pollers{kind=\"timeline\"}"), 0.0);
+    common::until("the timeline pollers ended", || {
+        e.h.metric("pigeon_pollers{kind=\"timeline\"}") == 0.0
+    })
+    .await;
     assert_eq!(e.h.metric("pigeon_pollers{kind=\"change\"}"), 0.0);
 }
 
@@ -340,9 +346,8 @@ async fn the_1012_follows_the_reply_the_drain_waited_for() {
         .await;
         socks.push((ws, rid));
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let drain = e.drain(Duration::ZERO, Duration::from_secs(4));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    e.m.waiting_n("hold send_turn", 8).await;
+    let drain = e.drain(Duration::ZERO, Duration::from_secs(4)).await;
     held.notify_waiters();
     for (mut ws, rid) in socks {
         let r = ws.next_session("send_agent_message_response").await;
@@ -353,29 +358,17 @@ async fn the_1012_follows_the_reply_the_drain_waited_for() {
     drain.await.unwrap();
 }
 
-/// Reads every socket for `wait` (answering pings), asserting nothing arrives and none closes.
-async fn idle_all(socks: Vec<Ws>, wait: Duration) -> Vec<Ws> {
-    let tasks: Vec<_> = socks
-        .into_iter()
-        .map(|mut h| {
-            tokio::spawn(async move {
-                let got = h.drain_for(wait).await;
-                (h, got)
-            })
-        })
-        .collect();
-    let mut out = Vec::new();
-    for t in tasks {
-        let (h, got) = t.await.unwrap();
-        assert_eq!(got, Vec::<Value>::new());
-        assert!(h.closed.is_none(), "{:?}", h.closed);
-        out.push(h);
+/// One ping period of pigeon's clock: the clock moves `ping`, and each of `socks` reads its ping, answers it and makes
+/// a request whose reply shows pigeon read the pong (a socket that answers is never dropped for a missed pong).
+async fn ping_round(e: &Env, socks: &mut [Ws], ping: Duration) {
+    e.h.advance(ping);
+    for ws in socks.iter_mut() {
+        ws.answer_ping().await;
     }
-    out
 }
 
-/// Sends `frame` as one WebSocket message in `chunk`-byte pieces, `gap` apart, starting the drain (`jitter`,
-/// `rpc_wait`, transfer bound 30 s) once `drain_after` bytes are in; returns the drain.
+/// Sends `frame` as one WebSocket message in `chunk`-byte pieces, pigeon's clock moving `gap` after each, starting the
+/// drain (`jitter`, `rpc_wait`, transfer bound 30 s) once `drain_after` bytes are in; returns the drain.
 async fn send_slowly(
     e: &Env,
     ws: &mut Ws,
@@ -393,25 +386,25 @@ async fn send_slowly(
         ws.raw_bytes(piece).await;
         sent += piece.len();
         if drain.is_none() && sent >= drain_after {
-            drain = Some(e.drain(jitter, rpc_wait));
+            drain = Some(e.drain(jitter, rpc_wait).await);
         }
-        tokio::time::sleep(gap).await;
+        e.h.advance(gap);
     }
     drain.unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_send_arriving_across_the_drain_is_answered_before_its_1012() {
-    // 18.3's 40 MiB image send, scaled: 12 MiB arriving over about 5 s as one WebSocket message, with the in-flight
-    // request wait at 1 s: the send outlasts jitter + rpc_wait (2.2 s) by far, and has the transfer bound instead
+    // 18.3's 40 MiB image send, scaled: 12 MiB arriving over 4.8 s of the clock as one WebSocket message, with the
+    // in-flight request wait at 1 s: the send outlasts jitter + rpc_wait (2.2 s) by far, and has the transfer bound
     let e = env_with(fast()).await;
     let c = e.m.add(STAFF, None);
     let mut ws = e.ws(STAFF).await;
     let mut idle = e.ws(STAFF).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // past the quiet time: `idle` is request-free
+    e.h.advance(Duration::from_millis(400));
     let rid = ws.rid();
     let frame = image_send(&rid, c, "m-big", 12 << 20);
-    let started = Instant::now();
     let drain = send_slowly(
         &e,
         &mut ws,
@@ -422,7 +415,6 @@ async fn a_large_send_arriving_across_the_drain_is_answered_before_its_1012() {
         (Duration::from_millis(1200), Duration::from_secs(1)),
     )
     .await;
-    assert!(started.elapsed() > Duration::from_secs(4), "{:?}", started.elapsed());
     // the socket drain is still waiting (so the process does not exit under the send)
     assert!(!drain.is_finished());
     // the request-free socket went in the first half; the arriving one was not cut
@@ -504,7 +496,8 @@ async fn a_send_whose_first_bytes_arrived_just_before_its_1012_is_not_cut() {
     let c = e.m.add(STAFF, None);
     let mut ws = e.ws(STAFF).await;
     let mut idle = e.ws(STAFF).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // past the quiet time: `idle` is request-free
+    e.h.advance(Duration::from_millis(400));
     let rid = ws.rid();
     let frame = image_send(&rid, c, "m-start", 1 << 20);
     // 4 KiB in, then the drain with no jitter: a request-free socket would be closed at once
@@ -543,32 +536,28 @@ async fn a_send_that_begins_while_the_queue_ahead_of_its_1012_is_written_is_not_
     let mut ws = e.ws(STAFF).await;
     watch(&mut ws, &[watched]).await;
     // the poller has read its starting point: every row from here on is live
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.polling(watched).await;
     let conn = e.hub().conns_of(STAFF).pop().unwrap();
     // the client reads nothing: rows pile up in the socket's queue once the TCP buffers are full
     let big = "x".repeat(60_000);
     let mut n = 0;
-    let started = Instant::now();
+    // ten rows at a time, each batch pushed by the poller before the queue is looked at (no more rows than it takes)
     while conn.queued_bytes() < 2 << 20 {
-        assert!(started.elapsed() < Duration::from_secs(20), "the rows never queued up");
+        assert!(n < 1_000, "the rows never queued up");
+        let polls = e.m.polls_of(watched);
         for _ in 0..10 {
             n += 1;
             e.m.row(watched, None, assistant(&format!("{n}-{big}")));
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        e.m.polled_after(watched, polls).await;
     }
-    // every row is in the queue (or written) once the queue stops growing
-    let mut last = 0;
-    while conn.queued_bytes() != last {
-        assert!(started.elapsed() < Duration::from_secs(30), "the queue never settled");
-        last = conn.queued_bytes();
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    // every row is in the queue (or written) once the poller holds its poll again: it has pushed all of them
+    e.m.polling(watched).await;
     assert!(conn.queued_bytes() > 0);
-    // request-free (nothing but rows for the quiet time), no jitter: the 1012 is queued behind the rows at once
+    // request-free (nothing but rows for the quiet time of the clock), no jitter: the 1012 is queued behind the rows
+    e.h.advance(Duration::from_millis(400));
     assert!(conn.request_free());
-    let drain = e.drain(Duration::ZERO, Duration::from_secs(1));
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let drain = e.drain(Duration::ZERO, Duration::from_secs(1)).await;
     assert!(!conn.busy());
     // now the send begins; the client reads the rows between its chunks
     let rid = ws.rid();
@@ -630,10 +619,16 @@ async fn a_socket_sending_one_long_frame_is_not_dropped_for_the_pongs_it_cannot_
     let frame = image_send(&rid, c, "m-long", 2 << 20);
     let mut bytes = Ws::text_header(frame.len() as u64);
     bytes.extend_from_slice(frame.as_bytes());
-    // about 1.6 s: eight ping periods
+    // 1.6 s of the clock: eight ping periods. Each piece is read by pigeon before the clock moves on, so at every ping
+    // bytes have arrived since the last one (alive), though no pong can
     for piece in bytes.chunks(bytes.len() / 32 + 1) {
+        let before = e.hub().inbound_bytes();
         ws.raw_bytes(piece).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        common::until("pigeon read the piece", || {
+            e.hub().inbound_bytes() >= before + piece.len() as u64
+        })
+        .await;
+        e.h.advance(Duration::from_millis(50));
     }
     let r = ws.next_session("send_agent_message_response").await;
     assert_eq!(r["accepted"], true);
@@ -642,10 +637,11 @@ async fn a_socket_sending_one_long_frame_is_not_dropped_for_the_pongs_it_cannot_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
-    // pings every 400 ms: the parked socket reads no pong for about 3.5 s and must not be dropped for it; the
+    // pings every 400 ms of the clock: the parked socket reads no pong for 3.6 s and must not be dropped for it; the
     // in-flight request wait (1 s) is shorter than the wait for a slot: a large send has the transfer bound
+    let ping = Duration::from_millis(400);
     let e = env_with(Tuning {
-        socket_ping: Duration::from_millis(400),
+        socket_ping: ping,
         ..fast()
     })
     .await;
@@ -653,36 +649,39 @@ async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
     let convs: Vec<Uuid> = (0..=pigeon::feeds::LARGE_AT_ONCE)
         .map(|_| e.m.add(STAFF, None))
         .collect();
-    // the 9 MiB frames are built before any socket opens, so no client goes unread for a ping period meanwhile
     let frames: Vec<String> = convs
         .iter()
         .enumerate()
         .map(|(i, c)| image_send(&format!("req-{}", 1), *c, &format!("h{i}"), 9 << 20))
         .collect();
-    // three large sends hold the replica's three large-message slots (their handlers wait at magpie); every client
-    // keeps reading (answering pings) while the test waits
+    // three large sends hold the replica's three large-message slots (their handlers wait at magpie)
     let mut socks = Vec::new();
     for frame in &frames[..pigeon::feeds::LARGE_AT_ONCE] {
         let mut ws = e.ws(STAFF).await;
         let _ = ws.rid();
         ws.text(frame).await;
-        socks = idle_all(socks, Duration::from_millis(1)).await;
         socks.push(ws);
     }
-    socks = idle_all(socks, Duration::from_millis(500)).await;
+    e.m.waiting_n("hold send_turn", pigeon::feeds::LARGE_AT_ONCE).await;
     // the fourth waits for a slot, its message begun and not read (the listener reads it once a slot is free, so
     // its client's send ends only then)
     let mut waiting = e.ws(STAFF).await;
     let rid = waiting.rid();
     let last = frames[pigeon::feeds::LARGE_AT_ONCE].clone();
+    let before = e.hub().inbound_bytes();
     let sending = tokio::spawn(async move {
         waiting.text(&last).await;
         waiting
     });
-    socks = idle_all(socks, Duration::from_millis(500)).await;
-    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(1));
-    // past the whole jitter and the in-flight wait: all still open
-    socks = idle_all(socks, Duration::from_millis(2500)).await;
+    common::until("its message begun", || e.hub().inbound_bytes() > before).await;
+    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(1)).await;
+    // past the whole jitter and the in-flight wait, nine ping periods: all still open
+    for _ in 0..9 {
+        ping_round(&e, &mut socks, ping).await;
+    }
+    for ws in &socks {
+        assert!(ws.closed.is_none());
+    }
     assert!(
         !sending.is_finished(),
         "the fourth large message was read before a slot was free"
@@ -703,12 +702,13 @@ async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_message_waiting_for_a_slot_is_not_read_and_its_socket_ends_at_the_transfer_bound() {
-    // pings every 200 ms, the transfer bound 1.5 s. While the three slots are held, a fourth large message is not
-    // read at all (pigeon 7.5.4: the slot bounds the large messages in memory, so it is had before the bytes are
+    // pings every 200 ms of the clock, the transfer bound 1.5 s. While the three slots are held, a fourth large message
+    // is not read at all (pigeon 7.5.4: the slot bounds the large messages in memory, so it is had before the bytes are
     // read; before, every socket of a person could hold a 100 MiB message waiting). Its socket reads nothing
     // meanwhile, pongs included, so it counts as alive up to the transfer bound and is then dropped.
+    let ping = Duration::from_millis(200);
     let e = env_with(Tuning {
-        socket_ping: Duration::from_millis(200),
+        socket_ping: ping,
         transfer_bound: Duration::from_millis(1500),
         ..fast()
     })
@@ -722,48 +722,49 @@ async fn a_large_message_waiting_for_a_slot_is_not_read_and_its_socket_ends_at_t
         .enumerate()
         .map(|(i, c)| image_send(&format!("req-{}", 1), *c, &format!("d{i}"), 9 << 20))
         .collect();
-    // three large sends hold the slots; their clients keep reading (answering pings) until their replies
+    // three large sends hold the slots; their clients answer every ping until their replies
     let mut holders = Vec::new();
     for frame in &frames[..pigeon::feeds::LARGE_AT_ONCE] {
         let mut ws = e.ws(STAFF).await;
         let _ = ws.rid();
         ws.text(frame).await;
-        holders.push(tokio::spawn(async move {
-            let started = Instant::now();
-            while started.elapsed() < Duration::from_secs(20) {
-                if let Some(v) = ws.next_raw(Duration::from_millis(100)).await
-                    && v["message"]["type"] == "send_agent_message_response"
-                {
-                    return v["message"]["payload"]["accepted"] == true;
-                }
-            }
-            false
-        }));
+        holders.push(ws);
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.waiting_n("hold send_turn", pigeon::feeds::LARGE_AT_ONCE).await;
     let open = e.hub().sockets();
     let mut waiting = e.ws(STAFF).await;
-    assert!(e.sockets_become(open + 1, Duration::from_secs(1)).await);
+    assert!(e.sockets_become(open + 1, Duration::from_secs(5)).await);
     let before = e.hub().inbound_bytes();
     let last = frames[pigeon::feeds::LARGE_AT_ONCE].clone();
-    let started = Instant::now();
     // its client's write fails once the socket is dropped (the helper panics on it, ending only this task)
     let sending = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(10), waiting.text(&last)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(30), waiting.text(&last)).await;
     });
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-    // one read's bytes at most: the 9 MiB message is not taken in while it waits
+    common::until("its message begun", || e.hub().inbound_bytes() > before).await;
+    // 1 s of the clock (five ping periods): one read's bytes at most, the socket still there
+    for _ in 0..5 {
+        ping_round(&e, &mut holders, ping).await;
+    }
     let read = e.hub().inbound_bytes().saturating_sub(before);
     assert!(read < 1 << 20, "{read} bytes of a message waiting for a slot were read");
     assert_eq!(e.hub().sockets(), open + 1, "dropped before the transfer bound");
-    assert!(
-        e.sockets_become(open, Duration::from_secs(3)).await,
-        "a socket waiting for a slot stays past the transfer bound"
-    );
-    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    // past the 1.5 s bound (and the ping that notices it): dropped
+    let mut periods = 5;
+    while e.hub().sockets() > open {
+        assert!(
+            periods < 10,
+            "a socket waiting for a slot stays past the transfer bound"
+        );
+        ping_round(&e, &mut holders, ping).await;
+        periods += 1;
+    }
     held.notify_waiters();
-    for h in holders {
-        assert!(h.await.unwrap(), "a slot holder's send was not answered");
+    for mut h in holders {
+        assert_eq!(
+            h.next_session("send_agent_message_response").await["accepted"],
+            true,
+            "a slot holder's send"
+        );
     }
     let _ = sending.await;
 }
@@ -823,18 +824,20 @@ async fn an_owners_that_consults_the_hub_and_a_conversation_back_from_a_delegate
     e.m.row(c, None, assistant("old"));
     let mut ws = e.ws(STAFF).await;
     watch(&mut ws, &[c]).await;
-    // a few poller ticks: the owner check runs outside the hub's lock
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert!(owners.consulted.load(Ordering::SeqCst));
+    e.m.polling(c).await;
+    // the poller's tick (each second of real time, only a look at the state) asks the owner outside the hub's lock
+    common::until("the owner consulted", || owners.consulted.load(Ordering::SeqCst)).await;
     e.m.row(c, None, assistant("native-1"));
     ws.wait_for("native-1", |v| is_row(v, c, "native-1")).await;
     // the delegate takes the conversation (WP-50 hands it over); the native poller lingers but sends nothing, also
     // not for a history rewrite meanwhile
     *owners.delegated.lock().unwrap() = Some(c);
+    let polls = e.m.polls_of(c);
     e.m.row(c, None, assistant("delegated"));
     let epoch = e.m.rewrite(c);
-    tokio::time::sleep(Duration::from_millis(800)).await;
-    let during = ws.drain_for(Duration::from_millis(300)).await;
+    // the native poller has read both and holds again: whatever it would send is queued by now
+    e.m.polled_after(c, polls).await;
+    let during = ws.drain_for(Duration::ZERO).await;
     assert!(
         !during
             .iter()
@@ -849,12 +852,25 @@ async fn an_owners_that_consults_the_hub_and_a_conversation_back_from_a_delegate
         .wait_for("replacement", |v| v["message"]["type"] == "agent.timeline.replacement")
         .await;
     assert_eq!(rep["message"]["payload"]["epoch"], epoch.as_str());
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // the poller restarted from the new tail and holds its poll
+    let polls = e.m.polls_of(c);
+    e.m.polled_after(c, polls).await;
     e.m.row(c, None, assistant("native-2"));
     let v = ws.wait_for("native-2", |v| is_row(v, c, "native-2")).await;
     assert_eq!(v["message"]["payload"]["epoch"], epoch.as_str());
-    // nothing else: no old row sent again, no second replacement
-    let rest = ws.drain_for(Duration::from_millis(500)).await;
+    // nothing else up to a last row: no old row sent again, no second replacement
+    e.m.row(c, None, assistant("native-3"));
+    let mut rest = Vec::new();
+    loop {
+        let v = ws
+            .next_raw(Duration::from_secs(10))
+            .await
+            .unwrap_or_else(|| panic!("native-3"));
+        if is_row(&v, c, "native-3") {
+            break;
+        }
+        rest.push(v);
+    }
     assert!(
         !rest
             .iter()
@@ -894,7 +910,7 @@ async fn list_calls_carry_the_viewer_and_failures_are_not_kept() {
     assert_eq!(calls[1].1.as_deref(), Some(STAFF));
     assert_eq!(calls[1].2.as_deref(), Some(ADMIN));
     // a failed answer is not kept for the cache's 2 s: the next request asks again
-    tokio::time::sleep(pigeon::feeds::LIST_CACHE).await;
+    e.h.advance(pigeon::feeds::LIST_CACHE);
     e.m.refuse_once(
         "list_conversations",
         Refusal::new(ErrorCode::Unavailable, "down").with_status(503),
@@ -923,7 +939,9 @@ async fn the_socket_metrics_carry_spec_19s_names_and_labels() {
     );
     let (k, _) = ws.rpc("fetch_agent_request", json!({"agentId": c})).await;
     assert_eq!(k, "rpc_error");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // both pollers have read once and hold their polls
+    e.m.polling(c).await;
+    e.m.polling_changes(STAFF).await;
     let text = e.h.metrics();
     for want in [
         "pigeon_hello_total{protocol=\"1\",clientType=\"browser\"} 1",
@@ -944,22 +962,28 @@ async fn the_socket_metrics_carry_spec_19s_names_and_labels() {
 #[tokio::test]
 async fn an_expired_change_cursor_whose_head_read_fails_backs_off_before_the_resync() {
     // 410 on the cursor, then the head read fails four times: the poller retries the head with its backoff (50,
-    // 100, 200, 200 ms), never the expired cursor in a hot loop, and only then makes the sockets re-snapshot
+    // 100, 200, 200 ms of the clock), never the expired cursor in a hot loop, and only then makes the sockets
+    // re-snapshot
     let e = env_with(fast()).await;
     let c = e.m.add(STAFF, None);
     let mut ws = e.ws(STAFF).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.polling_changes(STAFF).await;
     e.m.refuse_once("changes", Refusal::new(ErrorCode::CursorExpired, "expired"));
     for _ in 0..4 {
         e.m.refuse_once("changes", Refusal::new(ErrorCode::Unavailable, "down"));
     }
     let before = e.m.calls_to("changes");
-    let started = Instant::now();
-    // a change ends the long-poll in flight; the next poll meets the 410
+    let clock = e.h.app.clock();
+    let started = clock.now();
+    // a change ends the long-poll in flight; the next poll meets the 410; the clock moves 10 ms at a time
     e.m.edit(c, |conv| conv.title = Some("x".into()));
+    e.h.advance_until(Duration::from_millis(10), "the re-snapshot's 1012", || {
+        e.h.metric("pigeon_socket_closes_total{code=\"1012\"}") >= 1.0
+    })
+    .await;
     assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
-    let took = started.elapsed();
-    assert!(took >= Duration::from_millis(500), "{took:?}");
+    let took = clock.elapsed(started);
+    assert!(took >= Duration::from_millis(550), "the backoff: {took:?}");
     // the poll, the 410, four failed head reads and the one that worked
     let calls = e.m.calls_to("changes") - before;
     assert!(calls <= 8, "{calls} calls");

@@ -58,7 +58,7 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let server = pigeon::server::serve(listener, app.router(), app.large_slots());
+    let server = pigeon::server::serve(listener, app.router(), app.large_slots(), app.clock());
     ops.readiness().started();
     tracing::info!("serving");
     // spec 11.2 steps 2 and 4: the listener closes, in-flight requests and transfers finish (up to the bound)
