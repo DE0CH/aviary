@@ -66,8 +66,7 @@ async fn a_call_after_sandboxds_idle_close_opens_a_new_connection() {
     let (accepted, base) = serve().await;
     let c = Client::plain(&base).unwrap();
     c.list().await.unwrap();
-    // within the pool's idle time the connection is reused
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // within the pool's idle time (at once) the connection is reused
     c.list().await.unwrap();
     assert_eq!(accepted.load(Ordering::SeqCst), 1);
     // past sandboxd's keep-alive: a pooled connection would get no answer
