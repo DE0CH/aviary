@@ -155,8 +155,12 @@ async fn a_socket_that_misses_pings_is_dropped_and_unregistered() {
         alive.answer_ping().await;
     }
     assert!(alive.closed.is_none(), "a socket that answers pings stays");
+    // the socket's metrics are counted just after the hub let it go
+    common::until("the close counted", || {
+        e.h.metric("pigeon_socket_closes_total{code=\"1006\"}") == 1.0
+    })
+    .await;
     assert_eq!(e.h.metric("pigeon_sockets{viewas=\"false\"}"), 1.0);
-    assert_eq!(e.h.metric("pigeon_socket_closes_total{code=\"1006\"}"), 1.0);
     // the gone socket's subscription went with it: its timeline poller stops after the linger (ping periods go by,
     // which `alive` answers)
     while e.hub().pollers().1 > 0 {
@@ -321,11 +325,11 @@ async fn rows_keep_streaming_to_open_sockets_until_their_1012() {
     drain.await.unwrap();
     // then the pollers stop
     assert_eq!(e.hub().pollers(), (0, 0));
-    common::until("the timeline pollers ended", || {
-        e.h.metric("pigeon_pollers{kind=\"timeline\"}") == 0.0
+    // each gauge goes down as its poller's task ends, after the hub let it go
+    common::until("the pollers ended", || {
+        e.h.metric("pigeon_pollers{kind=\"timeline\"}") == 0.0 && e.h.metric("pigeon_pollers{kind=\"change\"}") == 0.0
     })
     .await;
-    assert_eq!(e.h.metric("pigeon_pollers{kind=\"change\"}"), 0.0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
