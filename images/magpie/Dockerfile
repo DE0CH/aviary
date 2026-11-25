@@ -8,8 +8,8 @@ FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1de
 
 ARG REVISION=dev
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates libheif1 libheif-plugin-libde265 \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates libheif1 libheif-plugin-libde265 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --chmod=755 dist/magpie /usr/local/bin/magpie

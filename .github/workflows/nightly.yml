@@ -23,6 +23,8 @@ permissions:
   contents: read
 
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 

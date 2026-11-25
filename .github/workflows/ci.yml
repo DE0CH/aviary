@@ -20,6 +20,8 @@ permissions:
   contents: read
 
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 
@@ -153,7 +155,7 @@ jobs:
         with:
           tool: cargo-deny@0.20.2,cargo-audit@0.22.2
       - name: libheif (magpie's HEIF/AVIF decoder; ubuntu 24.04's 1.17 is libheif-rs's minimum, feature v1_17)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev
+        run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev
       - name: gitleaks 8.30.1
         run: |
           curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
@@ -194,7 +196,7 @@ jobs:
         with:
           tool: cargo-nextest@0.9.150
       - name: libheif with its HEVC decoder (magpie's HEIC uploads and previews)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev libheif-plugin-libde265
+        run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev libheif-plugin-libde265
       - name: postgres (the production version, TLS on; testing/ci-services)
         # the digest production's Cluster db/pg runs (the tag is rebuilt upstream)
         run: |
@@ -250,7 +252,7 @@ jobs:
           echo "::add-mask::$url"
           echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
       - name: libheif (magpie's HEIF/AVIF decoder)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev
+        run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev
       - name: s3 (every magpie replica has a bucket; versitygw as in the test job)
         run: |
           lines=$(cargo run --locked -q -p ci-services -- s3 versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
@@ -296,7 +298,7 @@ jobs:
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: musl C compiler
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
+        run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends musl-tools
       - name: sandboxd (static musl, profile sandboxd)
         run: cargo build --profile sandboxd --locked --target x86_64-unknown-linux-musl -p sandboxd
       - name: soak (45 s)
@@ -308,7 +310,7 @@ jobs:
         run: SANDBOXD_DUMP="$RUNNER_TEMP/sandboxd-dump" cargo test --locked -p sandboxd-api --test live -- --ignored
       - name: the gateway keeps its data plane across its process (crates/sandboxd/tests/gateway/adopt.sh)
         run: |
-          sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
+          sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
           sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
       - name: the gateway on a plain server (fabric/host/gateway-setup.sh, crates/sandboxd/tests/gateway/server.sh)
         run: sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/server.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
@@ -334,7 +336,7 @@ jobs:
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: musl C compiler (cc-rs builds ring's C with it; .cargo/config.toml sets CC_<arch>_unknown_linux_musl)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
+        run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends musl-tools
       - name: musl canary (rustls/ring, reqwest, tokio-postgres-rustls, AWS SDK client; linked static and run)
         run: cargo test --locked --target ${{ matrix.arch }}-unknown-linux-musl -p aviary-tls-canary --lib
       - name: musl binaries (rust-lld, static)
@@ -414,7 +416,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/images"
       - name: images/sandboxd (the gateway pod's image)
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=sandboxd${{ matrix.cache }} --cache-to type=gha,scope=sandboxd${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=sandboxd${{ matrix.cache }} --cache-to type=gha,scope=sandboxd${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh sandboxd dist "sandboxd:$SHA12" "$RUNNER_TEMP/images/sandboxd.tar"
           docker run --rm "sandboxd:$SHA12" --version
@@ -425,11 +427,11 @@ jobs:
           if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" "sandboxd:$SHA12"; then echo "the image started on a bad host.json" >&2; exit 1; fi
       - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
+          sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
           sudo SBX_GATEWAY_IMAGE="sandboxd:$SHA12" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
       - name: images/aviary-testing (the testing binaries)
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=aviary-testing${{ matrix.cache }} --cache-to type=gha,scope=aviary-testing${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=aviary-testing${{ matrix.cache }} --cache-to type=gha,scope=aviary-testing${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh aviary-testing dist "aviary-testing:$SHA12" "$RUNNER_TEMP/images/aviary-testing.tar"
           docker run --rm "aviary-testing:$SHA12" test-gateway --version
@@ -437,7 +439,7 @@ jobs:
       - name: images/hermit
         # hermit spec 8.5: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=hermit${{ matrix.cache }} --cache-to type=gha,scope=hermit${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=hermit${{ matrix.cache }} --cache-to type=gha,scope=hermit${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh hermit dist "hermit:$SHA12" "$RUNNER_TEMP/images/hermit.tar"
           docker run --rm "hermit:$SHA12" --help
@@ -449,7 +451,7 @@ jobs:
       - name: images/pigeon
         # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=pigeon${{ matrix.cache }} --cache-to type=gha,scope=pigeon${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=pigeon${{ matrix.cache }} --cache-to type=gha,scope=pigeon${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh pigeon dist "pigeon:$SHA12" "$RUNNER_TEMP/images/pigeon.tar"
           docker run --rm "pigeon:$SHA12" --version
@@ -463,7 +465,7 @@ jobs:
       - name: images/herald
         # with no secrets it refuses to start (exit 78), naming the variable, never a value
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=herald${{ matrix.cache }} --cache-to type=gha,scope=herald${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=herald${{ matrix.cache }} --cache-to type=gha,scope=herald${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh herald dist "herald:$SHA12" "$RUNNER_TEMP/images/herald.tar"
           docker run --rm "herald:$SHA12" --version
@@ -477,7 +479,7 @@ jobs:
       - name: images/magpie
         # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=magpie${{ matrix.cache }} --cache-to type=gha,scope=magpie${{ matrix.cache }}
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=magpie${{ matrix.cache }} --cache-to type=gha,scope=magpie${{ matrix.cache }},ignore-error=true
         run: |
           images/build.sh magpie dist "magpie:$SHA12" "$RUNNER_TEMP/images/magpie.tar"
           docker run --rm "magpie:$SHA12" --version
@@ -488,7 +490,7 @@ jobs:
         if: matrix.arch == 'amd64'
         env:
           SANDBOX_BUILD_FLAGS: >-
-            --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+            --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox,ignore-error=true
             --build-arg QWEN_CODE_TAG=qwen-code-${{ needs.tags.outputs.qwen }}
             --build-arg QWEN_CODE_SHA256=${{ needs.qwen.outputs.sha256 }}
         run: |
@@ -812,9 +814,9 @@ jobs:
       - name: forwarding as on a fabric host (no Docker's FORWARD DROP)
         run: sudo iptables -S FORWARD | head -1 && sudo iptables -P FORWARD ACCEPT
       - name: the runner as a fabric host (fabric-replica up)
-        run: sudo target/release/fabric-replica up --hermit-json "$RUNNER_TEMP/hermit.json" --aviary .
+        run: sudo --preserve-env=CURL_HOME target/release/fabric-replica up --hermit-json "$RUNNER_TEMP/hermit.json" --aviary .
       - name: the checks (egress, pause, freeze to S3 and thaw, delete paused)
-        run: sudo target/release/fabric-replica check
+        run: sudo --preserve-env=CURL_HOME target/release/fabric-replica check
       - if: failure()
         name: the host's journal (sandboxd, the stand-ins)
         run: sudo journalctl --no-pager -n 400 -u 'sandboxd*' -u 'fabric-replica*' -u 'sbx-*' || true
@@ -869,7 +871,7 @@ jobs:
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
           docker buildx build . -f session-image/Dockerfile --push --tag "$IMAGE" \
             --label "org.opencontainers.image.source=https://github.com/DE0CH/jarvis4" \
-            --cache-from type=gha,scope=session-pin --cache-to type=gha,mode=max,scope=session-pin
+            --cache-from type=gha,scope=session-pin --cache-to type=gha,mode=max,scope=session-pin,ignore-error=true
       - name: tools (crane, flyctl, the Rust toolchain of jarvis4's rust/, WireGuard)
         run: |
           set -euo pipefail
@@ -880,7 +882,7 @@ jobs:
           curl -fsSL https://fly.io/install.sh | sh > /dev/null
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
           (cd jarvis4/rust && (rustup show active-toolchain || rustup toolchain install))
-          sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools iproute2 iptables > /dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq && sudo apt-get -o Acquire::Retries=5 install -y -qq wireguard-tools iproute2 iptables > /dev/null
       - name: the replica's stand-ins answer as the real services do (jarvis4 e2e/aviary unit tests)
         working-directory: jarvis4/e2e
         run: go version && go test ./aviary/
