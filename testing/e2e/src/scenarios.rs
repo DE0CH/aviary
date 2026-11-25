@@ -103,16 +103,44 @@ async fn agent(ws: &mut Ws, id: &str) -> anyhow::Result<Value> {
     Ok(p["agent"].clone())
 }
 
-/// Every row of the conversation (`fetch_agent_timeline_request`, tail, 500).
+/// Every row of the conversation: the `tail` page, then `before` pages while the oldest says `hasOlder` (one page
+/// holds at most `TIMELINE_MAX`, 500 rows; a conversation of more is read whole, not as its last 500).
 async fn timeline(ws: &mut Ws, id: &str) -> anyhow::Result<Vec<Value>> {
-    let (_, p) = ws
-        .rpc(
-            "fetch_agent_timeline_request",
-            json!({"agentId": id, "direction": "tail", "limit": 500}),
-        )
-        .await?;
-    ensure!(p["error"].is_null(), "timeline: {}", p["error"]);
-    Ok(p["entries"].as_array().cloned().unwrap_or_default())
+    every_row(ws, |ws, cursor| {
+        let id = id.to_owned();
+        Box::pin(async move {
+            let direction = if cursor.is_some() { "before" } else { "tail" };
+            page(ws, &id, direction, cursor.as_ref(), 500).await
+        })
+    })
+    .await
+}
+
+/// One `fetch_agent_timeline_request` page, asked of `S` (the socket; a stand-in in the tests).
+type PageFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Value>> + Send + 'a>>;
+
+/// The rows of every page, oldest first: `fetch(None)` is the tail page, `fetch(Some(startCursor))` the page before.
+async fn every_row<S>(
+    s: &mut S,
+    fetch: impl Fn(&mut S, Option<Value>) -> PageFuture<'_>,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rows: Vec<Value> = Vec::new();
+    let mut cursor = None;
+    loop {
+        let p = fetch(s, cursor.clone()).await?;
+        let mut older = p["entries"].as_array().cloned().unwrap_or_default();
+        older.append(&mut rows);
+        rows = older;
+        if p["hasOlder"] != true {
+            return Ok(rows);
+        }
+        let start = p["startCursor"].clone();
+        ensure!(
+            start.is_object() && cursor.as_ref() != Some(&start),
+            "a page says hasOlder with start cursor {start}"
+        );
+        cursor = Some(start);
+    }
 }
 
 /// Waits for the turn's end push (`turn_completed`, or fails on `turn_failed`/`turn_canceled`); the pushes of the
@@ -2601,4 +2629,63 @@ async fn e26(h: &Harness) -> anyhow::Result<()> {
         eprintln!("e26 socket log: {:?}", ws.log.iter().rev().take(40).collect::<Vec<_>>());
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    /// pigeon's paging over `n` rows (seqs 1..=n): the last `limit` rows before the cursor, `startCursor` at the
+    /// first row's seq, `hasOlder` while rows remain before it.
+    struct Rows {
+        n: u64,
+        limit: u64,
+        asked: u32,
+    }
+
+    fn page_of(r: &mut Rows, cursor: Option<&Value>) -> Value {
+        r.asked += 1;
+        let end = cursor.and_then(|c| c["seq"].as_u64()).map_or(r.n, |s| s - 1);
+        let start = end.saturating_sub(r.limit) + 1;
+        let entries: Vec<Value> = (start..=end)
+            .map(|s| json!({"seqStart": s, "seqEnd": s, "item": {"type": "assistant_message", "text": format!("row {s}")}}))
+            .collect();
+        json!({"entries": entries, "startCursor": {"epoch": "e", "seq": start}, "hasOlder": start > 1, "error": null})
+    }
+
+    #[tokio::test]
+    async fn the_timeline_is_every_page_not_the_last_500_rows() {
+        // the chaos run's conversation: 231 turns of three rows, more than one page of 500
+        let mut r = Rows {
+            n: 693,
+            limit: 500,
+            asked: 0,
+        };
+        let rows = super::every_row(&mut r, |r, cursor| {
+            let p = page_of(r, cursor.as_ref());
+            Box::pin(async move { Ok(p) })
+        })
+        .await
+        .unwrap();
+        let seqs: Vec<u64> = rows.iter().filter_map(|e| e["seqEnd"].as_u64()).collect();
+        assert_eq!(seqs, (1..=693).collect::<Vec<_>>());
+        assert_eq!(r.asked, 2);
+    }
+
+    #[tokio::test]
+    async fn a_short_timeline_is_one_page() {
+        let mut r = Rows {
+            n: 7,
+            limit: 500,
+            asked: 0,
+        };
+        let rows = super::every_row(&mut r, |r, cursor| {
+            let p = page_of(r, cursor.as_ref());
+            Box::pin(async move { Ok(p) })
+        })
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(r.asked, 1);
+    }
 }
