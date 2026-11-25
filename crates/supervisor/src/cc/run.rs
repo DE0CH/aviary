@@ -2724,7 +2724,15 @@ impl Driver {
             delivered_ack(me, false);
         };
         let session = match &s.resume.provider_session_id {
-            Some(id) => Session::resume(s.harness, id.clone()),
+            Some(id) if self.transcript.has(&harness::main_transcript(s.harness, id)).await => {
+                Session::resume(s.harness, id.clone())
+            }
+            // magpie holds no transcript of it (its sandbox was lost before the harness's first write): resumed, the
+            // harness would refuse it ("No conversation found") at this and every later turn
+            Some(id) => {
+                tracing::warn!(turn = %turn_id, session = %id, "no transcript to resume: the session starts anew");
+                Session::new(s.harness, id.clone())
+            }
             None => Session::new(s.harness, conversation.to_string()),
         };
         // a replay sends the bytes it recorded: nothing is downloaded or renamed onto the workspace again (the
