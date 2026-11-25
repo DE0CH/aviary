@@ -100,8 +100,9 @@ from inside a sandbox through the gateway: an append, its retry under a new `opI
 nothing written twice), a different append at that stale offset (409 `offset_mismatch`), the append at the size, and
 magpie's bytes read back. It takes the conversation's lease, so it runs last.
 
-Not in the default run: `chaos` (nightly.yml `e2e-chaos`, platform 6.2): Alice and Bob send turns one after another
-for 60 min (`chaos:<minutes>` sets the length) while pigeon, magpie, hermit and the gateway roll in a random order
+Not in the default run: `chaos` (ci.yml's own job `e2e-chaos` on every push, platform 6.1): Alice and Bob send turns one
+after another for 60 min (`chaos:<minutes>` sets the length; the run prints its seed and `chaos:<minutes>:<seed>` runs
+that schedule again) while pigeon, magpie, hermit and the gateway roll in a random order
 every 2-5 min and a random sandbox's supervisor is killed every 10 min. Every turn must complete (no `error` row, one
 reply end per turn), each socket, reopened and resumed after each drain, must have seen every row exactly once, and
 every send must be accepted within 180 s (a refusal during a rollout is sent again under the same message id and

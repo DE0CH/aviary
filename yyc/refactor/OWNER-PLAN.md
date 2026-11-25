@@ -5,7 +5,7 @@ Order (each item: code on main, tests on the runner, CI green, then the next):
    review items (late claim answer, buffered bytes after bound, rewrite accepted:false, tail/heartbeat/drain/ready/copy).
 2. WP-30 one-off copies: confirm a green CI run with ca88da4f/69b162f3; close the low items.
 3. WP-52 importer hand-over. DONE (c8da93ca adds reverse 14.2, per-person gate, 7.12 item 6). Earlier: (aviary 430539e4, holds.js 19b90a2e, router header claudecodeui e9df2733): the loop, gate, upload ingestion, export-server ingest route, allow-handover, tests/loop.rs (7.12 item 5). Open: reverse (14.2) with a reverse fence in magpie; per-person gate; 7.12 item 6 fence cases (fence-race fuzz, leader kill -9 between fence and release, magpie switchover in a fence).
-4. WP-28 integration harness + release pipeline: E20, E22, nightly e2e-chaos, image push after the harness,
+4. WP-28 integration harness + release pipeline: E20, E22, e2e-chaos, image push after the harness,
    release aviary-<sha12> with static binaries + SHA256SUMS, protocol labels, aviary-testing image, jarvis3 chat.yml
    conformance on the image, pigeon-frames/paseo-contract release assets, the real Claude Code 2.1.304 e2e of ccfs.
 5. WP-35 cutover runner + patches, incl. WP-27's freeze-check.
