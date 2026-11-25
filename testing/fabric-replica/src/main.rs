@@ -542,8 +542,15 @@ fn start_counter(name: &str) -> Result<()> {
     if !st.success() {
         bail!("runsc exec -detach {name}: {st}");
     }
-    std::thread::sleep(Duration::from_secs(3));
-    counter(name).map(|_| ())
+    // running once it has written its first count
+    let t = Instant::now();
+    while counter(name).is_err() {
+        if t.elapsed() > Duration::from_secs(60) {
+            bail!("the counter in {name} never wrote");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Ok(())
 }
 
 async fn check_egress(c: &Client, cfg: &hermit::config::Config) -> Result<String> {
@@ -570,8 +577,13 @@ async fn check_pause(c: &Client, cfg: &hermit::config::Config) -> Result<String>
     tokio::time::sleep(Duration::from_secs(5)).await;
     c.resume("sbx-ba05e").await.context("resume")?;
     let a = counter("sbx-ba05e")?;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    let b = counter("sbx-ba05e")?;
+    // it goes on: a later count (one a second), within a bound it would never need
+    let t = Instant::now();
+    let mut b = a;
+    while b <= a && t.elapsed() < Duration::from_secs(60) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        b = counter("sbx-ba05e")?;
+    }
     let _ = c.delete("sbx-ba05e").await;
     if b <= a {
         bail!("the process does not go on after the resume ({a} -> {b})");

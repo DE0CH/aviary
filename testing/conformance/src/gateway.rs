@@ -135,6 +135,9 @@ pub struct Options {
     pub route: Option<String>,
     pub sigterm: Option<Sigterm>,
     pub durations: Durations,
+    /// The gateway's clock, when the suite runs the reference gateway in its process: the suite moves it by the
+    /// liveness cache's times instead of waiting them out (`None`: a gateway elsewhere, on real time).
+    pub clock: Option<aviary_core::clock::Clock>,
 }
 
 impl std::fmt::Debug for Options {
@@ -147,6 +150,7 @@ impl std::fmt::Debug for Options {
             .field("route", &self.route)
             .field("sigterm", &self.sigterm.is_some())
             .field("durations", &self.durations)
+            .field("clock", &self.clock)
             .finish_non_exhaustive()
     }
 }
@@ -574,6 +578,30 @@ async fn liveness_revoked(s: &Suite) -> Outcome {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     s.fakes.flip(sbx.claims.sandbox_id, Live::NotLive);
+    if let Some(clock) = &s.o.clock {
+        // the gateway's cache is on its clock: moved by the whole bound, hermit's refusal then takes effect
+        // without more of its time (a gateway that needed more would admit for ever)
+        clock.advance(s.o.durations.revocation);
+        let t = Instant::now();
+        loop {
+            let (st, b) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;
+            if st == StatusCode::FORBIDDEN {
+                expect_refused(st, &b, StatusCode::FORBIDDEN, case)?;
+                break;
+            }
+            ensure!(st == StatusCode::OK, "before revocation: got {st}");
+            if t.elapsed() > Duration::from_secs(30) {
+                fail!(
+                    "still admitted {:?} after hermit answered live: false",
+                    s.o.durations.revocation
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let (st, _) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;
+        ensure!(st == StatusCode::FORBIDDEN, "admitted again after the refusal: {st}");
+        return Ok(());
+    }
     let changed = Instant::now();
     loop {
         let (st, b) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;
@@ -1330,10 +1358,10 @@ async fn hermit_outage(s: &Suite) -> Outcome {
     let third = s.o.durations.outage / 3;
     let mut refusals = Vec::new();
     let mut requests = 0u32;
+    // a second at a time: on the gateway's clock when the suite has it, else real time
     for phase in [Outage::Refuse, Outage::Hang, Outage::Unavailable] {
         s.fakes.set_outage(phase)?;
-        let end = Instant::now() + third;
-        while Instant::now() < end {
+        for _ in 0..third.as_secs().max(1) {
             for (which, sbx) in [("seen", &seen_before), ("never seen", &never_seen)] {
                 requests += 1;
                 match s.get("http://magpie/v1/sandbox/x", sbx, case).await {
@@ -1346,7 +1374,10 @@ async fn hermit_outage(s: &Suite) -> Outcome {
                     Err(e) => refusals.push(format!("{phase:?}: the {which} token: {e}")),
                 }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            match &s.o.clock {
+                Some(clock) => clock.advance(Duration::from_secs(1)),
+                None => tokio::time::sleep(Duration::from_secs(1)).await,
+            }
         }
     }
     s.fakes.set_outage(Outage::Up)?;
