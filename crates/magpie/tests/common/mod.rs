@@ -138,6 +138,8 @@ pub fn fast() -> Intervals {
         limbo: Duration::from_millis(200),
         upload: Duration::from_millis(100),
         blob_gc: Duration::from_millis(200),
+        live_cleanup: magpie::live::CLEANUP_EVERY,
+        sweep: magpie::limits::SWEEP_EVERY,
         schedules: Duration::from_millis(200),
         requery: magpie::limits::REQUERY,
     }
@@ -153,6 +155,8 @@ pub fn idle() -> Intervals {
         limbo: Duration::from_secs(3600),
         upload: Duration::from_secs(3600),
         blob_gc: Duration::from_secs(3600),
+        live_cleanup: Duration::from_secs(3600),
+        sweep: Duration::from_secs(3600),
         schedules: Duration::from_secs(3600),
         requery: magpie::limits::REQUERY,
     }
@@ -418,6 +422,11 @@ impl CutProxy {
         }
     }
 
+    /// How many connections the stalled proxy holds unanswered (the requests now hanging in the bucket).
+    pub fn held(&self) -> usize {
+        self.state.lock().unwrap().held.len()
+    }
+
     pub fn restore(&self) {
         let mut s = self.state.lock().unwrap();
         s.cut = false;
@@ -447,4 +456,15 @@ pub async fn eventually(limit: Duration, mut f: impl AsyncFnMut() -> bool) -> bo
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     f().await
+}
+
+/// Takes magpie's job lock for the test, so a replica it starts on `db_url` is a follower: no leader job and no hermit
+/// feed touch its pool, and (with [`idle`] intervals) its pool's counts are the test's requests alone. Release it
+/// (`Leader::release`) at the end.
+pub async fn hold_job_lock(db_url: &str) -> aviary_pg::Leader {
+    let pool = aviary_pg::connect(db_url, "test-job-lock", 1, Duration::from_secs(30)).unwrap();
+    let lock = aviary_pg::Leader::start(&pool, magpie::db::jobs_key());
+    let mut held = lock.is_leader();
+    held.wait_for(|&l| l).await.unwrap();
+    lock
 }

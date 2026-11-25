@@ -862,7 +862,9 @@ An append also carries the expected offset, so a stale retry after a lost respon
 whose bytes are already at that offset is a success without a change (6.6 rule 0).
 
 Acceptance numbers (section 20): p99 of a cc write carrying a 1 MiB image line <= 150 ms and p50 of a 10 KiB append
-<= 15 ms, measured at magpie's handler inside the cluster with synchronous replication on.
+<= 15 ms, measured at magpie's handler inside the cluster with synchronous replication on. CI does not check them as
+times (a shared runner measures itself, Deyao 2026-11-25): it checks the write's database work, one transaction of the
+same statements wherever the write lands (crates/magpie/tests/ccfs_counts.rs), and ccfs_perf.rs prints the latencies.
 
 ### 6.11 Read path
 

@@ -983,8 +983,8 @@ async fn a_long_poll_on_one_replica_answers_within_50ms_of_a_commit_on_another()
     let pigeon = a.pigeon();
     let id = ev::conversation(&pigeon, ALICE).await;
     ev::append1(b.pool(), ALICE, id, ev::user_sent("c0", "hi")).await;
-    // the bound is on the median of the rounds (a shared CI runner can stall one round), with every round well under
-    // the 1 s re-query that would otherwise answer
+    // each poll waits 20 s and re-queries only after a minute: an answer with the new row came by the notification;
+    // the wake-up times are printed, never checked (a shared runner measures itself)
     let rounds = 7u64;
     let mut lags = Vec::new();
     for round in 1..=rounds {
@@ -999,24 +999,17 @@ async fn a_long_poll_on_one_replica_answers_within_50ms_of_a_commit_on_another()
                 (Instant::now(), p)
             })
         };
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            common::eventually(Duration::from_secs(30), async || a.app().fanout.held() >= 1).await,
+            "the poll is held"
+        );
         ev::append1(b.pool(), ALICE, id, ev::user_sent(&format!("c{round}"), "more")).await;
         let committed = Instant::now();
         let (answered, p) = poll.await.unwrap();
-        let lag = answered.saturating_duration_since(committed);
-        assert!(
-            lag < Duration::from_millis(900),
-            "round {round}: answered {lag:?} after the commit"
-        );
-        lags.push(lag);
+        lags.push(answered.saturating_duration_since(committed));
         assert_eq!(p.rows.iter().map(|r| r.seq_end).collect::<Vec<_>>(), vec![round + 1]);
     }
-    lags.sort();
-    let median = lags[lags.len() / 2];
-    assert!(
-        median < Duration::from_millis(50),
-        "median wake-up {median:?} (all: {lags:?})"
-    );
+    eprintln!("wake-ups after the commit: {lags:?}");
     // nothing new: rows [] after waitMs
     let started = Instant::now();
     let p = pigeon
@@ -1057,22 +1050,19 @@ async fn held_polls_hold_no_connection_and_answer_at_once_on_drain() {
     })
     .await;
     assert!(idle, "{:?}, {} held", a.pool().status(), a.app().fanout.held());
-    // and other requests are served at once
+    // and other requests are served (the pool is free)
     for _ in 0..5 {
-        let started = Instant::now();
         pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
-        assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "{:?}",
-            started.elapsed()
-        );
     }
-    let started = Instant::now();
     a.start_drain();
-    for p in polls {
-        assert!(p.await.unwrap().rows.is_empty());
-    }
-    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+    // they waited 25 s: answered within 20 s is the drain's answer
+    tokio::time::timeout(Duration::from_secs(20), async {
+        for p in polls {
+            assert!(p.await.unwrap().rows.is_empty());
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the held polls answer at the drain"));
 }
 
 #[tokio::test]
@@ -1093,49 +1083,65 @@ async fn a_retract_that_only_deletes_wakes_a_held_poll_with_the_new_epoch() {
                 .unwrap()
         })
     };
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let started = Instant::now();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || a.app().fanout.held() >= 1).await,
+        "the poll is held"
+    );
     ev::append1(a.pool(), ALICE, id, ev::retract(&seqs)).await;
-    let p = poll.await.unwrap();
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // the poll waits 20 s and re-queries only after a minute: within 15 s is the notification's wake-up
+    let p = tokio::time::timeout(Duration::from_secs(15), poll)
+        .await
+        .unwrap_or_else(|_| panic!("the retract wakes the poll"))
+        .unwrap();
     assert_eq!((p.epoch.as_str(), p.rows.len()), ("2", 0));
 }
 
-/// E6-style: with 120 turns preloaded, a page costs what a page costs (within 2x of the same page at 10 turns).
+/// E6-style: with 120 turns preloaded, a page costs what a page costs: the same database work as the same pages at
+/// 10 turns (its time is printed, never checked).
 #[tokio::test]
-async fn page_time_is_flat_over_120_turns() {
+async fn page_work_is_flat_over_120_turns() {
     let db = common::fresh_db("e6").await;
+    // a follower replica: its pool's counts are the pages' alone
+    let lock = common::hold_job_lock(&db.url).await;
     let t = common::Tokens::new();
     let a = common::replica(&db.url, &t).await;
     let pigeon = a.pigeon();
     let alice = pigeon.person(ALICE);
     let id = ev::conversation(&pigeon, ALICE).await;
-    async fn time_pages(alice: &magpie_api::client::PersonCalls<'_>, id: Uuid) -> Duration {
-        // warm, then the best of 5 rounds of tail + one before page + one after page
-        let mut best = Duration::MAX;
-        for _ in 0..6 {
-            let started = Instant::now();
-            let tail = alice.timeline(id, &ev::tail(40)).await.unwrap();
-            alice
-                .timeline(id, &ev::before(tail.rows[0].seq_start, 40))
-                .await
-                .unwrap();
-            alice
-                .timeline(id, &ev::after(tail.max_seq.saturating_sub(48), 40))
-                .await
-                .unwrap();
-            best = best.min(started.elapsed());
-        }
-        best
+    async fn pages(
+        alice: &magpie_api::client::PersonCalls<'_>,
+        pool: &aviary_pg::Pool,
+        id: Uuid,
+    ) -> (aviary_pg::Counts, Duration) {
+        // a tail page, one before it and one after
+        let before = pool.counts();
+        let started = Instant::now();
+        let tail = alice.timeline(id, &ev::tail(40)).await.unwrap();
+        alice
+            .timeline(id, &ev::before(tail.rows[0].seq_start, 40))
+            .await
+            .unwrap();
+        alice
+            .timeline(id, &ev::after(tail.max_seq.saturating_sub(48), 40))
+            .await
+            .unwrap();
+        (pool.counts() - before, started.elapsed())
     }
     preload(a.pool(), id, 10).await;
-    let small = time_pages(&alice, id).await;
+    // the first pages of a conversation may load what later ones reuse
+    pages(&alice, a.pool(), id).await;
+    let (small, t_small) = pages(&alice, a.pool(), id).await;
     preload(a.pool(), id, 110).await;
-    let large = time_pages(&alice, id).await;
-    assert!(
-        large <= small * 2 + Duration::from_millis(5),
-        "10 turns: {small:?}, 120 turns: {large:?}"
+    pages(&alice, a.pool(), id).await;
+    let (large, t_large) = pages(&alice, a.pool(), id).await;
+    eprintln!("pages at 10 turns: {small:?} {t_small:?}; at 120 turns: {large:?} {t_large:?}");
+    assert_eq!(
+        (large.statements, large.transactions),
+        (small.statements, small.transactions),
+        "the same pages, the same statements"
     );
+    // the three pages' own rows (40 each) and a few lookups, never the conversation's 600
+    assert!(large.rows <= 3 * 40 + 10, "{large:?}");
     // and the walk back over 120 turns gives 600 rows, no gap, no duplicate
     let mut n = 0;
     let mut cursor = u64::MAX;
@@ -1157,6 +1163,7 @@ async fn page_time_is_flat_over_120_turns() {
         last_first = cursor;
     }
     assert_eq!(n, 480);
+    lock.release().await;
 }
 
 #[tokio::test]

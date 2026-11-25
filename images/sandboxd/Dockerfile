@@ -11,18 +11,21 @@
 # builds it from that:
 #   docker build -f images/sandboxd/Dockerfile --build-arg REVISION=<40 hex> <context>
 # linux/amd64 and linux/arm64 (ci.yml builds each natively): BuildKit's TARGETARCH picks the crane stage, each with
-# the digest the release's own checksums.txt lists
+# the digest the release's own checksums.txt lists. Every download is tried again (5 times) when it fails: the only
+# thing in CI that may fail on its own is a network request, and it retries
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS crane-amd64
 ARG CRANE_VERSION=0.20.6
-ADD --checksum=sha256:c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127 \
-    https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz \
-    /tmp/crane.tgz
+RUN ok=; for i in 1 2 3 4 5; do \
+      wget -q -T 60 -O /tmp/crane.tgz "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" && echo "c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127  /tmp/crane.tgz" | sha256sum -c - && ok=1 && break; \
+      rm -f /tmp/crane.tgz; sleep 3; \
+    done; [ -n "$ok" ]
 
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS crane-arm64
 ARG CRANE_VERSION=0.20.6
-ADD --checksum=sha256:fc0515857bc38e4ddd2d37a5ab03fb5959449c7b2d4ad759bcc1174ac0cad91b \
-    https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_arm64.tar.gz \
-    /tmp/crane.tgz
+RUN ok=; for i in 1 2 3 4 5; do \
+      wget -q -T 60 -O /tmp/crane.tgz "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_arm64.tar.gz" && echo "fc0515857bc38e4ddd2d37a5ab03fb5959449c7b2d4ad759bcc1174ac0cad91b  /tmp/crane.tgz" | sha256sum -c - && ok=1 && break; \
+      rm -f /tmp/crane.tgz; sleep 3; \
+    done; [ -n "$ok" ]
 
 FROM crane-${TARGETARCH} AS crane
 RUN mkdir -p /out && tar -xzf /tmp/crane.tgz -C /out crane && chmod 755 /out/crane
@@ -31,7 +34,9 @@ FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52
 
 ARG REVISION=dev
 
-RUN apk add --no-cache iproute2 nftables wireguard-tools-wg procps-ng tar zstd
+RUN ok=; for i in 1 2 3 4 5; do \
+      apk add --no-cache iproute2 nftables wireguard-tools-wg procps-ng tar zstd && ok=1 && break; sleep 3; \
+    done; [ -n "$ok" ]
 COPY --from=crane /out/crane /usr/local/bin/crane
 COPY --chmod=755 dist/sandboxd /usr/local/bin/sandboxd
 

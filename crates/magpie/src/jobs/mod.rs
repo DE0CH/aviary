@@ -54,14 +54,15 @@ where
     })
 }
 
-/// A job every replica runs (no leader lock): `pass` every `every`.
+/// A job every replica runs (no leader lock): `pass` every `every`, the first one `every` after the start (not at
+/// once, so a replica a test starts with [`Intervals`] it never reaches runs no pass the test did not call).
 fn every_replica<F, Fut>(name: &'static str, every: Duration, pool: Pool, pass: F) -> JoinHandle<()>
 where
     F: Fn(Pool) -> Fut + Send + 'static,
     Fut: Future<Output = crate::error::Result<String>> + Send,
 {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(every);
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
@@ -130,7 +131,7 @@ impl Jobs {
         }));
         tasks.push(every_replica(
             "live cleanup",
-            crate::live::CLEANUP_EVERY,
+            iv.live_cleanup,
             pool.clone(),
             |p| async move {
                 let n = crate::live::cleanup(&p).await?;
@@ -215,6 +216,10 @@ pub struct Intervals {
     pub upload: Duration,
     /// The blob GC.
     pub blob_gc: Duration,
+    /// The live frames' cleanup (every replica, [`crate::live::cleanup`]).
+    pub live_cleanup: Duration,
+    /// The turn sweeper and the availability tick (every replica, [`crate::turns::sweeper`]).
+    pub sweep: Duration,
     /// Firing due schedules ([`crate::schedules::fire`]).
     pub schedules: Duration,
     /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
@@ -231,6 +236,8 @@ impl Default for Intervals {
             retention: limits::RETENTION_EVERY,
             limbo: limits::LIMBO_SWEEP_EVERY,
             upload: limits::UPLOAD_EVERY,
+            live_cleanup: crate::live::CLEANUP_EVERY,
+            sweep: limits::SWEEP_EVERY,
             blob_gc: limits::BLOB_GC_EVERY,
             schedules: crate::schedules::fire::EVERY,
             requery: limits::REQUERY,
