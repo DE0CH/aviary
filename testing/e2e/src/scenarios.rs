@@ -843,6 +843,18 @@ async fn e11(h: &Harness) -> anyhow::Result<()> {
             let id = create(&mut ws, &format!("Lose the computer ({m})")).await?;
             let pod = sandbox_of(h, &id).await?;
             in_the_pause(&mut ws, &id).await?;
+            // the person's message is in magpie's transcript (what the next sandbox resumes): a sandbox lost before
+            // that leaves nothing to resume
+            eventually(
+                "the message in the transcript",
+                Duration::from_secs(60),
+                Duration::from_millis(500),
+                || async {
+                    let lines = transcript(h, &pod, &id).await.unwrap_or_default();
+                    Ok(lines.iter().any(|l| l["type"] == "user").then_some(()))
+                },
+            )
+            .await?;
             let deleted = Instant::now();
             h.delete_pod(&pod, 0).await?;
             let end = turn_end_kind(&mut ws, &id, Duration::from_secs(40)).await?;
