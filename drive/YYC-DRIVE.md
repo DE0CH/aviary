@@ -65,8 +65,9 @@ signed in, which drive there is); from Hong Kong to a server in Germany each was
   edge keeps it in its cache for whoever asks next; the browser gets its own private copy.
 
 Its settings are vars: `ACCESS_TEAM`, `ACCESS_AUD` (the Access app's audience tag) and `DRIVE_NAME` (the same name
-as the server's `--name`). The image carries the edge at `/srv/edge`; YYC's deploy takes it out of the image it pins,
-so the page at the edge and the server are always one commit. Tests: `cd edge && npm test`.
+as the server's `--name`). The image (`drive-image` in the repository's `flake.nix`, built by Nix) carries the edge at
+`/srv/edge`; YYC's deploy takes it out of the image it pins, so the page at the edge and the server are always one
+commit. Tests: `cd edge && npm test`.
 
 ## Run it locally
 

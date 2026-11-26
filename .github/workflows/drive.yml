@@ -1,12 +1,13 @@
 # YYC Drive (drive/, drive/YYC-DRIVE.md; it was DE0CH/yyc-drive). server: clippy and the server's tests (the real
 # program on a temporary folder). page: the page's unit tests. edge: the Worker's tests and its bundle (wrangler's dry
-# run). image + index: all of it in one image for amd64 and arm64, ghcr.io/de0ch/yyc-drive:<sha12> (the last commit
-# that changed drive/, docs/DEPLOY.md; the edge at /srv/edge), only when all three passed and the tag is not there yet.
+# run). image + index: all of it in one image for amd64 and arm64, built by Nix (flake.nix drive-image),
+# ghcr.io/de0ch/yyc-drive:<sha12> (the last commit that changed its part, docs/DEPLOY.md; the edge at /srv/edge), only
+# when all three passed and the tag is not there yet.
 name: drive
 on:
   push:
     branches: ['**']  # every branch; not in the gate's list (merge.yml) yet (not tags: jarvis.yml's releases push jarvis-<sha12>)
-    paths: [drive/**, deploy/images.json, .github/workflows/drive.yml]
+    paths: [drive/**, deploy/images.json, .github/workflows/drive.yml, flake.nix, flake.lock]
   workflow_dispatch:
   # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
   # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
@@ -22,6 +23,9 @@ env:
   # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
   CURL_HOME: ${{ github.workspace }}/.github/ci
   IMAGE: ghcr.io/de0ch/yyc-drive
+  NIX_CACHE: s3://de0ch-aviary-nix-cache?endpoint=nbg1.your-objectstorage.com&region=nbg1
+  AWS_ACCESS_KEY_ID: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
 jobs:
   part:
     runs-on: ubuntu-24.04
@@ -102,7 +106,7 @@ jobs:
           - {arch: amd64, runner: ubuntu-24.04}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -111,17 +115,59 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {ref: "${{ inputs.sha || github.sha }}"}
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: the cache service's token for buildx (type=gha)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: build and push
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          # single-user: the build itself reads the cache with this job's credentials
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.NIX_CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+      - name: build the image (Nix, flake.nix drive-image; from the cache where it has it)
+        env:
+          # the part's commit: the image's labels
+          DRIVE_REVISION: ${{ needs.part.outputs.sha }}
+        run: |
+          set -euo pipefail
+          nix build --impure .#drive-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
+          out=$(nix build --impure .#drive-image --no-link --print-out-paths)
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          "$out" | docker load
+      - name: sign what was built and keep it in the cache
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          mapfile -t paths < <(nix path-info --recursive "$OUT")
+          nix store sign --key-file "$key" "${paths[@]}"
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            nix copy --to "$NIX_CACHE" "${paths[@]}" && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
+      - name: the image serves, draws previews with ffmpeg, and carries the edge
+        run: |
+          set -euo pipefail
+          img=yyc-drive:nix
+          test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")" = "linux/${{ matrix.arch }}"
+          docker run --rm --entrypoint ffmpeg "$img" -hide_banner -version | head -1
+          docker run --rm --entrypoint sh "$img" -c 'test -s /srv/edge/wrangler.jsonc && test -s /srv/edge/assets/index.html && test -s /srv/edge/assets/_headers && test -d /srv/edge/assets/themes/opencloud && test -d /srv/edge/src'
+          mkdir -p "$RUNNER_TEMP/root" && chmod 777 "$RUNNER_TEMP/root"
+          docker run -d --name drive -p 18080:8080 -v "$RUNNER_TEMP/root:/data" "$img" --root /data
+          for _ in $(seq 30); do curl -fs http://127.0.0.1:18080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18080/healthz
+          docker logs drive; docker rm -f drive
+      - name: push
         env:
           TOKEN: ${{ github.token }}
         run: |
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
-          docker buildx build drive -f drive/server/Dockerfile --push --platform "linux/${{ matrix.arch }}" --provenance=false \
-            --tag "$IMAGE:${TAG::12}-${{ matrix.arch }}" \
-            --cache-from "type=gha,scope=drive-${{ matrix.arch }}" --cache-to "type=gha,mode=max,scope=drive-${{ matrix.arch }},ignore-error=true"
+          docker tag yyc-drive:nix "$IMAGE:${TAG::12}-${{ matrix.arch }}"
+          docker push -q "$IMAGE:${TAG::12}-${{ matrix.arch }}"
 
   index:
     needs: [part, image]

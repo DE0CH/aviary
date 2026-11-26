@@ -231,6 +231,83 @@
             };
           };
 
+          # drive/server/Dockerfile: YYC Drive, the server (glibc, as rust:bookworm built it) with ffmpeg for its
+          # previews, and at /srv/edge the edge Worker with the page as its assets, which the deploy takes out for
+          # Cloudflare. One image, one commit for both.
+          # pnpm exactly as drive/package.json's packageManager names it
+          drivePnpm = pkgs.pnpm_11.overrideAttrs (_: rec {
+            version = "11.28.11";
+            src = pkgs.fetchurl {
+              url = "https://registry.npmjs.org/pnpm/-/pnpm-${version}.tgz";
+              sha256 = "1frywy4v9n1vwxpnykb06gjyycnrlxpizl1marv401s081zs2g2h";
+            };
+          });
+          # the page's source as the Dockerfile's context had it (drive/.dockerignore: no tests/e2e); git-untracked
+          # files (node_modules, dist, server/target) are never in a flake's source
+          driveSrc = lib.fileset.toSource {
+            root = ./drive;
+            fileset = lib.fileset.difference ./drive (lib.fileset.unions [ ./drive/tests/e2e ./drive/server/src ./drive/server/tests ]);
+          };
+          drive-page = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "yyc-drive-page";
+            version = "0.0.0";
+            src = driveSrc;
+            nativeBuildInputs = [ pkgs.nodejs_22 drivePnpm pkgs.pnpmConfigHook ];
+            # every package the lock file names, fetched by its hash (the one step whose answer may vary)
+            pnpmDeps = pkgs.fetchPnpmDeps {
+              inherit (finalAttrs) pname version src;
+              pnpm = drivePnpm;
+              fetcherVersion = 5;
+              hash = "sha256-mrTAzHqgwZ/+U+GD9rh3ZFRe6pIGrilBJvw5eawxtL8=";
+            };
+            buildPhase = ''
+              runHook preBuild
+              NODE_OPTIONS=--max-old-space-size=4096 pnpm build
+              mkdir -p dist/themes
+              cp -r server/theme dist/themes/opencloud
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              cp -r dist $out
+              runHook postInstall
+            '';
+          });
+          drive-server = craneLib.buildPackage {
+            src = lib.fileset.toSource {
+              root = ./drive/server;
+              fileset = lib.fileset.unions [ ./drive/server/Cargo.toml ./drive/server/Cargo.lock ./drive/server/src ];
+            };
+            strictDeps = true;
+            doCheck = false;
+            cargoExtraArgs = "--locked";
+          };
+          driveRevision = revisionFrom "DRIVE_REVISION" (builtins.substring 0 32 (baseNameOf driveSrc));
+          drive-image = pkgs.dockerTools.streamLayeredImage {
+            name = "yyc-drive";
+            tag = "nix";
+            contents = [ base drive-server pkgs.ffmpeg-headless ];
+            extraCommands = ''
+              mkdir -p usr/local/bin srv/edge tmp
+              cp ${drive-server}/bin/yyc-drive usr/local/bin/yyc-drive
+              chmod 755 usr/local/bin/yyc-drive
+              cp ${./drive/edge/wrangler.jsonc} srv/edge/wrangler.jsonc
+              cp ${./drive/edge/package.json} srv/edge/package.json
+              cp -r ${./drive/edge/src} srv/edge/src
+              cp -r ${drive-page} srv/edge/assets
+              chmod -R u+w srv/edge
+              cp ${./drive/edge/_headers} srv/edge/assets/_headers
+              chmod 1777 tmp
+            '';
+            config = {
+              User = "1000:1000";
+              Entrypoint = [ "/usr/local/bin/yyc-drive" ];
+              Env = [ "PATH=/usr/local/bin:/bin" "DRIVE_LISTEN=0.0.0.0:8080" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" ];
+              ExposedPorts = { "8080/tcp" = { }; };
+              Labels = ociLabels driveRevision "YYC Drive: the server, and the edge Worker with its page";
+            };
+          };
+
           # magpie: glibc, not musl, with libheif (and its HEVC decoder) as .github/ci/build-magpie.sh builds it on Debian
           magpieCommon = {
             inherit src;
@@ -362,6 +439,8 @@
             protocols = true;
           };
           inherit egress-app egress-image;
+          inherit drive-page drive-server drive-image;
+          drive-pnpm-deps = drive-page.pnpmDeps;
           inherit magpie-deps magpie aviary-testing-deps aviary-testing aviary-testing-image hermit-jarvis-deps hermit-jarvis;
           # jarvis/hermit/Dockerfile: distroless cc (glibc), an entrypoint and no command
           hermit-jarvis-image = image {

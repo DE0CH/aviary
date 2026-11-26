@@ -70,7 +70,9 @@
     ],
     "paths": [
       "drive",
-      ".github/workflows/drive.yml"
+      ".github/workflows/drive.yml",
+      "flake.nix",
+      "flake.lock"
     ]
   }
 }
