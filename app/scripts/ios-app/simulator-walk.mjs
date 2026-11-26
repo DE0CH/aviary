@@ -107,6 +107,22 @@ async function flowWithRetry(maestro, udid, name, env) {
   return (await runFlow(maestro, udid, name, env)) === true;
 }
 
+/**
+ * Signs in, up to three times (as the Fold's test does, android-app/emulator-test.mjs). The part that fails now and
+ * then is iOS's, not the app's: its "Wants to Use" prompt not shown yet, or XCTest timing out on the sign-in page's
+ * Safari view while it closes ("Request for viewHierarchy failed"). walk-sign-in.yaml relaunches the app and goes on
+ * from wherever the last try left it.
+ */
+async function signIn(maestro, udid, env) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const result = await runFlow(maestro, udid, "walk-sign-in", env);
+    if (result === true) return true;
+    console.log(`sign-in attempt ${attempt} failed (${result === "driver" ? "Maestro's driver did not start" : "see walk-sign-in.log"})`);
+    if (attempt < 3) fs.copyFileSync(path.join(out, "walk-sign-in.log"), path.join(out, `walk-sign-in-${attempt}.log`));
+  }
+  return false;
+}
+
 /** Maestro's UI tree, read beside this process as a flow is (the stand-in keeps answering). */
 function hierarchy(maestro, udid) {
   return new Promise((done, fail) => {
@@ -146,8 +162,11 @@ async function main() {
   const udid = bootSimulator();
   try {
     const env = { APP_ID: appId, ...TEXTS };
+    const signedIn = await signIn(maestro, udid, env);
+    check("sign-in returns to the app, signed in", signedIn, "walk-sign-in.log names the step that failed");
+    if (!signedIn) return;
     const listed = await flowWithRetry(maestro, udid, "walk-list", env);
-    check("sign-in, the list, and a long press on a plain and a pinned conversation opening its menu", listed,
+    check("the list, and a long press on a plain and a pinned conversation opening its menu", listed,
       "walk-list.log names the step that failed");
     if (!listed) return;
     const chatTop = await topOf(maestro, udid, "workspace-header-title", "conversation");
