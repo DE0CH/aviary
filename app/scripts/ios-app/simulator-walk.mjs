@@ -180,11 +180,11 @@ async function main() {
       `chat title top ${chatTop}, Activity title top ${panelTop}`);
     // a tool call opens in place on a phone, its header held where the finger was (Deyao, 2026-11-20): the list is
     // inverted, so without the scroll it gives back each frame the header would rise by the details' height
-    const steps = await flow(maestro, udid, "walk-tool", env);
+    const steps = await flowWithRetry(maestro, udid, "walk-tool", env);
     check("the conversation with steps opens and its turn shows its tool calls", steps);
     if (!steps) return;
     const closedTop = await topOf(maestro, udid, "tool-call-badge", "tool-closed");
-    const toolOpened = await flow(maestro, udid, "walk-tool-open", env);
+    const toolOpened = await flowWithRetry(maestro, udid, "walk-tool-open", env);
     check("a tap on a tool call opens it", toolOpened);
     if (!toolOpened) return;
     const openTop = await topOf(maestro, udid, "tool-call-badge", "tool-open");
