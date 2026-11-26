@@ -11,8 +11,10 @@ import type { UploadProgress } from "@/yyc/upload-progress";
  * its `uploadId`). A picture goes up as an image (`?kind=image`: the server keeps the copy the model sees), so a
  * message sent during a reply and one sent between replies carry the same references.
  *
- * XMLHttpRequest, not fetch: only it reports the bytes sent (web and React Native alike). Fetched with import() when
- * something is attached (composer/index.tsx, composer/actions.ts): a chunk of its own, out of the entry.
+ * XMLHttpRequest, not fetch: only it reports the bytes sent (web and React Native alike). The multipart body is built
+ * here as bytes (`multipartFileBody`): React Native cannot make a Blob from bytes, so `FormData` with a Blob fails
+ * there before anything is sent. Fetched with import() when something is attached (composer/index.tsx,
+ * composer/actions.ts): a chunk of its own, out of the entry.
  */
 
 export type AssetKind = "file" | "image";
@@ -30,7 +32,7 @@ export interface UploadedAsset {
 export interface UploadXhr {
   open(method: string, url: string): void;
   setRequestHeader(name: string, value: string): void;
-  send(body: FormData): void;
+  send(body: Uint8Array): void;
   abort(): void;
   withCredentials: boolean;
   status: number;
@@ -52,19 +54,41 @@ export interface UploadAssetInput {
   createXhr?: () => UploadXhr;
 }
 
+/**
+ * A multipart/form-data body with one file part named `files`, as a browser's FormData sends it: the name in UTF-8
+ * with `"`, CR and LF percent-escaped (the HTML standard's form encoding), which is how pigeon's parser reads it.
+ */
+export function multipartFileBody(
+  fileName: string,
+  mimeType: string,
+  bytes: Uint8Array,
+): { contentType: string; bytes: Uint8Array } {
+  let boundary = "----aviary";
+  for (let i = 0; i < 4; i++) boundary += Math.random().toString(36).slice(2, 10);
+  const name = fileName.replace(/"/g, "%22").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const type = mimeType.replace(/[\r\n]/g, "") || "application/octet-stream";
+  const encoder = new TextEncoder();
+  const head = encoder.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${name}"\r\n` +
+      `Content-Type: ${type}\r\n\r\n`,
+  );
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const body = new Uint8Array(head.byteLength + bytes.byteLength + tail.byteLength);
+  body.set(head, 0);
+  body.set(bytes, head.byteLength);
+  body.set(tail, head.byteLength + bytes.byteLength);
+  return { contentType: `multipart/form-data; boundary=${boundary}`, bytes: body };
+}
+
 /** Uploads one file or picture; rejects with the server's sentence when it refuses. */
 export function uploadAsset(input: UploadAssetInput): Promise<UploadedAsset> {
   return new Promise((resolve, reject) => {
     const xhr = input.createXhr ? input.createXhr() : (new XMLHttpRequest() as unknown as UploadXhr);
-    const form = new FormData();
-    form.append(
-      "files",
-      new Blob([input.bytes as Uint8Array<ArrayBuffer>], { type: input.mimeType }),
-      input.fileName,
-    );
+    const body = multipartFileBody(input.fileName, input.mimeType, input.bytes);
     xhr.open("POST", apiUrl(`/api/assets/files${input.kind === "image" ? "?kind=image" : ""}`));
     xhr.withCredentials = true;
     for (const [name, value] of Object.entries(accessHeaders())) xhr.setRequestHeader(name, value);
+    xhr.setRequestHeader("Content-Type", body.contentType);
     xhr.upload.onprogress = (event) => {
       input.onProgress?.({ sent: event.loaded, total: event.total });
     };
@@ -94,7 +118,7 @@ export function uploadAsset(input: UploadAssetInput): Promise<UploadedAsset> {
     xhr.onerror = () => reject(new Error("Upload failed."));
     xhr.onabort = () => reject(new DOMException("Upload cancelled.", "AbortError"));
     input.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
-    xhr.send(form);
+    xhr.send(body.bytes);
   });
 }
 
