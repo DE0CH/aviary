@@ -141,6 +141,60 @@
         AVIARY_REVISION = sourceHash;
       });
 
+      # egress/Dockerfile: the TypeScript run by Node 22 itself, its production dependencies (npm ci --omit=dev, pinned
+      # by the lock file's hash), tini, as user 1000 with a writable /var/cache/jarvis-egress. CHAT_COMMIT is the
+      # source's hash; CHAT_BUILT_AT stays empty (the Dockerfile's default), since a build time makes every build differ.
+      egress-app = pkgs.buildNpmPackage {
+        pname = "egress";
+        version = "0.0.0";
+        src = lib.fileset.toSource {
+          root = ./egress;
+          fileset = lib.fileset.unions [
+            ./egress/package.json ./egress/package-lock.json ./egress/src
+            ./egress/egress-allowlist/allow.txt ./egress/egress-allowlist/deny.txt
+          ];
+        };
+        npmDepsHash = "sha256-FzT4oen4r3zydxYIPqYGzRJdZ+xZBCa5UK/1KX2149A=";
+        nodejs = pkgs.nodejs_22;
+        dontNpmBuild = true;
+        installPhase = ''
+          runHook preInstall
+          npm prune --omit=dev --no-audit --no-fund
+          mkdir -p $out/app
+          cp -r package.json node_modules src egress-allowlist $out/app/
+          runHook postInstall
+        '';
+      };
+      egress-image = pkgs.dockerTools.streamLayeredImage {
+        name = "egress";
+        tag = "nix";
+        contents = [ base egress-app pkgs.nodejs_22 pkgs.tini pkgs.bash pkgs.coreutils ];
+        fakeRootCommands = ''
+          mkdir -p var/cache/jarvis-egress tmp
+          chown -R 1000:1000 var/cache/jarvis-egress
+          chmod 1777 tmp
+        '';
+        enableFakechroot = false;
+        config = {
+          User = "1000:1000";
+          WorkingDir = "/app";
+          Entrypoint = [ "/bin/tini" "--" "/bin/node" "--disable-warning=ExperimentalWarning" "src/main.ts" ];
+          Env = [
+            "PATH=/bin" "NODE_ENV=production" "PORT=8080" "CHAT_COMMIT=${egressHash}" "CHAT_BUILT_AT="
+            "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" "NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-bundle.crt"
+          ];
+          ExposedPorts = lib.genAttrs [ "8080/tcp" "3128/tcp" "8082/tcp" "9090/tcp" ] (_: { });
+          Labels = {
+            "org.opencontainers.image.source" = "https://github.com/DE0CH/aviary";
+            "org.opencontainers.image.revision" = egressHash;
+            "org.opencontainers.image.version" = builtins.substring 0 12 egressHash;
+            "org.opencontainers.image.licenses" = "AGPL-3.0-or-later";
+            "org.opencontainers.image.description" = "egress: the sandboxes' gateway out, and tools";
+          };
+        };
+      };
+      egressHash = builtins.substring 0 32 (baseNameOf egress-app);
+
       # magpie: glibc, not musl, with libheif (and its HEVC decoder) as .github/ci/build-magpie.sh builds it on Debian
       magpieCommon = {
         inherit src;
@@ -271,6 +325,7 @@
           description = "hermit: sandboxes, people and workspaces";
           extraBins = [ juicefs ];
         };
+        inherit egress-app egress-image;
         inherit magpie-deps magpie aviary-testing-deps aviary-testing aviary-testing-image hermit-jarvis-deps hermit-jarvis;
         # jarvis/hermit/Dockerfile: distroless cc (glibc), an entrypoint and no command
         hermit-jarvis-image = image {
