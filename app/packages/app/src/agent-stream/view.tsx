@@ -71,7 +71,6 @@ import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
-import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { IndentRail } from "@/components/indent-rail";
@@ -1317,8 +1316,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
       >
-        <ToolCallSheetProvider>
-          <StopFollowingContext.Provider value={stopFollowing}>
+        <StopFollowingContext.Provider value={stopFollowing}>
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
@@ -1366,8 +1364,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               </View>
             )}
           </AssistantSelectionCopySurface>
-          </StopFollowingContext.Provider>
-        </ToolCallSheetProvider>
+        </StopFollowingContext.Provider>
       </ChatFind>
     );
   },

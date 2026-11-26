@@ -22,6 +22,13 @@ appId: ${APP_ID}
     timeout: 30000
 - tapOn:
     id: "turn-summary"
+# the turn's tool calls are one group row ("Read 1 file"); it opens in place, as a tool call does
+- extendedWaitUntil:
+    visible:
+      id: "tool-call-group"
+    timeout: 15000
+- tapOn:
+    id: "tool-call-group"
 - extendedWaitUntil:
     visible:
       id: "tool-call-badge"
