@@ -6,7 +6,7 @@ name: yyc
 # cluster's certificate are DE0CH/yyc-code's (a checkout of its main); the map of YYC AI's Secrets is yyc/secrets.txt.
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
+    branches: ['**']  # every branch: the gate waits for it
     paths: [yyc/**, deploy/images.json, tools/aviary-deploy/**, .github/workflows/yyc.yml]
   schedule:
     - cron: "41 3 * * *"  # the ZDR guard daily: OpenRouter's endpoint lists change without a commit
