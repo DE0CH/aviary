@@ -566,22 +566,25 @@ async fn credential_new_kid(s: &Suite) -> Outcome {
 async fn liveness_revoked(s: &Suite) -> Outcome {
     let case = "liveness.revoked";
     let sbx = s.sandbox()?;
+    // hermit's live answer is on its way to the gateway when hermit changes: the gateway's first lookup is held with
+    // its answer worked out (live), hermit then answers live: false, and the held answer goes out after that. Its age
+    // counts from when it was asked, so it is the old answer it is: what came after it is not hidden for another TTL
+    // (2026-11-26: stamped on arrival, an answer the test clock had moved past during its lookup admitted for ever)
+    let id = sbx.claims.sandbox_id;
+    s.fakes.hold_liveness(id);
     let (st, b) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;
     ensure!(
         st == StatusCode::OK,
-        "live sandbox: got {st} {}",
+        "live sandbox (no answer yet: admitted on its token): got {st} {}",
         String::from_utf8_lossy(&b)
     );
-    // let the gateway see hermit's live answer before the change
-    let t = Instant::now();
-    while s.fakes.liveness_lookups(sbx.claims.sandbox_id) == 0 && t.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    s.fakes.flip(sbx.claims.sandbox_id, Live::NotLive);
+    s.fakes.held(id).await;
+    s.fakes.flip(id, Live::NotLive);
     if let Some(clock) = &s.o.clock {
         // the gateway's cache is on its clock: moved by the whole bound, hermit's refusal then takes effect
         // without more of its time (a gateway that needed more would admit for ever)
         clock.advance(s.o.durations.revocation);
+        s.fakes.release_liveness(id);
         let t = Instant::now();
         loop {
             let (st, b) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;
@@ -602,6 +605,7 @@ async fn liveness_revoked(s: &Suite) -> Outcome {
         ensure!(st == StatusCode::FORBIDDEN, "admitted again after the refusal: {st}");
         return Ok(());
     }
+    s.fakes.release_liveness(id);
     let changed = Instant::now();
     loop {
         let (st, b) = s.get("http://magpie/v1/sandbox/x", &sbx, case).await?;

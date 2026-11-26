@@ -115,6 +115,8 @@ export class Liveness {
   #refresh(id: string, e: Entry): Promise<void> {
     if (e.pending) return e.pending;
     if (this.#now() < e.retryAt) return Promise.resolve();
+    // an answer is as old as its question: its TTL counts from when the lookup was sent, however long it took
+    const asked = this.#now();
     e.pending = this.#lookup(id)
       .then((a) => {
         if (typeof a === "string") {
@@ -126,7 +128,7 @@ export class Liveness {
         }
         this.#noteAuth(false, id);
         e.answer = a;
-        e.at = this.#now();
+        e.at = asked;
         e.retryAt = 0;
       })
       .finally(() => {
