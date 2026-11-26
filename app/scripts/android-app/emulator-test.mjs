@@ -494,8 +494,12 @@ async function main() {
       // the cover's layout first, so the panel looked at is the cover's
       await waitFor((n) => (n.length > 0 && !byId(n, "wide-shell") ? n : null), 60_000, "cover-activity-layout");
       await checkPanelBelowStatusBar("cover");
-      shell("input", "keyevent", "KEYCODE_BACK");
-      await waitFor((n) => !byId(n, "activity-title") && byId(n, "message-input-root"), 60_000, "activity-closed");
+      // closed with its own back arrow: Android's Back left the app for the launcher here (2026-11-26), and the hinge
+      // below folded the launcher with the app behind it, which only the app's process id had been checked for
+      const back = await waitFor((n) => byId(n, "header-back-button"), 60_000, "activity-back");
+      if (back) tap(back);
+      const closed = await waitFor((n) => !byId(n, "activity-title") && byId(n, "message-input-root"), 60_000, "activity-closed");
+      check("cover: the Activity panel's back arrow returns to the conversation", closed);
     }
 
     // ---- the emulator's own hinge (a foldable profile's posture, not a size override) ----
