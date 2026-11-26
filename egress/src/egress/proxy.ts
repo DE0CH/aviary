@@ -27,7 +27,7 @@ import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard, GuardError, normHost } from "./netguard.ts";
 import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
-import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, type ExitConfig } from "./exit.ts";
+import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, viaConnect, viaFor, type ExitConfig } from "./exit.ts";
 import { FORCED_PROVIDER, InvalidBody, ModelBodyRewriter } from "./modelbody.ts";
 import { isRequestId, personKey, uuidv7 } from "./ids.ts";
 import { PROXY_REALM, presentedToken, type Claims, type SandboxTokens } from "./tokens.ts";
@@ -143,8 +143,8 @@ export function routed(name: FixedName, method: string, pathq: string): boolean 
       return path.startsWith("/v1/sandbox/");
     case "model":
       // the Messages API (Claude Code), OpenAI chat completions (Qwen Code) and the OpenAI embeddings API (the
-      // conversation search's vectors, which the supervisor makes)
-      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens" || path === "/v1/chat/completions" || path === "/v1/embeddings")) || (method === "GET" && path === "/v1/aviary/models");
+      // conversation search's vectors, which the supervisor makes) and OpenRouter's speech to text (`transcription`)
+      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens" || path === "/v1/chat/completions" || path === "/v1/embeddings" || path === "/v1/audio/transcriptions")) || (method === "GET" && path === "/v1/aviary/models");
     case "tools":
       // decision 15: the REST API, no MCP
       if (method === "GET") return path === "/v1/tools" || path === "/v1/openapi.json";
@@ -864,13 +864,16 @@ export class Egress {
       }
       return s;
     }
+    // a host the exit's address is refused by goes through its via proxy (exit.ts); the row says so for its bytes
+    const via = viaFor(this.#exit, normHost(host));
+    if (via) row.decision = "allow:via";
     try {
-      return await exitConnect(this.#exit, normHost(host), port, this.#exit.sandboxProfile);
+      return via ? await viaConnect(this.#exit, via, normHost(host), port) : await exitConnect(this.#exit, normHost(host), port, this.#exit.sandboxProfile);
     } catch (e) {
       const r = e instanceof ExitRefusal ? e : new ExitRefusal("connect", (e as Error).message);
       if (r.reason === "connect") {
         deny(502, `egress: could not connect to ${normHost(host)}:${port}\n`);
-        this.log.add({ ...row, decision: "allow", status: 502, ms: Date.now() - t0 });
+        this.log.add({ ...row, decision: via ? "allow:via" : "allow", status: 502, ms: Date.now() - t0, ...(via ? { reason: r.message } : {}) });
       } else if (r.reason === "deny:address") {
         deny(403, `egress: ${r.message}; only public internet addresses can be reached.\n`);
         this.#deny(row, "deny:address", 403);

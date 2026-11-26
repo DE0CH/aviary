@@ -16,6 +16,9 @@ picks it in the model menu. Without seeing, you can still cut at times the perso
 **Footage lives in YYC Drive**, the company's shared folder, at `/drive` on this computer: the same files staff see
 at https://drive.yyc-internal.com. Look there first; attached files are in `/workspace/uploads/`.
 
+Footage from a link (YouTube, Now, ViuTV, TVB): the `youtube` skill downloads it into `/tmp/video`. What is said,
+with times, also when this model cannot hear: the `transcribe` skill.
+
 Footage in Feishu (`feishu-files` skill lists items): suggest keeping it in YYC Drive instead and offer to copy it
 there yourself (`curl -sS "http://feishu-files/v1/feishu/open-apis/drive/v1/files/<token>/download" -o
 "/drive/<folder>/<name>"`). The Feishu original stays.

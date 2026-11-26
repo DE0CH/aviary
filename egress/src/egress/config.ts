@@ -8,6 +8,12 @@ import { expandEnv, type ReasoningEffort, type ModelPlan } from "../common/confi
 export const EGRESS_CONFIG_PATH = "/etc/egress/egress.json";
 const REASONING: ReadonlySet<string> = new Set(["none", "low", "medium", "high", "max"]);
 
+export interface EgressTranscription {
+  id: string;
+  /** OpenRouter endpoint slugs in order, set as `order` + `only` with no fallback (ZDR endpoints: test_zdr.py) */
+  providers?: string[];
+}
+
 export interface EgressEmbedding {
   /** an OpenRouter embedding model that gives 1024 values when asked (`dimensions`) */
   id: string;
@@ -101,6 +107,9 @@ export interface EgressConfig {
   /** the conversation search's embedding model (R18 `embedding`): the sandboxes embed their messages with it through
    * `http://model/v1/embeddings`, pigeon a query through the in-cluster API; absent: the search matches words only */
   embedding?: EgressEmbedding;
+  /** the speech-to-text model (OpenRouter's /audio/transcriptions): sandboxes call `http://model/v1/audio/transcriptions`
+   * with it, pinned to `providers` like a chat model; the models answer names it; absent: no speech-to-text */
+  transcription?: EgressTranscription;
   routes: EgressRoute[];
   /** the proxy's own addresses: proxy-form requests to one of them (any port) are served locally (the mirror) */
   selfHosts: string[];
@@ -153,6 +162,10 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   if (!c.models.some((m: EgressModel) => m.id === c.defaultModel)) throw new Error("egress config: defaultModel must be one of models");
   if (c.titleReasoning !== undefined && !REASONING.has(c.titleReasoning)) throw new Error(`egress config: titleReasoning must be one of ${[...REASONING].join(", ")}`);
   if (!Number.isInteger(c.contextTokens) || c.contextTokens <= 0) throw new Error("egress config: contextTokens must be a positive integer");
+  if (c.transcription != null) {
+    need("transcription.id", c.transcription.id);
+    if (c.transcription.providers !== undefined && (!Array.isArray(c.transcription.providers) || !c.transcription.providers.length || c.transcription.providers.some((x: unknown) => typeof x !== "string" || !x))) throw new Error("egress config: transcription.providers must be a non-empty list of endpoint slugs");
+  }
   if (c.embedding != null) {
     need("embedding.id", c.embedding.id);
     if (c.embedding.queryInstruction !== undefined && typeof c.embedding.queryInstruction !== "string") throw new Error("egress config: embedding.queryInstruction must be a string");
@@ -207,6 +220,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     titleModel: typeof c.titleModel === "string" && c.titleModel ? c.titleModel : c.defaultModel,
     ...(c.titleReasoning ? { titleReasoning: c.titleReasoning } : {}),
     contextTokens: c.contextTokens,
+    ...(c.transcription != null ? { transcription: { id: c.transcription.id, ...(c.transcription.providers ? { providers: [...c.transcription.providers] } : {}) } } : {}),
     ...(c.embedding != null ? { embedding: { id: c.embedding.id, ...(c.embedding.queryInstruction !== undefined ? { queryInstruction: c.embedding.queryInstruction } : {}) } } : {}),
     routes,
     selfHosts: strings(c.selfHosts, "selfHosts"),
@@ -228,7 +242,7 @@ export function loadEgressConfig(path = EGRESS_CONFIG_PATH): EgressConfig {
 /** Every model id egress lets through (A6.F15): the offered models, the default, the small and the title model, and the
  * conversation search's embedding model. */
 export function allowedModels(c: EgressConfig): string[] {
-  return [...new Set([...c.models.map((m) => m.id), c.defaultModel, c.smallModel, c.titleModel, ...(c.embedding ? [c.embedding.id] : [])])];
+  return [...new Set([...c.models.map((m) => m.id), c.defaultModel, c.smallModel, c.titleModel, ...(c.embedding ? [c.embedding.id] : []), ...(c.transcription ? [c.transcription.id] : [])])];
 }
 
 /** Per model: thinking (`withTools` for chat turns, `withoutTools` for tool-less calls such as titles) and the pinned
@@ -238,12 +252,13 @@ export function modelPlan(c: EgressConfig): ModelPlan {
   for (const m of c.models) if (m.reasoning) plan[m.id] = { ...plan[m.id], withTools: m.reasoning };
   for (const m of c.models) if (m.thinking) plan[m.id] = { ...plan[m.id], levels: [...m.thinking] };
   for (const m of c.models) if (m.providers) plan[m.id] = { ...plan[m.id], providers: [...m.providers] };
+  if (c.transcription?.providers) plan[c.transcription.id] = { ...plan[c.transcription.id], providers: [...c.transcription.providers] };
   if (c.titleReasoning) plan[c.titleModel] = { ...plan[c.titleModel], withoutTools: c.titleReasoning };
   return plan;
 }
 
 /** `GET /v1/aviary/models` (R18): for pigeon in-cluster and for sandboxes as `http://model/v1/aviary/models`. */
-export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: ReasoningEffort | null; thinking: ReasoningEffort[]; harness?: Harness; visibleTo?: string[] }>; embedding?: EgressEmbedding } {
+export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: ReasoningEffort | null; thinking: ReasoningEffort[]; harness?: Harness; visibleTo?: string[] }>; embedding?: EgressEmbedding; transcription?: { id: string } } {
   return {
     default: c.defaultModel,
     small: c.smallModel,
@@ -251,6 +266,8 @@ export function modelsAnswer(c: EgressConfig): { default: string; small: string;
     contextTokens: c.contextTokens,
     // the conversation search's model, only when there is one (an older reader sees no new member)
     ...(c.embedding ? { embedding: { ...c.embedding } } : {}),
+    // the speech-to-text model a sandbox names in its transcription calls (its endpoints stay egress's business)
+    ...(c.transcription ? { transcription: { id: c.transcription.id } } : {}),
     // `thinking`: the levels a person may choose (empty: none), `reasoning` the one a conversation starts on
     // `harness` and `visibleTo` only when they say something: a Claude Code model for everyone reads as it always did
     models: c.models.map((m) => ({

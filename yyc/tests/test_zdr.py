@@ -2,7 +2,7 @@
 """YYC AI's zero-data-retention guard (Deyao, 2026-10-20: staff get a fixed shortlist, none of it non-ZDR, and every
 request forces ZDR itself; yyc/refactor spec-cutover 10.1.1, spec-platform 13.6). It checks
 yyc/deploy/egress/egress.json (staged: yyc/next/): `models[].id`, `defaultModel`, `smallModel`, `titleModel`,
-`embedding.id` (the conversation search's model), and
+`embedding.id` (the conversation search's model), `transcription` (speech to text) and its pinned endpoints, and
 each slug in `models[].providers` (the endpoints egress pins the model to) being a ZDR endpoint of that model; the
 route `model` goes to openrouter.ai with `model: true` and no other route names openrouter.ai; the egress source is
 this repository's egress/ (deployed with the folder, docs/DEPLOY.md).
@@ -91,7 +91,12 @@ def run(root=YYC_AI, get=http_get, egress=EGRESS):
         e = json.load(open(os.path.join(new, "egress", "egress.json")))
         # the conversation search's embedding model (`embedding.id`) sees every message too: ZDR like the others
         models_ok("new stack", {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)}
-                  | ({e["embedding"]["id"]} if e.get("embedding") else set()))
+                  | ({e["embedding"]["id"]} if e.get("embedding") else set())
+                  | ({e["transcription"]["id"]} if e.get("transcription") else set()))
+        # the speech-to-text model hears whatever a sandbox sends it: pinned to ZDR endpoints of that model
+        if e.get("transcription"):
+            for tag in e["transcription"].get("providers", []):
+                check(tag in zdr_tags.get(e["transcription"]["id"], ()), f"new stack: {e['transcription']['id']} pinned endpoint {tag} is a ZDR endpoint")
         listed = json.loads(get("https://openrouter.ai/api/v1/models"))["data"]
         takes = {m["id"]: (m.get("architecture") or {}).get("input_modalities") or [] for m in listed}
         efforts = {m["id"]: (m.get("reasoning") or {}).get("supported_efforts") or [] for m in listed}
