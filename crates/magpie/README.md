@@ -23,7 +23,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/fanout.rs` | the LISTEN hub (four channels) and the long-poll loop every held request uses |
 | `src/jobs/` | the job leader, purge, outbox (hermit calls), retention |
 | `src/files.rs` | blob reads (M15, the sandbox's), the sandbox's blob `PUT`, sent-file snapshots (magpie 11.2), the files panel and downloads (M14: a send's snapshot, or the live workspace file streamed from hermit) |
-| `src/uploads.rs` | M13: uploads, image facts and the model copy |
+| `src/uploads.rs` | M13: uploads, image facts and whether the model takes an image as it is |
 | `src/shares.rs` | M16: freeze (rows, the cc scope cut before a running turn, blob refs, hermit's clone), list, revoke, view, downloads from the frozen copy, continue |
 | `src/viewas.rs` | M17 and the view-as audit rows written with each change |
 | `src/sandbox.rs` | the conversation behind a gateway call, and its lease |
@@ -89,7 +89,7 @@ for a 1 MiB image line; an 87 MB transcript from a cold bucket in under 5 s). Th
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
 `tests/blobs.rs` (staged blobs served before the uploader stores them, a bucket outage, the GC's rules and the
 reconcile, M15's variants and headers, the sandbox's blob routes, cc writes that add blobs while the bucket is unreachable) and `tests/uploads.rs` (M13's limits and types,
-the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording of an upload and of a send, retention). `tests/files.rs`: the two-phase
+what the model gets of an image, EXIF rotation, HEIC through libheif, the decode cap, view-as recording of an upload and of a send, retention). `tests/files.rs`: the two-phase
 sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
 workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
 timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,

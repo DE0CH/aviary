@@ -41,6 +41,7 @@ import {
 } from './types.js';
 import { createMinimalSettings } from '../config/settings.js';
 import { readHumanInputFromSdkMessage } from './sdk-human-input.js';
+import { refuseUnknownBlocks } from './nonInteractiveHelpers.js';
 import type { LoadedSettings } from '../config/settings.js';
 import {
   runNonInteractive,
@@ -685,6 +686,8 @@ class Session {
 
     // Wait for initialization to complete before processing user messages
     await this.waitForInitialization();
+    // a block the protocol does not define fails this message (its error result) before anything is recorded
+    refuseUnknownBlocks(userMessage);
 
     const promptId = this.getNextPromptId();
     const turnAbortController = this.startTurn();

@@ -102,25 +102,30 @@ pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant, request: 
     {
         return Ok(r);
     }
-    let model = if variant == BlobVariant::Display {
-        let m = conn
+    // the display variant of an upload's original: the original itself when the model takes it as it is (its
+    // `model_blob`, an older upload's model copy), else the fitted upright copy (`Shown::Fitted`)
+    let shown = if variant == BlobVariant::Display {
+        let u = conn
             .query_opt(
-                "select model_blob from uploads where blob = $1 and model_blob is not null limit 1",
+                "select model_blob from uploads where blob = $1 order by model_blob is null limit 1",
                 &[&row.sha.as_slice()],
             )
             .await?;
-        match m.and_then(|r| r.get::<_, Option<Vec<u8>>>(0)) {
-            Some(m) => match Sha::try_from(m.as_slice()) {
-                Ok(m) => blobs::row(&conn, &m).await?,
-                Err(_) => None,
+        match u.map(|r| r.get::<_, Option<Vec<u8>>>(0)) {
+            Some(Some(m)) => match Sha::try_from(m.as_slice()) {
+                Ok(m) => blobs::row(&conn, &m)
+                    .await?
+                    .map_or(blobs::read::Shown::Fitted, blobs::read::Shown::Blob),
+                Err(_) => blobs::read::Shown::Fitted,
             },
-            None => None,
+            Some(None) => blobs::read::Shown::Fitted,
+            None => blobs::read::Shown::Any,
         }
     } else {
-        None
+        blobs::read::Shown::Any
     };
     drop(conn);
-    let served = app.blobs.variant(&app.pool, &row, variant, model.as_ref()).await?;
+    let served = app.blobs.variant(&app.pool, &row, variant, &shown).await?;
     Ok(respond(&row.sha, served, request))
 }
 

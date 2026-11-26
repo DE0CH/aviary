@@ -163,12 +163,10 @@ pub const DECODE_MAX_PIXELS: u64 = 40_000_000;
 pub const THUMB_EDGE: u32 = 512;
 /// Display copy: long edge, pixels.
 pub const DISPLAY_EDGE: u32 = 2_000;
-/// The model copy of an image: long edge, pixels.
+/// The longest edge of an image the model takes as it is, pixels.
 pub const MODEL_IMAGE_EDGE: u32 = 2_000;
-/// The model copy of an image: at most this many bytes.
+/// The most bytes of an image the model takes as it is.
 pub const MODEL_IMAGE_MAX_BYTES: usize = 3_932_160;
-/// The model copy's JPEG qualities, tried in order.
-pub const MODEL_JPEG_QUALITIES: [u8; 3] = [85, 70, 55];
 /// Thumbnails and display copies: WebP quality.
 pub const WEBP_QUALITY: f32 = 80.0;
 /// The uploader: how often each replica looks for staged blobs.
