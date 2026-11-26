@@ -110,15 +110,22 @@ async function flowWithRetry(maestro, udid, name, env) {
 /**
  * Signs in, up to three times (as the Fold's test does, android-app/emulator-test.mjs). The part that fails now and
  * then is iOS's, not the app's: its "Wants to Use" prompt not shown yet, or XCTest timing out on the sign-in page's
- * Safari view while it closes ("Request for viewHierarchy failed"). walk-sign-in.yaml relaunches the app and goes on
- * from wherever the last try left it.
+ * Safari view while it closes ("Request for viewHierarchy failed"), after which XCTest's runner restarts and every
+ * later try in the same simulator fails alike (2026-11-26: two runs with all three tries lost). So a failed try
+ * restarts the simulator (the app stays installed) before the next; walk-sign-in.yaml goes on from wherever the
+ * last try left it.
  */
 async function signIn(maestro, udid, env) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const result = await runFlow(maestro, udid, "walk-sign-in", env);
     if (result === true) return true;
     console.log(`sign-in attempt ${attempt} failed (${result === "driver" ? "Maestro's driver did not start" : "see walk-sign-in.log"})`);
-    if (attempt < 3) fs.copyFileSync(path.join(out, "walk-sign-in.log"), path.join(out, `walk-sign-in-${attempt}.log`));
+    if (attempt < 3) {
+      fs.copyFileSync(path.join(out, "walk-sign-in.log"), path.join(out, `walk-sign-in-${attempt}.log`));
+      run("xcrun", ["simctl", "shutdown", udid]);
+      run("xcrun", ["simctl", "boot", udid]);
+      run("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+    }
   }
   return false;
 }
