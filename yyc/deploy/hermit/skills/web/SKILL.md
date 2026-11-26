@@ -30,3 +30,4 @@ Answers: 200 is the result; 400 means an argument is wrong (`message` says which
 (`error`: e.g. a page that can't be read). Read pages with `web_fetch`: it returns the text of an article cleanly.
 Your computer also reaches most web sites directly (`curl`, for downloads and other sites' APIs). A site that is
 blocked there is read with `web_fetch`.
+A video link (YouTube, Now, ViuTV, TVB) is the `youtube` skill: `web_fetch` reads only its page.

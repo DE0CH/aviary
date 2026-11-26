@@ -5,6 +5,9 @@
 // logs as the same decisions it logs when it resolves on its own (deny:threat, deny:nxdomain, deny:dns, deny:address).
 // The credential routes' outside upstreams (the model route: OpenRouter) go through the exit too, on its default
 // profile; names inside the cluster and private addresses are reached directly.
+// `exit.via`: hosts a site refuses from the exit's own address (YYC: YouTube refuses the cluster's WARP IP) go out
+// through an HTTP proxy instead (YYC: an IPRoyal ISP IP), reached through the exit on its default profile: egress sends
+// it `CONNECT host:port` with the proxy's login, which comes from the env variable the entry names.
 import type { RequestOptions } from "node:http";
 import { Agent as HttpsAgent, type AgentOptions } from "node:https";
 import type { Duplex } from "node:stream";
@@ -17,9 +20,48 @@ export interface ExitConfig {
   port: number;
   /** the profile sandbox connections ask for (SOCKS5 username; default "sandbox") */
   sandboxProfile: string;
+  /** hosts that go out through an HTTP proxy instead (first entry whose hosts match) */
+  via?: ExitVia[];
 }
 
-export function parseExit(v: unknown): ExitConfig | undefined {
+export interface ExitVia {
+  /** `host` = that name only, `.domain` = the domain and everything under it */
+  hosts: string[];
+  /** the env variable holding the proxy as http://user:pass@host:port */
+  proxyEnv: string;
+  proxy: { host: string; port: number; authorization: string };
+}
+
+function parseVia(v: unknown, env: NodeJS.ProcessEnv): ExitVia[] {
+  if (!Array.isArray(v)) throw new Error("egress config: exit.via must be a list");
+  return v.map((x, i) => {
+    const o = (x ?? {}) as Record<string, unknown>;
+    const at = `exit.via[${i}]`;
+    if (!Array.isArray(o.hosts) || !o.hosts.length || o.hosts.some((h) => typeof h !== "string" || !h || h === ".")) throw new Error(`egress config: ${at}.hosts must be a non-empty list of host names`);
+    if (typeof o.proxyEnv !== "string" || !o.proxyEnv) throw new Error(`egress config: ${at}.proxyEnv must name an env variable`);
+    const raw = env[o.proxyEnv];
+    if (!raw) throw new Error(`egress config: ${at}: the env variable ${o.proxyEnv} is not set`);
+    let u: URL | undefined;
+    try {
+      u = new URL(raw);
+    } catch {}
+    if (!u || u.protocol !== "http:" || !u.username || !u.password || !u.hostname || !u.port) throw new Error(`egress config: ${at}: ${o.proxyEnv} must be http://user:pass@host:port`);
+    const login = `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`;
+    return {
+      hosts: (o.hosts as string[]).map((h) => h.toLowerCase()),
+      proxyEnv: o.proxyEnv,
+      proxy: { host: u.hostname.replace(/^\[|\]$/g, ""), port: Number(u.port), authorization: `Basic ${Buffer.from(login).toString("base64")}` },
+    };
+  });
+}
+
+/** The via entry a host goes out through, if any. */
+export function viaFor(exit: ExitConfig, host: string): ExitVia | undefined {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  return exit.via?.find((v) => v.hosts.some((p) => (p.startsWith(".") ? h === p.slice(1) || h.endsWith(p) : h === p)));
+}
+
+export function parseExit(v: unknown, env: NodeJS.ProcessEnv = process.env): ExitConfig | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "object") throw new Error("egress config: exit must be an object");
   const o = v as Record<string, unknown>;
@@ -27,7 +69,7 @@ export function parseExit(v: unknown): ExitConfig | undefined {
   const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(o.socks);
   if (!m || !(Number(m[2]) > 0 && Number(m[2]) < 65536)) throw new Error(`egress config: exit.socks ${JSON.stringify(o.socks)} is not host:port`);
   if (o.sandboxProfile !== undefined && (typeof o.sandboxProfile !== "string" || !o.sandboxProfile)) throw new Error("egress config: exit.sandboxProfile must be a non-empty string");
-  return { host: m[1]!, port: Number(m[2]), sandboxProfile: (o.sandboxProfile as string | undefined) ?? "sandbox" };
+  return { host: m[1]!, port: Number(m[2]), sandboxProfile: (o.sandboxProfile as string | undefined) ?? "sandbox", ...(o.via !== undefined ? { via: parseVia(o.via, env) } : {}) };
 }
 
 /** Why the exit didn't connect: a refusal egress logs as a deny decision, or a failure to reach the site. */
@@ -144,6 +186,42 @@ export function exitConnect(exit: ExitConfig, host: string, port: number, profil
         if (rest.length) s.unshift(rest);
       }
     });
+  });
+}
+
+/**
+ * A TCP connection to host:port through a via proxy: the proxy reached through the exit (default profile), then
+ * `CONNECT host:port` with its login. Rejects with ExitRefusal("connect") naming the proxy's answer, never its login.
+ */
+export async function viaConnect(exit: ExitConfig, via: ExitVia, host: string, port: number, timeoutMs = 20_000): Promise<Socket> {
+  const s = await exitConnect(exit, via.proxy.host, via.proxy.port, undefined, timeoutMs);
+  const target = `${isIP(host) === 6 ? `[${host}]` : host}:${port}`;
+  return new Promise((resolve, reject) => {
+    let buf = Buffer.alloc(0);
+    const fail = (why: string) => {
+      clearTimeout(timer);
+      s.removeAllListeners("data");
+      s.destroy();
+      reject(new ExitRefusal("connect", `the via proxy for ${host}: ${why}`));
+    };
+    const timer = setTimeout(() => fail("no answer in time"), timeoutMs);
+    s.on("error", (e) => fail(e.message));
+    s.on("close", () => fail("closed the connection"));
+    s.on("data", (c: Buffer) => {
+      buf = Buffer.concat([buf, c]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) return buf.length > 16384 ? fail("answer too long") : undefined;
+      const status = /^HTTP\/1\.[01] (\d{3})/.exec(buf.subarray(0, end).toString("latin1"))?.[1];
+      if (status !== "200") return fail(`answered ${status ?? "something that is not HTTP"} to CONNECT`);
+      clearTimeout(timer);
+      s.removeAllListeners("data");
+      s.removeAllListeners("error");
+      s.removeAllListeners("close");
+      const rest = buf.subarray(end + 4);
+      if (rest.length) s.unshift(rest);
+      resolve(s);
+    });
+    s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nProxy-Authorization: ${via.proxy.authorization}\r\n\r\n`);
   });
 }
 
