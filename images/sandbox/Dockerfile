@@ -22,7 +22,9 @@ RUN apt-get -o Acquire::Retries=5 update \
       ca-certificates bash curl wget git openssh-client jq unzip zip xz-utils file less procps sudo \
       python3 python3-venv python3-pip \
       poppler-utils pandoc fonts-noto-cjk fonts-noto-core fontconfig \
+      libheif-examples libheif-plugin-libde265 \
       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+ && heif-dec --version \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
 
 # A virtualenv owned by the sandbox user, first on PATH: `pip install x` works without root or

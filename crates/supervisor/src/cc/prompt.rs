@@ -96,6 +96,35 @@ pub fn carried(text: &str, path: &str) -> String {
     .join("\n")
 }
 
+/// The characters Qwen Code's `@path` reader ends a path at unless escaped with a backslash (its `SHELL_SPECIAL_CHARS`).
+const AT_PATH_SPECIAL: &[char] = &[
+    ' ', '\t', '(', ')', '[', ']', '{', '}', ';', '|', '*', '?', '$', '`', '\'', '"', '#', '&', '<', '>', '!', '~', ',',
+];
+
+/// A file named for Qwen Code's `@path` reader, which sends an image so named as an image of the request.
+#[must_use]
+pub fn at_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 8);
+    out.push('@');
+    for c in path.chars() {
+        if AT_PATH_SPECIAL.contains(&c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The text with a line naming each image by `@path` (Qwen Code: its stream-json input takes no image block).
+#[must_use]
+pub fn with_at_paths(text: String, images: &[Attached]) -> String {
+    if images.is_empty() {
+        return text;
+    }
+    let refs: Vec<String> = images.iter().map(|a| at_path(&a.path)).collect();
+    format!("{text}\n\n{}", refs.join(" "))
+}
+
 /// `message.content`: the text as a string, or a text block and one image block per image.
 #[must_use]
 pub fn content(text: String, images: &[ImageBlock]) -> Value {
@@ -221,6 +250,28 @@ fn questions(asked: &serde_json::Map<String, Value>, given: &serde_json::Map<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_at_path_escapes_what_qwen_codes_reader_ends_a_path_at() {
+        assert_eq!(
+            at_path("/workspace/uploads/image-1 (3).jpeg"),
+            r"@/workspace/uploads/image-1\ \(3\).jpeg"
+        );
+        assert_eq!(at_path("/w/a,b;c[1]{2}'#&!~.png"), r"@/w/a\,b\;c\[1\]\{2\}\'\#\&\!\~.png");
+        assert_eq!(at_path("/w/報告.png"), "@/w/報告.png");
+        let shown = [
+            Attached {
+                path: "/w/a b.png".into(),
+                name: None,
+            },
+            Attached {
+                path: "/w/c.jpg".into(),
+                name: None,
+            },
+        ];
+        assert_eq!(with_at_paths("hi".into(), &shown), "hi\n\n@/w/a\\ b.png @/w/c.jpg");
+        assert_eq!(with_at_paths("hi".into(), &[]), "hi");
+    }
 
     #[test]
     fn plain_text_is_a_string() {

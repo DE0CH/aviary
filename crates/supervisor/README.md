@@ -351,7 +351,7 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
 13. **The uuid wait** (8.2) treats the last uuid seen as all seen, and scans every `.jsonl` write and the
     main transcript's last 1 MiB for `"uuid":"…"` anywhere in a line (2.1.304 writes `uuid` after `message`, not
     at the line's start).
-14. **Blob reads during a start** (uploads and the model copy of an image) are retried for 90 s, inside magpie's
+14. **Blob reads during a start** (uploads, and an image for Claude Code's image block) are retried for 90 s, inside magpie's
     120 s `starting` watchdog; 19 asks a rollout to change nothing staff see, 12.1 names no retry.
 15. **An agent turn magpie refuses** (409 `bad_transition`: a person's turn is active there, the race of 7.5) is
     settled, not retried or given up: magpie credits the lines written under its id to its active turn (magpie

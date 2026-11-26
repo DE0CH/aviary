@@ -335,7 +335,7 @@ async fn uploads(tx: &Tx<'_>, person: &str, m: &SendRequest) -> Result<(Vec<Uplo
             continue;
         }
         let u = by_id(id).ok_or_else(unknown_upload)?;
-        if u.role != "image" || u.model_blob.is_none() {
+        if u.role != "image" {
             return Err(unknown_upload());
         }
         images.push(u);
@@ -404,16 +404,10 @@ pub async fn place(
     for (u, path) in &placed {
         let blob = blob_pointer(tx, &u.blob).await?;
         let size = u64::try_from(u.size).unwrap_or(0);
-        if let (true, Some(model)) = (u.role == "image" && images.iter().any(|i| i.id == u.id), &u.model_blob) {
-            let model_ptr = blob_pointer(tx, model).await?;
-            out.start_images.push(StartImage {
-                upload_id: u.id,
-                mime_type: u.mime.clone(),
-                workspace_path: path.clone(),
-                blob: hex(&u.blob),
-                model_blob: hex(model),
-                model_mime: model_ptr.blob.mime.clone().unwrap_or_else(|| u.mime.clone()),
-            });
+        if u.role == "image" && images.iter().any(|i| i.id == u.id) {
+            // the model gets an image with the message only as it is (its model blob is the original); any other
+            // image reaches the agent as a file, and the chat still shows it as a picture
+            let model_takes = u.model_blob.as_deref() == Some(u.blob.as_slice());
             out.ev_images.push(AttachedImage {
                 upload_id: u.id,
                 mime_type: u.mime.clone(),
@@ -421,9 +415,29 @@ pub async fn place(
                 width: u.width.and_then(|v| u32::try_from(v).ok()),
                 height: u.height.and_then(|v| u32::try_from(v).ok()),
                 path: Some(path.clone()),
+                model_blob: model_takes.then(|| blob.clone()),
                 blob,
-                model_blob: model_ptr,
             });
+            let start = StartFile {
+                upload_id: u.id,
+                name: u.name.clone(),
+                mime_type: u.mime.clone(),
+                size,
+                workspace_path: path.clone(),
+                blob: hex(&u.blob),
+            };
+            if model_takes {
+                out.start_images.push(StartImage {
+                    upload_id: u.id,
+                    mime_type: u.mime.clone(),
+                    workspace_path: path.clone(),
+                    blob: hex(&u.blob),
+                    model_blob: hex(&u.blob),
+                    model_mime: u.mime.clone(),
+                });
+            } else {
+                out.start_files.push(start);
+            }
         } else {
             out.start_files.push(StartFile {
                 upload_id: u.id,

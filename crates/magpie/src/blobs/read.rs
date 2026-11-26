@@ -18,6 +18,17 @@ use super::{BlobRow, Blobs, Sha, images, to_hex, unavailable};
 use crate::error::{Error, Result};
 use crate::limits;
 
+/// What an upload original's `display` variant is.
+#[derive(Debug)]
+pub enum Shown {
+    /// This blob as it is (the upload's `model_blob`: the original, or an older upload's model copy).
+    Blob(BlobRow),
+    /// The fitted, upright WebP (an image the model does not take as it is: rotated, too large, another type).
+    Fitted,
+    /// Not an upload's original: the blob itself when it is small and model-native, else the fitted copy.
+    Any,
+}
+
 /// Bytes to answer with, and their type.
 #[derive(Debug, Clone)]
 pub struct Served {
@@ -293,8 +304,8 @@ impl Blobs {
         Ok(copy)
     }
 
-    /// What M15 serves for `row` (whose references the caller checked). `model` is the upload's model copy when
-    /// `row` is an upload's original (its `display` variant).
+    /// What M15 serves for `row` (whose references the caller checked); `shown` says what an upload's `display`
+    /// variant is.
     ///
     /// # Errors
     /// 415 `unsupported_type` for `display`/`thumb` of a non-image or an image over the decode limit; as
@@ -304,7 +315,7 @@ impl Blobs {
         pool: &Pool,
         row: &BlobRow,
         variant: BlobVariant,
-        model: Option<&BlobRow>,
+        shown: &Shown,
     ) -> Result<Served> {
         match variant {
             BlobVariant::Full => Ok(Served {
@@ -316,7 +327,7 @@ impl Blobs {
                 if !is_image(row) {
                     return Err(unsupported("a blob that is not an image"));
                 }
-                if let Some(m) = model {
+                if let Shown::Blob(m) = shown {
                     return Ok(Served {
                         bytes: self.original(pool, m).await?,
                         content_type: content_type(m),
@@ -329,7 +340,7 @@ impl Blobs {
                     (Some(w), Some(h)) => u32::try_from(w.max(h)).unwrap_or(u32::MAX) <= limits::DISPLAY_EDGE,
                     _ => false,
                 };
-                if native && fits {
+                if native && fits && matches!(shown, Shown::Any) {
                     return Ok(Served {
                         bytes: self.original(pool, row).await?,
                         content_type: mime,

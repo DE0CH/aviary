@@ -1909,8 +1909,8 @@ export async function processSingleFileContent(
           const notice =
             `Image format ${mediaMimeType} (${relativePathForDisplay}) cannot ` +
             'be safely sent to the model, so its data was omitted from the ' +
-            'request. Ask the user for a PNG, JPEG, WebP, or GIF version if ' +
-            'the image content matters.';
+            'request. Convert it to PNG or JPEG (heif-dec for HEIC/HEIF, ' +
+            'Python Pillow for other formats) and read the converted file.';
           return {
             llmContent: notice,
             returnDisplay: `Omitted unsupported image format: ${relativePathForDisplay} (${mediaMimeType})`,

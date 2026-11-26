@@ -2543,7 +2543,7 @@ impl Driver {
             };
         }
         // 3: uploads
-        let (text, images) = self.attachments(&s.text, &s.files, &s.images).await?;
+        let (text, images) = self.attachments(s.harness, &s.text, &s.files, &s.images).await?;
         // a parked turn's resumption: its answers are the message (a resumed Claude Code no longer takes an answer to
         // its predecessor's question, supervisor 7.6)
         let text = if s.answers.is_empty() {
@@ -2569,10 +2569,12 @@ impl Driver {
         Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
     }
 
-    /// A message's attachments: its files and its images' originals written into `/workspace/uploads`, and what
-    /// Claude Code gets: the text with their paths, and the images' model copies.
+    /// A message's attachments: its files and its images' originals written into `/workspace/uploads`, and what the
+    /// harness gets: the text with their paths, and the images as image blocks (Claude Code) or named by `@path` in
+    /// the text (Qwen Code, whose stream-json input takes no image block).
     async fn attachments(
         &self,
+        harness: Harness,
         text: &str,
         files: &[magpie_api::sandbox::StartFile],
         images: &[magpie_api::sandbox::StartImage],
@@ -2597,7 +2599,7 @@ impl Driver {
             .materialise(&self.reporter.calls(), &items, &blob_deadline)
             .await?;
         let mut blocks = Vec::new();
-        for i in images {
+        for i in images.iter().filter(|_| harness == Harness::Claude) {
             blocks.push(prompt::ImageBlock {
                 media_type: i.model_mime.clone(),
                 bytes: uploads::blob(&self.reporter.calls(), &i.model_blob, &blob_deadline).await?,
@@ -2619,7 +2621,12 @@ impl Driver {
                 name: i.workspace_path.rsplit('/').next().map(str::to_owned),
             })
             .collect();
-        Ok((prompt::text(text, &listed, &shown), blocks))
+        let text = prompt::text(text, &listed, &shown);
+        let text = match harness {
+            Harness::Claude => text,
+            Harness::Qwen => prompt::with_at_paths(text, &shown),
+        };
+        Ok((text, blocks))
     }
 
     #[allow(clippy::too_many_lines)] // the steps of 10.2 in order
@@ -3098,7 +3105,8 @@ impl Driver {
                 },
             );
         }
-        match self.attachments(&m.text, &m.files, &m.images).await {
+        let harness = lock(&self.st).live.as_ref().map_or(Harness::Claude, |g| g.harness);
+        match self.attachments(harness, &m.text, &m.files, &m.images).await {
             Ok((text, images)) => self.inject(seq, turn_id, &prompt::content(text, &images)),
             Err(e) => {
                 tracing::warn!(error = %e, "a message's attachments were not written");

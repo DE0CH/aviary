@@ -56,6 +56,15 @@ resume the harness refuses ("No conversation found") at that turn and every late
   (`gateway_api::models::CHAT_COMPLETIONS`: a gateway's `model` route allows both paths) with the placeholder key
   `AVIARY_MODEL_KEY`. The fork sends a plain-http request to the proxy itself; upstream Qwen Code tunnels every
   origin with `CONNECT`, which the sandbox proxy refuses for its named routes.
+- **Attachments.** Every attachment is written to `/workspace/uploads/` and listed in the message's text. A file is
+  listed in `<files_input>`, for the agent to open with its own tools. An image the model takes as it is
+  (JPEG, PNG, GIF or WebP, long edge at most 2,000 px, at most 3,932,160 bytes, no EXIF rotation; magpie
+  `images::model_takes`) is listed in `<image_uploads>` and sent with the message: Claude Code gets it as an image
+  block, Qwen Code as an `@path` reference in the text (`prompt::at_path`, escaped as its reader expects), which its
+  `@` reader turns into an image part of the same request. Its stream-json input takes no other block than `text`,
+  `thinking`, `tool_use` and `tool_result`; the fork refuses any other with an error result instead of passing it on
+  as its JSON text. Any other image (HEIC, TIFF, a large or rotated photo) is a file: magpie makes no copy of it
+  for the model; the agent converts it in its own loop. The chat shows every image as a picture either way.
 - **Files to the person.** Claude Code has the `SendUserFile` tool and its hook. Qwen Code has no such tool: its
   shell runs `send-file [--caption TEXT] PATH…` (the supervisor binary under that name), which names no tool call;
   the driver puts the files on the open shell call that runs it, one send per call. Its instructions say so
