@@ -7,7 +7,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import { ExplorerFrame } from "@/screens/workspace/explorer-sidebar/frame";
 import { ActivityPanel } from "@/yyc/activity";
 import { SchedulesPanel } from "@/yyc/schedules";
-import { useSidePanel } from "@/yyc/side-panel";
+import { closeSidePanel, useSidePanel } from "@/yyc/side-panel";
+import { useSidePanelBack } from "@/yyc/side-panel-back";
 
 export function ConversationSidePanel({
   sessionId,
@@ -44,6 +45,8 @@ export function ConversationSidePanel({
     else if (was.target === "file-explorer" && target !== "file-explorer")
       useSidePanel.setState({ shown: null });
   }, [compact, kind, target]);
+  // on screen: beside the chat, or on a phone while the overlay is out (yyc/side-panel-state.ts)
+  useSidePanelBack(kind !== null && (!compact || target === "file-explorer"), closeSidePanel);
   if (!sessionId || !persistenceKey) return null;
   return (
     <ExplorerFrame
