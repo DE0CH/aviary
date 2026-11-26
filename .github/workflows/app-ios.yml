@@ -82,9 +82,10 @@ jobs:
         run: npm ci
 
       - name: Generate the iOS project
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-        run: ios/prepare.sh
+        # YYC AI's builds before the move to aviary came from DE0CH/claudecodeui's yyc-ios workflow, up to build 96.1
+        # (2026-11-19), and App Store Connect refuses a build number at or below one it already has ("The bundle version
+        # must be higher than the previously uploaded version: '96.1'", run 20): this workflow's builds count on from 100.
+        run: BUILD_NUMBER="$((GITHUB_RUN_NUMBER + 100)).$GITHUB_RUN_ATTEMPT" ios/prepare.sh
 
       - name: Find the workspace
         run: |
