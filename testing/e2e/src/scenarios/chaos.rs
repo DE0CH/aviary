@@ -154,13 +154,19 @@ impl Rider {
                         self.note(row_key(&p["event"]["item"]), p["seq"].as_u64().unwrap_or(0));
                     }
                     (Some("agent_stream"), Some(k @ ("turn_completed" | "turn_failed" | "turn_canceled"))) => {
-                        ended = Some(k.to_owned());
+                        // the end push's event (a failed turn's error is there: its code and message)
+                        ended = Some((k.to_owned(), p["event"].clone()));
                     }
                     _ => {}
                 }
             }
-            if let Some(k) = ended {
-                ensure!(k == "turn_completed", "turn {} of {} ended {k}", self.turns, self.id);
+            if let Some((k, event)) = ended {
+                ensure!(
+                    k == "turn_completed",
+                    "turn {} of {} ended {k}: {event}",
+                    self.turns,
+                    self.id
+                );
                 return Ok(());
             }
             if self.ws.closed.is_some() {

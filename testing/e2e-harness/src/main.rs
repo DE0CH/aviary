@@ -695,7 +695,9 @@ spec:
     e.k(&["apply", "-f", "-"]).stdin(job).run(60)?;
     let until = Instant::now() + Duration::from_secs(deadline + 50);
     let mut phase = String::new();
+    let mut followers = Followers::default();
     while Instant::now() < until {
+        followers.poll(e);
         phase = e
             .k(&[
                 "get",
@@ -720,6 +722,64 @@ spec:
         Ok(())
     } else {
         bail!("driver: {}", if phase.is_empty() { "timed out" } else { &phase })
+    }
+}
+
+/// Every Pod's log followed from when the Pod is first seen, into `<work>/pod-logs/<pod>.log`: a Pod a rollout or a
+/// chaos step deletes during the run takes its log with it, and [`artifacts`] reads only the Pods still there at the
+/// end (2026-11-26: a chaos turn failed during magpie's rollout, and the old magpie Pods that ended it left no log).
+#[derive(Default)]
+struct Followers {
+    seen: std::collections::HashSet<String>,
+    children: Vec<std::process::Child>,
+}
+
+impl Followers {
+    fn poll(&mut self, e: &Env) {
+        let Ok(pods) = e.k(&["get", "pods", "-o", "name"]).run(30) else {
+            return;
+        };
+        let dir = e.work.join("pod-logs");
+        let _ = std::fs::create_dir_all(&dir);
+        for p in pods.lines().map(str::trim).filter(|p| !p.is_empty()) {
+            if !self.seen.insert(p.to_owned()) {
+                continue;
+            }
+            let base = p.rsplit('/').next().unwrap_or(p);
+            let Ok(out) = std::fs::File::create(dir.join(format!("{base}.log"))) else {
+                continue;
+            };
+            let err = out.try_clone().ok();
+            let mut c = std::process::Command::new("kubectl");
+            c.env("KUBECONFIG", &e.kubeconfig)
+                .args([
+                    "-n",
+                    NS,
+                    "logs",
+                    "-f",
+                    p,
+                    "--all-containers",
+                    "--timestamps",
+                    "--pod-running-timeout=5m",
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(out);
+            if let Some(err) = err {
+                c.stderr(err);
+            }
+            if let Ok(child) = c.spawn() {
+                self.children.push(child);
+            }
+        }
+    }
+}
+
+impl Drop for Followers {
+    fn drop(&mut self) {
+        for c in &mut self.children {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 }
 
@@ -760,6 +820,13 @@ pub(crate) fn artifacts(e: &Env, dir: &Path) {
             && o.status.success()
         {
             let _ = std::fs::write(dir.join(format!("{base}.previous.log")), o.stdout);
+        }
+    }
+    // the followed logs (Followers): every Pod of the run, deleted ones included
+    if let Ok(rd) = std::fs::read_dir(e.work.join("pod-logs")) {
+        let _ = std::fs::create_dir_all(dir.join("followed"));
+        for f in rd.flatten() {
+            let _ = std::fs::copy(f.path(), dir.join("followed").join(f.file_name()));
         }
     }
     for f in ["juicefs.log", "juicefs-hermit.log"] {
