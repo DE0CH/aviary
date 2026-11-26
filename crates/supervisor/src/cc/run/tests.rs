@@ -2172,7 +2172,13 @@ async fn a_qwen_turn_names_its_images_by_at_path_and_sends_no_image_block() {
         }],
     );
     assert_eq!(w.ended(t).await["state"], "completed");
-    let out = std::fs::read_to_string(w.dir.join("gens/1/stdout.ndjson")).unwrap();
+    // the Qwen Code generation's stdout (the test world may have started Claude Code first)
+    let out: String = std::fs::read_dir(w.dir.join("gens"))
+        .unwrap()
+        .flatten()
+        .filter_map(|g| std::fs::read_to_string(g.path().join("stdout.ndjson")).ok())
+        .filter(|o| o.contains("images="))
+        .collect();
     assert!(out.contains("images=0"), "no image block: {out}");
     let at = format!(
         "@{}/uploads/image-1\\\\ \\\\(3\\\\).jpeg",
