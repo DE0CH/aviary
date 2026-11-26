@@ -1199,6 +1199,13 @@ describe('fileUtils', () => {
       expect(JSON.stringify(result.llmContent)).not.toContain('inlineData');
     });
 
+    it('says an unsupported image can be converted and read again, not asked for (de0ch)', async () => {
+      const result = await readMedia('photo.heic', 'heic bytes', 'image/heic');
+
+      expect(result.llmContent).toContain('Convert it to PNG or JPEG');
+      expect(result.llmContent).not.toContain('Ask the user');
+    });
+
     it.each([
       [
         'keeps provider-unsupported images inline for the vision bridge',

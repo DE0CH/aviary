@@ -919,13 +919,25 @@ impl World {
         files: Vec<StartFile>,
         images: Vec<StartImage>,
     ) -> (Uuid, u64) {
+        self.turn_attached(text, magpie_api::Harness::default(), None, resume, files, images)
+    }
+
+    fn turn_attached(
+        &self,
+        text: &str,
+        harness: magpie_api::Harness,
+        model: Option<&str>,
+        resume: Option<String>,
+        files: Vec<StartFile>,
+        images: Vec<StartImage>,
+    ) -> (Uuid, u64) {
         let id = Uuid::now_v7();
         let seq = self.magpie.push_command(
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
                 continue_last: false,
-                harness: magpie_api::Harness::default(),
+                harness,
                 carry_over: None,
                 text: text.into(),
                 files,
@@ -935,7 +947,7 @@ impl World {
                 },
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
-                model: None,
+                model: model.map(str::to_owned),
                 thinking: None,
             }),
         );
@@ -2134,6 +2146,40 @@ async fn the_prompt_carries_the_tags_and_the_image_block() {
         out.contains("<image_uploads>") && out.contains("(original name: a.png)"),
         "{out}"
     );
+}
+
+/// Qwen Code's stream-json input has no image block; it reads `@path` references in the text itself and sends each
+/// file as an image of that request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_qwen_turn_names_its_images_by_at_path_and_sends_no_image_block() {
+    let w = world().await;
+    let _sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let img = w.magpie.seed_blob(b"orig");
+    let (t, _) = w.turn_attached(
+        "echo",
+        Harness::Qwen,
+        Some("vendor/video"),
+        None,
+        vec![],
+        vec![StartImage {
+            upload_id: Uuid::new_v4(),
+            mime_type: "image/jpeg".into(),
+            workspace_path: "uploads/image-1 (3).jpeg".into(),
+            blob: img.clone(),
+            // no model copy: magpie names the original
+            model_blob: img,
+            model_mime: "image/jpeg".into(),
+        }],
+    );
+    assert_eq!(w.ended(t).await["state"], "completed");
+    let out = std::fs::read_to_string(w.dir.join("gens/1/stdout.ndjson")).unwrap();
+    assert!(out.contains("images=0"), "no image block: {out}");
+    let at = format!(
+        "@{}/uploads/image-1\\\\ \\\\(3\\\\).jpeg",
+        w.ws.to_string_lossy()
+    );
+    assert!(out.contains(&at), "{at} in {out}");
+    assert!(out.contains("<image_uploads>"), "the listed paths stay: {out}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
