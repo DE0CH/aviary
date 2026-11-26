@@ -34,8 +34,19 @@ const MODEL = 'deepseek/deepseek-v4.1-flash-1017';
 /** Every request the stand-in model got: what it says of thinking, and whether it is the agent's (it has tools). */
 const requests = [];
 let calls = 0;
+// requests open now, and when the last one began or ended: a turn's count waits for the model to be quiet, as a
+// request the turn's result does not wait for (a background one) may still be in flight or about to begin
+let open = 0;
+let lastAt = Date.now();
+const QUIET_MS = 500;
 
 const model = createServer((req, res) => {
+  open += 1;
+  lastAt = Date.now();
+  res.on('close', () => {
+    open -= 1;
+    lastAt = Date.now();
+  });
   let body = '';
   req.on('data', (chunk) => (body += chunk));
   req.on('end', () => {
@@ -278,15 +289,25 @@ function start() {
 const cli = start();
 await cli.initialize();
 
+/** The number of requests once none is open and none has begun or ended for `QUIET_MS`. */
+async function quiet() {
+  const until = Date.now() + WAIT_MS;
+  while (Date.now() < until) {
+    if (open === 0 && Date.now() - lastAt >= QUIET_MS) return requests.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  check(false, `the model still had ${open} request(s) open after ${WAIT_MS} ms`);
+}
+
 /** The `reasoning` of each request the agent made for the turn `text`. */
 async function turn(text) {
-  const before = requests.length;
+  const before = await quiet();
   const result = await cli.turn(text);
   check(
     result.is_error === false && result.subtype === 'success',
     `"${text}" ended ${result.subtype}: ${JSON.stringify(result.error ?? result.result)}`,
   );
-  const sent = requests.slice(before).filter((request) => request.agent);
+  const sent = requests.slice(before, await quiet()).filter((request) => request.agent);
   check(sent.length > 0, `"${text}" reached no model`);
   return sent.map((request) => request.reasoning);
 }
