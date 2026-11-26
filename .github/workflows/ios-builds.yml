@@ -1,0 +1,47 @@
+# App Store Connect's highest build number of each iOS app, kept in the body of the GitHub release `ios-builds`
+# (testing/ios-build-number `record`) for every branch's check (app.yml `ios-build-number`). App Store Connect refuses an
+# upload whose number is not above every build of that app it holds ("The bundle version must be higher than the
+# previously uploaded version: '96.1'", app-ios run 20: DE0CH/claudecodeui had uploaded 96.1), and the key that can ask
+# it is the main-only `release` environment's (TestFlight is a deploy), so main records and branches read the record.
+name: ios-builds
+
+on:
+  workflow_dispatch:
+  # main's own uploads
+  workflow_run:
+    workflows: [app-ios]
+    types: [completed]
+  # a build uploaded from anywhere else
+  schedule:
+    - cron: "17 5 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ios-builds.yml"
+      - "testing/ios-build-number/**"
+
+concurrency:
+  group: ios-builds
+  cancel-in-progress: false
+
+permissions:
+  contents: write # the ios-builds release
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Record App Store Connect's highest builds
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        # the apps of app-ios.yml's matrix (app.config.js `variants`)
+        run: cargo run --locked -q -p ios-build-number -- record dev.de0ch.yycai dev.de0ch.jarvis4chat
