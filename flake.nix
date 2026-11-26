@@ -76,7 +76,9 @@
       # gcr.io/distroless/static-debian12:nonroot, as the Dockerfiles start from: CA certificates, time zones, the
       # nonroot user and group 65532, a writable /tmp
       base = pkgs.runCommand "distroless-static" { } ''
-        mkdir -p $out/etc $out/share
+        mkdir -p $out/etc $out/share $out/run $out/var
+        # /var/run is /run, as on distroless and Alpine: iproute2 finds network namespaces in /var/run/netns
+        ln -s /run $out/var/run
         cp -rL ${pkgs.cacert}/etc/ssl $out/etc/ssl
         cp -rL ${pkgs.tzdata}/share/zoneinfo $out/share/zoneinfo
         echo 'root:x:0:0:root:/root:/sbin/nologin' > $out/etc/passwd
