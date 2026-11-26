@@ -146,7 +146,7 @@
   "maxUploadBytes": 8388608,
   "cacheGiB": 5,
   "budget": {
-    "limitUsd": 100,
+    "limitUsd": 200,
     "since": "2026-10-21T02:05:52Z",
     "ownerName": "Deyao"
   },

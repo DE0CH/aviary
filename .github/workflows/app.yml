@@ -32,6 +32,8 @@ on:
       - "testing/paseo-contract/**"
       - ".github/workflows/app.yml"
       - ".github/workflows/app-tests.yml"
+      - ".github/workflows/app-ios.yml"
+      - "testing/ios-build-number/**"
   workflow_dispatch:
   # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
   # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
@@ -57,6 +59,24 @@ jobs:
   tests:
     uses: ./.github/workflows/app-tests.yml
     with: {sha: "${{ inputs.sha }}"}
+
+  ios-build-number:
+    # App Store Connect refuses an iOS upload whose build number is not above every build of that app it holds, and
+    # the upload runs on main only (app-ios.yml): this commit's number (testing/ios-build-number: main's commit count)
+    # against App Store Connect's highest builds, recorded by ios-builds.yml, so a number it would refuse is red here,
+    # before the merge (Deyao, 2026-11-26). Reads only the public record: no secret.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - name: this commit's iOS build number is above every build App Store Connect holds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # the apps of app-ios.yml's matrix (app.config.js `variants`)
+        run: cargo run --locked -q -p ios-build-number -- check dev.de0ch.yycai dev.de0ch.jarvis4chat
 
   build:
     needs: tests

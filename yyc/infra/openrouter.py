@@ -23,7 +23,7 @@ import json, os, sys, urllib.request, urllib.error
 
 API = "https://openrouter.ai/api/v1"
 NAME = "yyc-chat"
-LIMIT_USD = 50  # a safety stop per calendar month (CLAUDE.md "Budgets are safety stops"), not a plan
+LIMIT_USD = 100  # a safety stop per calendar month (CLAUDE.md "Budgets are safety stops"), not a plan
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 

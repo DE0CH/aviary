@@ -64,6 +64,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        # the build number counts main's commits (testing/ios-build-number)
+        with: {fetch-depth: 0, filter: "blob:none"}
 
       - name: Select Xcode
         run: |
@@ -81,11 +83,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: The build number
+        # main's commit count, then the run's attempt (testing/ios-build-number): App Store Connect refuses a number
+        # that is not above every build of the app it holds, and every branch checks this one against its record
+        # (app.yml ios-build-number, ios-builds.yml) before the merge
+        working-directory: .
+        run: |
+          rustup toolchain install
+          number=$(cargo run --locked -q -p ios-build-number -- number)
+          echo "BUILD_NUMBER=$number" >> "$GITHUB_ENV"
+          echo "::notice title=iOS build number::$number"
+
       - name: Generate the iOS project
-        # YYC AI's builds before the move to aviary came from DE0CH/claudecodeui's yyc-ios workflow, up to build 96.1
-        # (2026-11-19), and App Store Connect refuses a build number at or below one it already has ("The bundle version
-        # must be higher than the previously uploaded version: '96.1'", run 20): this workflow's builds count on from 100.
-        run: BUILD_NUMBER="$((GITHUB_RUN_NUMBER + 100)).$GITHUB_RUN_ATTEMPT" ios/prepare.sh
+        run: ios/prepare.sh
 
       - name: Find the workspace
         run: |
