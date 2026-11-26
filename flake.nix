@@ -69,6 +69,9 @@
         version = "0.0.0";
         cargoArtifacts = deps name;
         cargoExtraArgs = "--locked -p ${name} --bins";
+        # what `--version` and every log line's `ver` report (aviary-core version.rs): the source's hash, as the image's
+        # labels say; on the service only, so a change to aviary's code leaves the cached dependencies valid
+        AVIARY_REVISION = sourceHash;
       });
 
       # gcr.io/distroless/static-debian12:nonroot, as the Dockerfiles start from: CA certificates, time zones, the
