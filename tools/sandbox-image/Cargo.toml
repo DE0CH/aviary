@@ -1,0 +1,19 @@
+[package]
+name = "sandbox-image"
+description = "Builds ghcr.io/de0ch/hermit-sandbox (images/sandbox) with platform 5.3's labels from the supervisor binaries of the same commit."
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# its own workspace (the root excludes it): a CI tool, not a service, so none of the services' rules apply
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.104"
+sha2 = "=0.11.1"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"

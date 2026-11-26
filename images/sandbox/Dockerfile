@@ -4,12 +4,27 @@
 # /opt/claude-code/bin/claude and starts dockerd when the `docker` wrapper asks. The image holds no secrets; the
 # sandbox's only credential is the proxy URL its runtime puts in HTTP_PROXY.
 #
-# Its context is images/sandbox/ plus dist/supervisor and dist/supervisor-keeper (the static musl binaries of the
-# same commit); images/sandbox/build.sh assembles it and builds:
-#   images/sandbox/build.sh <dir with the binaries> <tag> [<40 hex revision>]
+# Its context is images/sandbox/, and the named context `dist` holds supervisor and supervisor-keeper (the static musl
+# binaries of the same commit); tools/sandbox-image builds it with platform 5.3's labels, from the repository's root:
+#   sandbox-image build <dir with the binaries> <tag> [<40 hex revision>]
 # The slow layers (packages, Python, fonts, Docker, Claude Code) come first and are cached; the binaries are the last
 # layer.
 FROM node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab1e0fd3866b6d2d8f
+
+# One commit, one image (Deyao, 2026-11-26): every input the build fetches is named here exactly, so building the same
+# commit twice gives the same packages. Debian's come from snapshot.debian.org as the archive was at DEBIAN_SNAPSHOT
+# (trixie, its updates and its security fixes alike); the other downloads are pinned by version and sha256 below. The
+# sandbox-image tool (tools/sandbox-image) moves the pins forward, and its change merges once CI passes with it. The
+# sandbox's own apt (agents installing packages) reads the live mirrors: the image's sources are put back after the
+# last install below.
+ARG DEBIAN_SNAPSHOT=20261126T000000Z
+RUN mv /etc/apt/sources.list.d/debian.sources /etc/apt/debian.sources.live \
+ && printf '%s\n' \
+      'Types: deb' "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" 'Suites: trixie trixie-updates' \
+      'Components: main' 'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' 'Check-Valid-Until: no' '' \
+      'Types: deb' "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" 'Suites: trixie-security' \
+      'Components: main' 'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' 'Check-Valid-Until: no' \
+      > /etc/apt/sources.list.d/snapshot.sources
 
 # tools for news and PR work: documents, PDFs, spreadsheets, charts, CJK fonts for rendering Chinese text.
 # PDFs: WeasyPrint (HTML/CSS -> PDF) is the one toolchain; it needs Pango + HarfBuzz's subsetter, and it embeds the
@@ -29,12 +44,12 @@ RUN apt-get -o Acquire::Retries=5 update \
 
 # A virtualenv owned by the sandbox user, first on PATH: `pip install x` works without root or
 # --break-system-packages, and installs carry over while the sandbox lives.
+# The packages are requirements.in's, each (and all they pull in) pinned by version and sha256 in requirements.txt.
 ENV VIRTUAL_ENV=/opt/py PATH=/opt/py/bin:$PATH
+COPY requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/py \
- && /opt/py/bin/pip install --no-cache-dir \
-      pandas openpyxl xlsxwriter python-docx python-pptx matplotlib pypdf pdfplumber \
-      beautifulsoup4 lxml requests httpx Pillow markdown tabulate python-dateutil chardet opencc-python-reimplemented \
-      weasyprint 'pymupdf<2' reportlab \
+ && /opt/py/bin/pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+ && rm /tmp/requirements.txt \
  && /opt/py/bin/python -c "import weasyprint, pymupdf; d = pymupdf.open(stream=weasyprint.HTML(string='<html lang=zh-HK><p style=\"font-family:Noto Sans CJK HK\">繁體中文檔案測試</p>').write_pdf()); assert '繁體中文檔案測試' in d[0].get_text(), d[0].get_text(); assert any('CJK' in f[3] for f in d[0].get_fonts()), d[0].get_fonts()" \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
@@ -61,24 +76,32 @@ RUN set -e; d=/usr/share/fonts/truetype/noto-hk; mkdir -p $d; cd /tmp \
  && chown -R 1000:1000 /opt/py
 
 # Docker (A5.F2): dockerd starts on the first docker command (the wrapper /usr/local/bin/docker asks the supervisor,
-# supervisor spec 4.6); with no supervisor socket the wrapper says Docker isn't available.
+# supervisor spec 4.6); with no supervisor socket the wrapper says Docker isn't available. Docker's repository keeps
+# its older versions, so these stay installable.
+ARG DOCKER_VERSION=5:29.10.1-1~debian.13~trixie
+ARG CONTAINERD_VERSION=2.4.2-4~debian.13~trixie
+ARG BUILDX_VERSION=0.39.1-1~debian.13~trixie
 RUN install -m 0755 -d /etc/apt/keyrings \
  && curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
  && apt-get -o Acquire::Retries=5 update \
- && apt-get -o Acquire::Retries=5 install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends "docker-ce=${DOCKER_VERSION}" "docker-ce-cli=${DOCKER_VERSION}" \
+      "containerd.io=${CONTAINERD_VERSION}" "docker-buildx-plugin=${BUILDX_VERSION}" \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
  && mkdir -p /var/lib/docker
 COPY --chmod=755 docker-wrapper.sh /usr/local/bin/docker
 
 # gh (GitHub CLI): CI runs, PRs, releases and logs from a conversation; it reads GH_TOKEN/GITHUB_TOKEN when a user
-# gives one. From GitHub's own apt repository (Debian's is far behind).
-RUN curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
- && apt-get -o Acquire::Retries=5 update \
- && apt-get -o Acquire::Retries=5 install -y --no-install-recommends gh \
- && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
- && gh --version
+# gives one. GitHub's own release, by version and sha256 (its apt repository keeps only the newest version, and
+# Debian's is far behind).
+ARG GH_VERSION=2.106.0
+ARG GH_SHA256=a476449fa9625413c54a3734eded62e9e480e49f421ff08e7f3b3879c059a033
+RUN curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL -o /tmp/gh.tgz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+ && printf '%s  %s\n' "${GH_SHA256}" /tmp/gh.tgz | sha256sum -c - \
+ && tar -xzf /tmp/gh.tgz -C /tmp \
+ && install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
+ && rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_amd64" \
+ && gh --version | grep -qF "gh version ${GH_VERSION}"
 
 # Claude Code at the version supervisor spec 3 pins, root-owned outside every directory uid 1000 can write (A11.F13):
 # the supervisor runs /opt/claude-code/bin/claude by that absolute path (in 2.1.325 the package's native
@@ -143,14 +166,15 @@ RUN apt-get -o Acquire::Retries=5 update \
  && test "$(ls | wc -l)" = "$(grep -vc '^#' /opt/image-setup/video/fonts.txt)" \
  && fc-cache -f && chown -R root:root /opt/engine /opt/assets && chmod -R go-w /opt/engine /opt/assets
 
-# Video and sound from a link (managed skills): yt-dlp in the venv, which reads YouTube's player through Node
+# the last install from the snapshot is above: the sandbox's apt reads the live mirrors (its lists are fetched on the
+# first install, apt-wrapper.sh)
+RUN rm /etc/apt/sources.list.d/snapshot.sources && mv /etc/apt/debian.sources.live /etc/apt/sources.list.d/debian.sources
+
+# Video and sound from a link (managed skills): yt-dlp in the venv (requirements.txt), which reads YouTube's player through Node
 # (`--js-runtimes node` in its system config: Deno, its default, is not in the image). The sandboxes' YouTube and Hong
 # Kong broadcaster traffic leaves through egress's `exit.via` (the deployment's own proxy), so nothing here names one.
-RUN /opt/py/bin/pip install --no-cache-dir 'yt-dlp[default]' \
- && printf -- '--js-runtimes node\n' > /etc/yt-dlp.conf \
- && /opt/py/bin/yt-dlp --version \
- && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
- && chown -R 1000:1000 /opt/py
+RUN printf -- '--js-runtimes node\n' > /etc/yt-dlp.conf \
+ && /opt/py/bin/yt-dlp --version
 
 # Installing system packages (A5.F4): `apt-get`/`apt` are wrappers that go through sudo for uid 1000 and fetch the
 # package lists on the first install (the image ships without them). apt reaches the Debian mirrors through the
@@ -197,14 +221,14 @@ ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.c
 
 # The image's own setup, readable inside the sandbox so Claude can see exactly what is installed and how (the
 # instance prompt points at it, A5.F6): this Dockerfile and the files it installs.
-COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.pth 90sandbox sudoers npmrc pip.conf profile /opt/image-setup/
+COPY Dockerfile requirements.in requirements.txt apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.pth 90sandbox sudoers npmrc pip.conf profile /opt/image-setup/
 
 # The supervisor and the keeper of this commit (static musl, root 0755), and `sandbox-secret`, which the supervisor
 # binary answers by argv[0] (supervisor spec 3), as it does `send-file` (files to the person from a shell command:
 # Qwen Code's way), `ask` (a question for the person, blocking until the answer: every harness's way) and
 # `video-check` (whether the generation's model watches video and hears sound, asked of the model route). Last, so a
 # new commit rebuilds only this layer.
-COPY --chmod=755 dist/supervisor dist/supervisor-keeper /usr/local/bin/
+COPY --from=dist --chmod=755 supervisor supervisor-keeper /usr/local/bin/
 RUN ln -s supervisor /usr/local/bin/sandbox-secret && ln -s supervisor /usr/local/bin/send-file \
     && ln -s supervisor /usr/local/bin/ask && ln -s supervisor /usr/local/bin/video-check
 
