@@ -1,0 +1,93 @@
+# The images built by Nix (flake.nix; Deyao, 2026-11-26): each is a pure function of its declared inputs, named by
+# their hash, so a build is a lookup in the cache (Hetzner bucket de0ch-aviary-nix-cache, project aviary-ci; signed by
+# aviary-nix-cache-1) and a build of what is absent. A part moves here from its Dockerfile once its Nix image passes
+# the same image checks its Dockerfile build passes in ci.yml; until then both run, and this workflow decides nothing
+# the deploy uses. herald is the first.
+#
+# Nix runs single-user (no daemon): the build itself reads the cache with the job's credentials. What it builds is
+# signed and copied to the cache, so the next run (any branch, the deploy) downloads instead of building.
+name: nix
+
+on:
+  push:
+    branches: ['**']
+    paths: [flake.nix, flake.lock, Cargo.toml, Cargo.lock, rust-toolchain.toml, ".cargo/**", "crates/**", "testing/**",
+            ".github/workflows/nix.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: nix-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CACHE: s3://de0ch-aviary-nix-cache?endpoint=nbg1.your-objectstorage.com&region=nbg1
+  AWS_ACCESS_KEY_ID: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+jobs:
+  herald:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+            max-jobs = auto
+      - name: build the herald image (from the cache where it has it)
+        run: |
+          set -euo pipefail
+          # a download from the cache is tried again by Nix (its own retries); an absent entry is built
+          nix build .#herald-image --print-out-paths -L --fallback --option connect-timeout 30 --option download-attempts 5 \
+            > "$RUNNER_TEMP/out"
+          cat "$RUNNER_TEMP/out"
+      - name: sign it and keep it in the cache (with everything it is built from)
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          # ours only: the image with what it holds, and the compiled dependencies (what a next run would build
+          # again); the toolchains and nixpkgs come from cache.nixos.org
+          paths=$(nix path-info --recursive .#herald-image .#herald-deps)
+          # shellcheck disable=SC2086 # a list of store paths
+          nix store sign --key-file "$key" $paths
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            # shellcheck disable=SC2086
+            nix copy --to "$CACHE" $paths && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
+      - name: the image, as ci.yml checks herald's Dockerfile image
+        run: |
+          set -euo pipefail
+          nix run .#herald-image.copyToDockerDaemon
+          img=herald:nix
+          test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")" = linux/amd64
+          l=$(docker image inspect -f '{{json .Config.Labels}}' "$img")
+          echo "$l"
+          jq -e '."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"
+            and ."org.opencontainers.image.licenses" == "AGPL-3.0-or-later"
+            and (."org.opencontainers.image.revision" | test("^[0-9a-z]{32}$"))
+            and ."org.opencontainers.image.version" == (."org.opencontainers.image.revision"[0:12])' <<< "$l" >/dev/null
+          test "$(docker image inspect -f '{{.Config.User}}' "$img")" = 65532:65532
+          docker run --rm "$img" --version
+          # with no secrets it refuses to start (exit 78), naming the variable, never a value
+          set +e
+          out=$(docker run --rm --read-only -e POD_NAME=ci "$img" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" = 78
+          grep -q '"name":"HERALD_ACCEPT_GATEWAY"' <<< "$out"
