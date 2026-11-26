@@ -2,7 +2,7 @@
 # their hash, so a build is a lookup in the cache (Hetzner bucket de0ch-aviary-nix-cache, project aviary-ci; signed by
 # aviary-nix-cache-1) and a build of what is absent. A part moves here from its Dockerfile once its Nix image passes
 # the same image checks its Dockerfile build passes in ci.yml; until then both run, and this workflow decides nothing
-# the deploy uses. herald is the first.
+# the deploy uses. herald and pigeon are the first.
 #
 # Nix runs single-user (no daemon): the build itself reads the cache with the job's credentials. What it builds is
 # signed and copied to the cache, so the next run (any branch, the deploy) downloads instead of building.
@@ -28,9 +28,17 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
 
 jobs:
-  herald:
+  image:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # each service's image, and the variable it names when it refuses to start without its secrets (ci.yml)
+          - {name: herald, missing: HERALD_ACCEPT_GATEWAY}
+          - {name: pigeon, missing: PIGEON_TOKEN_MAGPIE}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -41,11 +49,11 @@ jobs:
             extra-substituters = ${{ env.CACHE }}
             extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
             max-jobs = auto
-      - name: build the herald image (from the cache where it has it)
+      - name: build the image (from the cache where it has it)
         run: |
           set -euo pipefail
           # a download from the cache is tried again by Nix (its own retries); an absent entry is built
-          nix build .#herald-image --print-out-paths -L --fallback --option connect-timeout 30 --option download-attempts 5 \
+          nix build ".#${{ matrix.name }}-image" --print-out-paths -L --fallback --option connect-timeout 30 --option download-attempts 5 \
             > "$RUNNER_TEMP/out"
           cat "$RUNNER_TEMP/out"
       - name: sign it and keep it in the cache (with everything it is built from)
@@ -58,7 +66,7 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$key"
           # ours only: the image with what it holds, and the compiled dependencies (what a next run would build
           # again); the toolchains and nixpkgs come from cache.nixos.org
-          paths=$(nix path-info --recursive .#herald-image .#herald-deps)
+          paths=$(nix path-info --recursive ".#${{ matrix.name }}-image" ".#${{ matrix.name }}-deps")
           # shellcheck disable=SC2086 # a list of store paths
           nix store sign --key-file "$key" $paths
           rm -f "$key"
@@ -69,12 +77,12 @@ jobs:
             [ "$try" = 5 ] && exit 1
             sleep $((try * 10))
           done
-      - name: the image, as ci.yml checks herald's Dockerfile image
+      - name: the image, as ci.yml checks the service's Dockerfile image
         run: |
           set -euo pipefail
           # the image's tarball, written by the script dockerTools.streamLayeredImage builds
-          "$(nix build .#herald-image --no-link --print-out-paths)" | docker load
-          img=herald:nix
+          "$(nix build ".#${{ matrix.name }}-image" --no-link --print-out-paths)" | docker load
+          img=${{ matrix.name }}:nix
           test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")" = linux/amd64
           l=$(docker image inspect -f '{{json .Config.Labels}}' "$img")
           echo "$l"
@@ -91,4 +99,4 @@ jobs:
           set -e
           echo "$out"
           test "$code" = 78
-          grep -q '"name":"HERALD_ACCEPT_GATEWAY"' <<< "$out"
+          grep -q '"name":"${{ matrix.missing }}"' <<< "$out"

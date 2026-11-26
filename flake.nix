@@ -127,6 +127,14 @@
           description = "herald: Telegram notification channels for aviary conversations";
           ports = [ 8080 9090 ];
         };
+        pigeon-deps = deps "pigeon";
+        pigeon = service "pigeon";
+        pigeon-image = image {
+          name = "pigeon";
+          bin = pigeon;
+          description = "pigeon: the app-facing gateway of aviary";
+          ports = [ 8080 9090 ];
+        };
         default = herald-image;
       };
     };
