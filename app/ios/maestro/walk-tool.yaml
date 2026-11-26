@@ -2,7 +2,9 @@
 # its tool calls show. The script reads where the first tool call's header is, then walk-tool-open.yaml opens it.
 appId: ${APP_ID}
 ---
-- launchApp
+# the Activity panel walk-activity.yaml left open closes; no relaunch, which would sign the app out (walk-list.yaml)
+- tapOn:
+    id: "activity-close"
 - extendedWaitUntil:
     visible:
       id: "menu-button"
