@@ -1,0 +1,26 @@
+# The sandbox's Python packages (the venv /opt/py): what Claude uses for documents, PDFs, spreadsheets, charts and
+# Chinese text, and yt-dlp for video from a link. requirements.txt pins each, and everything they pull in, by version
+# and sha256; tools/sandbox-image moves the pins (`pip install --require-hashes`).
+pandas
+openpyxl
+xlsxwriter
+python-docx
+python-pptx
+matplotlib
+pypdf
+pdfplumber
+beautifulsoup4
+lxml
+requests
+httpx
+Pillow
+markdown
+tabulate
+python-dateutil
+chardet
+opencc-python-reimplemented
+weasyprint
+# 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB compressed)
+pymupdf<2
+reportlab
+yt-dlp[default]
