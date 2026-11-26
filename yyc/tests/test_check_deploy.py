@@ -225,6 +225,17 @@ class Seeded(unittest.TestCase):
                     rule["ports"] = [{"port": 443, "protocol": "TCP"}]
         self.expect(only_443, 6, "lacks port(s) [80, 8080, 8443]")
 
+    def test_an_env_variable_egress_json_names_reaches_the_pod(self):
+        # 2026-11-26: exit.via named EXIT_VIA_YYC_AI_ISP, the Secret had it, the Deployment did not pass it on, and the
+        # new egress pods crash-looped ("the env variable EXIT_VIA_YYC_AI_ISP is not set")
+        def drop(name):
+            def m(objs):
+                c = container(find(objs, "Deployment", "egress"), "egress")
+                c["env"] = [e for e in c["env"] if e["name"] != name]
+            return m
+        self.expect(drop("EXIT_VIA_YYC_AI_ISP"), 8, "exit.via proxyEnv EXIT_VIA_YYC_AI_ISP is not in the egress container's env")
+        self.expect(drop("CODE_GITHUB_BASIC"), 8, "route code injects ${CODE_GITHUB_BASIC}, not in the egress container's env")
+
     def test_literal_env(self):
         self.expect(lambda o: container(find(o, "Deployment", "pigeon"), "pigeon")["env"].append({"name": "PIGEON_X", "value": "1"}), 2, "literal env")
 
