@@ -383,7 +383,12 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/venv" && echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/venv/bin/pip" install -q playwright==1.62.0
-          "$RUNNER_TEMP/venv/bin/python" -m playwright install --with-deps chromium >/dev/null
+          # a download: tried again, each try at most 5 min (a hung one had held app.yml's build for 38 min, 2026-11-26)
+          for try in 1 2 3 4 5; do
+            timeout -k 10 300 "$RUNNER_TEMP/venv/bin/python" -m playwright install --with-deps chromium >/dev/null && break
+            echo "::warning title=playwright install::try $try of 5 failed or passed 5 min"
+            [ "$try" = 5 ] && exit 1
+          done
       - name: the browser-free pieces
         run: python3 yyc/tests/e2e/test_live_chat.py
       - name: sign in, one chat turn

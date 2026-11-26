@@ -108,7 +108,14 @@ jobs:
       # controls outlined, are the artifact touch-targets
       - name: Playwright's Chromium for the touch-target check
         working-directory: app/packages/app
-        run: npx playwright install --with-deps chromium
+        # a download: tried again, each try at most 5 min (main's app run 2026-11-26 hung 38 min in one and the job's
+        # 45 min limit cancelled it, so the web app's image was never built and every deploy stopped on it)
+        run: |
+          for try in 1 2 3 4 5; do
+            timeout -k 10 300 npx playwright install --with-deps chromium && exit 0
+            echo "::warning title=playwright install::try $try of 5 failed or passed 5 min"
+          done
+          exit 1
       - name: touch targets on a phone
         run: node app/scripts/touch-targets/check.mjs dist "$RUNNER_TEMP/touch-targets"
       - name: a question card pushed live is drawn once, also after scrolling
