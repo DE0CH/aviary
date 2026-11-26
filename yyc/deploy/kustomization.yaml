@@ -56,8 +56,10 @@ configMapGenerator:
       - report.SKILL.md=hermit/skills/report/SKILL.md
       - schedules.SKILL.md=hermit/skills/schedules/SKILL.md
       - telegram.SKILL.md=hermit/skills/telegram/SKILL.md
+      - transcribe.SKILL.md=hermit/skills/transcribe/SKILL.md
       - video.SKILL.md=hermit/skills/video/SKILL.md
       - web.SKILL.md=hermit/skills/web/SKILL.md
+      - youtube.SKILL.md=hermit/skills/youtube/SKILL.md
   # YYC's look (check item B): the app bundle holds neutral files under /branding/ (the logo, the tab and home-screen
   # icons, the manifest); pigeon mounts these over them. Hashed, so a change rolls pigeon
   - name: pigeon-branding
@@ -91,7 +93,7 @@ patches:
   - target: {kind: Deployment, name: hermit}
     patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "2026-11-17-hosts-meta-2"}}]'
   - target: {kind: Deployment, name: egress}
-    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "2026-11-26-exit-via"}}]'
   - target: {kind: Deployment, name: tools}
     patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: herald}

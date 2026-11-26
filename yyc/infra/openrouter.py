@@ -37,6 +37,9 @@ def _models():
             # the conversation search's embedding model: the sandboxes' and pigeon's /v1/embeddings on this key
             if e.get("embedding"):
                 ids.add(e["embedding"]["id"])
+            # the speech-to-text model: the sandboxes' /v1/audio/transcriptions on this key
+            if e.get("transcription"):
+                ids.add(e["transcription"]["id"])
             break
     if not ids:
         raise SystemExit("no model list: egress.json not found")

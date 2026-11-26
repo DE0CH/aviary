@@ -70,13 +70,16 @@ decided in this order:
      is logged (`egress fixed-name upstream`: route, status, request, conversation, `person_key`, never the path),
      at most one line per route per second with the left-out count in the next.
    - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` (the Messages API, Claude Code),
-     `POST /v1/chat/completions` (OpenAI chat completions, Qwen Code) and `POST /v1/embeddings` (the conversation
-     search's vectors of a conversation's messages, which its supervisor makes) to egress.json's route `model`
+     `POST /v1/chat/completions` (OpenAI chat completions, Qwen Code), `POST /v1/embeddings` (the conversation
+     search's vectors of a conversation's messages, which its supervisor makes) and `POST /v1/audio/transcriptions`
+     (OpenRouter's speech to text) to egress.json's route `model`
      (OpenRouter; the route's `allowPaths` must list them), and `GET /v1/aviary/models` answered by egress itself
      (below). egress.json's `embedding` (`{id, queryInstruction?}`, an OpenRouter model giving 1024 values) is the
      search's model: it is in the models answer and among the allowed models, and the in-cluster API's
      `POST /v1/embeddings` (pigeon only) embeds a search's query with it (`Egress.embedQuery`: that model only, zero
-     data retention forced, the cost counted in the budget). A
+     data retention forced, the cost counted in the budget). egress.json's `transcription` (`{id, providers?}`) is
+     the speech-to-text model: in the models answer (`transcription.id`, so a sandbox names it without knowing it) and
+     among the allowed models, pinned to `providers` (`order` + `only`, no fallback) like a chat model. A
      model names its harness (`models[].harness`: `qwen`; absent = Claude Code) and may be limited to some people
      (`models[].visibleTo`: emails; absent = everyone; never the default model); both are in the models answer when
      set, and pigeon shows and lets pick a limited model only to those people. The route injects `Authorization: Bearer
@@ -268,6 +271,15 @@ about 48,700 listed sites passed).
   https upstreams (the model route's OpenRouter) go through it too, on its default profile (no username); upstreams
   inside the cluster (`*.cluster.local`, `*.svc`, single-label names, private addresses) are reached directly. YYC:
   its yyc-socks pool (DE0CH/yyc-code `socks/`), which resolves over its nodes' IPv6 and connects IPv6 first, IPv4 after.
+  `exit.via` (`[{"hosts": [...], "proxyEnv": "NAME"}]`, optional): a connection to one of `hosts` (`host` = that name,
+  `.domain` = it and everything under it; after the port and deny list checks, as every other) goes out through the
+  HTTP proxy in the env variable `proxyEnv` (`http://user:pass@host:port`; egress refuses to start when it is unset or
+  malformed) instead: egress reaches the proxy through the exit on its default profile and sends it `CONNECT
+  host:port` with its login, for tunnels and plain-HTTP forwards alike. The row's decision is `allow:via` (its bytes
+  are the proxy's traffic); a proxy that refuses is a 502 with its answer in `reason`, never its login. YYC: YouTube
+  refuses the cluster's WARP address, so YouTube and the Hong Kong broadcasters (Now, ViuTV, TVB) go through YYC AI's
+  own IPRoyal ISP IP in Hong Kong (`EXIT_VIA_YYC_AI_ISP`). That address serves one client address at a time, which
+  every egress pod is (they all leave through the same WARP address).
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.

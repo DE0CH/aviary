@@ -1,0 +1,152 @@
+# The images built by Nix (flake.nix; Deyao, 2026-11-26): each is a pure function of its declared inputs, named by
+# their hash, so a build is a lookup in the cache (Hetzner bucket de0ch-aviary-nix-cache, project aviary-ci; signed by
+# aviary-nix-cache-1) and a build of what is absent. A part moves here from its Dockerfile once its Nix image passes
+# the same image checks its Dockerfile build passes in ci.yml; until then both run, and this workflow decides nothing
+# the deploy uses. herald and pigeon are the first.
+#
+# Nix runs single-user (no daemon): the build itself reads the cache with the job's credentials. What it builds is
+# signed and copied to the cache, so the next run (any branch, the deploy) downloads instead of building.
+name: nix
+
+on:
+  push:
+    branches: ['**']
+    paths: [flake.nix, flake.lock, Cargo.toml, Cargo.lock, rust-toolchain.toml, ".cargo/**", "crates/**", "testing/**",
+            ".github/workflows/nix.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: nix-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CACHE: s3://de0ch-aviary-nix-cache?endpoint=nbg1.your-objectstorage.com&region=nbg1
+  AWS_ACCESS_KEY_ID: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+jobs:
+  image:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # each service's image, and the variable it names when it refuses to start without its secrets (ci.yml)
+          - {name: herald, kind: service, user: "65532:65532", missing: HERALD_ACCEPT_GATEWAY}
+          - {name: pigeon, kind: service, user: "65532:65532", missing: PIGEON_TOKEN_MAGPIE}
+          # the gateway pod's image: ci.yml's images/sandboxd checks and adopt.sh against the image
+          - {name: sandboxd, kind: gateway, user: "0:0"}
+          # hermit: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
+          - {name: hermit, kind: hermit, user: "65532:65532"}
+          # magpie: glibc and libheif with its HEVC decoder; it decodes the HEIC fixture with the release binary
+          - {name: magpie, kind: magpie, user: "10001:10001"}
+          # the test binaries: no entrypoint, each run by name
+          - {name: aviary-testing, kind: testing, user: "65532:65532"}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+            max-jobs = auto
+      - name: build the image (from the cache where it has it)
+        run: |
+          set -euo pipefail
+          # a download from the cache is tried again by Nix (its own retries); an absent entry is built
+          nix build ".#${{ matrix.name }}-image" --print-out-paths -L --fallback --option connect-timeout 30 --option download-attempts 5 \
+            > "$RUNNER_TEMP/out"
+          cat "$RUNNER_TEMP/out"
+      - name: sign it and keep it in the cache (with everything it is built from)
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          # ours only: the image with what it holds, and the compiled dependencies (what a next run would build
+          # again); the toolchains and nixpkgs come from cache.nixos.org. The dependencies are on this runner only when
+          # they were built here: a build the cache answered whole never fetched them (and the cache has them)
+          roots=".#${{ matrix.name }}-image"
+          if nix path-info ".#${{ matrix.name }}-deps" > /dev/null 2>&1; then roots="$roots .#${{ matrix.name }}-deps"; fi
+          # shellcheck disable=SC2086 # a list of installables
+          paths=$(nix path-info --recursive $roots)
+          # shellcheck disable=SC2086 # a list of store paths
+          nix store sign --key-file "$key" $paths
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            # shellcheck disable=SC2086
+            nix copy --to "$CACHE" $paths && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
+      - name: the image, as ci.yml checks the service's Dockerfile image
+        run: |
+          set -euo pipefail
+          # the image's tarball, written by the script dockerTools.streamLayeredImage builds
+          "$(nix build ".#${{ matrix.name }}-image" --no-link --print-out-paths)" | docker load
+          img=${{ matrix.name }}:nix
+          test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")" = linux/amd64
+          l=$(docker image inspect -f '{{json .Config.Labels}}' "$img")
+          echo "$l"
+          jq -e '."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"
+            and ."org.opencontainers.image.licenses" == "AGPL-3.0-or-later"
+            and (."org.opencontainers.image.revision" | test("^[0-9a-z]{32}$"))
+            and ."org.opencontainers.image.version" == (."org.opencontainers.image.revision"[0:12])' <<< "$l" >/dev/null
+          test "$(docker image inspect -f '{{.Config.User}}' "$img")" = "${{ matrix.user }}"
+          case "${{ matrix.kind }}" in
+            hermit) docker run --rm "$img" --help ;;
+            testing) docker run --rm "$img" test-gateway --version; docker run --rm "$img" aviary-conformance --help ;;
+            *) docker run --rm "$img" --version ;;
+          esac
+      - name: a service refuses to start without its secrets, naming the variable, never a value (exit 78)
+        if: matrix.kind == 'service'
+        run: |
+          set -euo pipefail
+          img=${{ matrix.name }}:nix
+          set +e
+          out=$(docker run --rm --read-only -e POD_NAME=ci "$img" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" = 78
+          grep -q '"name":"${{ matrix.missing }}"' <<< "$out"
+      - name: the gateway's commands, and its refusal of a host.json it cannot run with
+        if: matrix.kind == 'gateway'
+        run: |
+          set -euo pipefail
+          img=${{ matrix.name }}:nix
+          docker run --rm --entrypoint sh "$img" -c 'ip -V && wg --version && nft -v && sysctl --version && crane version && tar --version | head -1 && zstd --version'
+          g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.95.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
+          printf '%s' "$g" > "$RUNNER_TEMP/gw-bad.json"
+          if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" "$img"; then echo "the image started on a bad host.json" >&2; exit 1; fi
+      - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
+        if: matrix.kind == 'gateway'
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
+          sudo SBX_GATEWAY_IMAGE="${{ matrix.name }}:nix" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
+      - name: hermit's juicefs CLI, the catalogue check, and its refusal to start without secrets (exit 78)
+        if: matrix.kind == 'hermit'
+        run: |
+          set -euo pipefail
+          img=${{ matrix.name }}:nix
+          docker run --rm --entrypoint /usr/local/bin/juicefs "$img" version
+          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
+          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" "$img" catalogue-check /c.json
+          code=0; docker run --rm "$img" serve || code=$?; test "$code" -eq 78
+      - name: magpie decodes the HEIC fixture (libheif and its HEVC decoder are in the image)
+        if: matrix.kind == 'magpie'
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" "${{ matrix.name }}:nix" check-image /photo.heic)
+          echo "$out"
+          test "$out" = "image/heic 640x480"
