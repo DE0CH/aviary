@@ -164,7 +164,11 @@ async function topOf(maestro, udid, id, label) {
 async function main() {
   const appId = plist("CFBundleIdentifier");
   const scheme = plist("CFBundleURLTypes.0.CFBundleURLSchemes.0");
-  const standIn = await startStandIn({ appDir: path.join(here, "../../packages/app/public"), port: PORT, appScheme: scheme, quiet: true });
+  const heard = path.join(out, "stand-in.log");
+  const onRequest = (method, url) => fs.appendFileSync(heard, `${new Date().toISOString()} ${method} ${url}\n`);
+  const standIn = await startStandIn({
+    appDir: path.join(here, "../../packages/app/public"), port: PORT, appScheme: scheme, quiet: true, onRequest,
+  });
   const maestro = maestroBin();
   const udid = bootSimulator();
   try {
