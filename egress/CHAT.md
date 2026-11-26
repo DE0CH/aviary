@@ -159,7 +159,8 @@ a failed call, its own count `recent.callerErrors`; each row of `recent.list` ca
 
 **Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the host lists are loaded and tokens can be
 verified (hermit's key set fetched once, or, while hermit is away at this start, the set stored in `token_keys`), and
-while draining (not when Postgres or hermit fail later); `/version` (`builtAt` from the image's `CHAT_BUILT_AT`);
+while draining (not when Postgres or hermit fail later); `/version` (`revision` from the image's `CHAT_COMMIT`; `builtAt` null: the image is built by Nix, `egress-image` in
+`flake.nix`, the same bytes whenever it is built);
 `/metrics` (the counters above, `egress_log_buffered`, `egress_log_dropped_total{kind}`,
 `egress_drain_cut_total{kind}`, `egress_in_flight{kind}`, `egress_token_keys_from_store`,
 `egress_budget_unknown_served_total`).

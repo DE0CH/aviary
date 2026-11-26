@@ -12,7 +12,7 @@ on:
     branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
     paths: [jarvis/**, crates/aviary-core/**, crates/aviary-pg/**, crates/hermit-api/**, crates/gateway-api/**,
             crates/magpie-api/**, crates/supervisor-api/**, testing/fakes/**, rust-toolchain.toml, deploy/images.json,
-            .github/workflows/jarvis.yml]
+            .github/workflows/jarvis.yml, flake.nix, flake.lock]
   workflow_dispatch:
   # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
   # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
@@ -27,6 +27,9 @@ concurrency:
 env:
   # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
   CURL_HOME: ${{ github.workspace }}/.github/ci
+  NIX_CACHE: s3://de0ch-aviary-nix-cache?endpoint=nbg1.your-objectstorage.com&region=nbg1
+  AWS_ACCESS_KEY_ID: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
 
 jobs:
   part:
@@ -88,7 +91,7 @@ jobs:
   image:
     needs: [part, test]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 90
     permissions:
       contents: write
       packages: write
@@ -99,16 +102,47 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {ref: "${{ inputs.sha || github.sha }}"}
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: the cache service's token for buildx (type=gha)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: hermit-jarvis (loaded here; pushed below when its tag is new)
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          # single-user: the build itself reads the cache with this job's credentials
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.NIX_CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+      - name: hermit-jarvis, built by Nix (flake.nix hermit-jarvis-image; loaded here, pushed below when its tag is new)
+        env:
+          # the part's commit: hermit-jarvis's `--version`, `ver` and the image's labels
+          AVIARY_REVISION: ${{ needs.part.outputs.sha }}
         run: |
-          docker buildx build . -f jarvis/hermit/Dockerfile --load --tag hermit-jarvis:test \
-            --build-arg AVIARY_REVISION="$PART_SHA" --platform linux/amd64 --provenance=false \
-            --label org.opencontainers.image.source=https://github.com/DE0CH/aviary \
-            --label "org.opencontainers.image.revision=$PART_SHA" \
-            --cache-from type=gha,scope=hermit-jarvis --cache-to type=gha,mode=max,scope=hermit-jarvis,ignore-error=true
+          set -euo pipefail
+          nix build --impure .#hermit-jarvis-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
+          out=$(nix build --impure .#hermit-jarvis-image --no-link --print-out-paths)
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          "$out" | docker load
+          docker tag hermit-jarvis:nix hermit-jarvis:test
+          l=$(docker image inspect -f '{{json .Config.Labels}}' hermit-jarvis:test)
+          echo "$l"
+          jq -e --arg rev "$PART_SHA" '."org.opencontainers.image.revision" == $rev
+            and ."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"' <<< "$l" >/dev/null
+      - name: sign what was built and keep it in the cache
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          roots=("$OUT")
+          if nix path-info --impure .#hermit-jarvis-deps > /dev/null 2>&1; then roots+=("$(nix path-info --impure .#hermit-jarvis-deps)"); fi
+          mapfile -t paths < <(nix path-info --recursive "${roots[@]}")
+          nix store sign --key-file "$key" "${paths[@]}"
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            nix copy --to "$NIX_CACHE" "${paths[@]}" && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
       - name: the chat's settings, checked by this build
         run: docker run --rm -v "$PWD/jarvis/deploy:/chat:ro" hermit-jarvis:test check-settings /chat/settings.json
       - name: push hermit-jarvis:<sha12>

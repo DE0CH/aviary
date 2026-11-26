@@ -41,7 +41,9 @@
     ],
     "paths": [
       "egress",
-      ".github/workflows/egress.yml"
+      ".github/workflows/egress.yml",
+      "flake.nix",
+      "flake.lock"
     ]
   },
   "hermit-jarvis": {
@@ -57,7 +59,9 @@
       "crates/magpie-api",
       "crates/supervisor-api",
       "rust-toolchain.toml",
-      ".github/workflows/jarvis.yml"
+      ".github/workflows/jarvis.yml",
+      "flake.nix",
+      "flake.lock"
     ]
   },
   "yyc-drive": {

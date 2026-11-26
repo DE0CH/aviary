@@ -1,9 +1,10 @@
 {
   # The aviary images built by Nix (Deyao, 2026-11-26): each output is a pure function of its declared inputs, named by
-  # their hash, so building is looking up that hash in a cache (the Hetzner bucket, .github/workflows/nix.yml) and
-  # building what is absent. Parts move here one at a time, each beside its Dockerfile build until its Nix image passes
-  # the same image checks in CI (.github/workflows/nix.yml). Every image is built for x86_64-linux and aarch64-linux,
-  # each natively on a machine of its architecture, as ci.yml's `images` builds them.
+  # their hash, so building is looking up that hash in a cache (the Hetzner bucket de0ch-aviary-nix-cache, signed by
+  # aviary-nix-cache-1) and building what is absent; the workflow that builds an image signs what it built and adds it
+  # to the cache. ci.yml's `images` builds the service images, egress.yml egress's, jarvis.yml hermit-jarvis's, each
+  # with the part's commit in the environment (`nix build --impure`). Every image is built for x86_64-linux and
+  # aarch64-linux, each natively on a machine of its architecture.
   description = "aviary: images built from source by Nix";
 
   inputs = {

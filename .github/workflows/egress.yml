@@ -10,7 +10,7 @@ on:
   push:
     branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
     paths: ["egress/**", "crates/hermit/fixtures/catalogue-cases.json", "testing/conformance/**", "testing/mock-model/**",
-            "deploy/images.json", ".github/workflows/egress.yml"]
+            "deploy/images.json", ".github/workflows/egress.yml", "flake.nix", "flake.lock"]
   workflow_dispatch:
   # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
   # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
@@ -26,6 +26,9 @@ env:
   # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
   CURL_HOME: ${{ github.workspace }}/.github/ci
   IMAGE: ghcr.io/de0ch/egress
+  NIX_CACHE: s3://de0ch-aviary-nix-cache?endpoint=nbg1.your-objectstorage.com&region=nbg1
+  AWS_ACCESS_KEY_ID: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.NIX_CACHE_SECRET_KEY }}
 
 permissions:
   contents: read
@@ -89,35 +92,61 @@ jobs:
           npm test
 
   image-amd64:
-    # the image, built once: conformance checks it and push pushes it, so what ships is what was tested
+    # the image, built once by Nix (flake.nix; Deyao, 2026-11-26): conformance checks it and push pushes it, so what
+    # ships is what was tested. A build is a lookup in the Nix cache and a build of what is absent, added to it here.
+    # CHAT_BUILT_AT stays empty (/version's builtAt is null): a build time would make every build differ
     needs: part
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     outputs:
       id: ${{ steps.load.outputs.id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {ref: "${{ inputs.sha || github.sha }}"}
-      - name: build time
-        id: built
-        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: the cache service's token for buildx (type=gha)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: build the image
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false}
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          # single-user: the build itself reads the cache with this job's credentials
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.NIX_CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+      - name: build the image (Nix, flake.nix egress-image; from the cache where it has it)
+        env:
+          # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
+          CHAT_COMMIT: ${{ needs.part.outputs.sha }}
         run: |
-          docker buildx build egress --tag egress:test \
-            --output "type=docker,dest=$RUNNER_TEMP/egress-image.tar" \
-            --build-arg CHAT_COMMIT=${{ needs.part.outputs.sha }} --build-arg CHAT_BUILT_AT=${{ steps.built.outputs.at }} \
-            --cache-from type=gha,scope=egress-image --cache-to type=gha,mode=max,scope=egress-image,ignore-error=true
+          set -euo pipefail
+          nix build --impure .#egress-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
+          out=$(nix build --impure .#egress-image --no-link --print-out-paths)
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          "$out" | docker load
+          docker tag egress:nix egress:test
+          docker rmi egress:nix
+          docker save -o "$RUNNER_TEMP/egress-image.tar" egress:test
+      - name: sign what was built and keep it in the cache
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          mapfile -t paths < <(nix path-info --recursive "$OUT")
+          nix store sign --key-file "$key" "${paths[@]}"
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            nix copy --to "$NIX_CACHE" "${paths[@]}" && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
       - name: image id
         id: load
         run: |
           set -euo pipefail
-          docker load -q -i "$RUNNER_TEMP/egress-image.tar"
           id=$(docker image inspect egress:test --format '{{.Id}}')
           echo "id=$id" >> "$GITHUB_OUTPUT"
-          echo "egress image $id (built ${{ steps.built.outputs.at }})" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "egress image $id" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: egress-image
@@ -163,28 +192,55 @@ jobs:
           path: ${{ runner.temp }}/conformance
 
   image-arm64:
-    # the image for linux/arm64 (YYC's cluster's workers are ARM), built natively on an ARM runner from the same commit
-    # and smoke-tested there; push puts it beside the amd64 image under one multi-platform tag. The code is plain
+    # the image for linux/arm64 (YYC's cluster's workers are ARM), built by Nix natively on an ARM runner from the same
+    # commit and smoke-tested there; push puts it beside the amd64 image under one multi-platform tag. The code is plain
     # JavaScript (no native modules), so conformance on amd64 covers it
     needs: part
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {ref: "${{ inputs.sha || github.sha }}"}
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: the cache service's token for buildx (type=gha)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: build the arm64 image
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false}
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          # single-user: the build itself reads the cache with this job's credentials
+          install_options: --no-daemon
+          extra_nix_config: |
+            extra-substituters = ${{ env.NIX_CACHE }}
+            extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
+      - name: build the image (Nix, flake.nix egress-image; from the cache where it has it)
+        env:
+          # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
+          CHAT_COMMIT: ${{ needs.part.outputs.sha }}
         run: |
-          docker buildx build egress --platform linux/arm64 --tag egress:test-arm64 \
-            --output "type=docker,dest=$RUNNER_TEMP/egress-image-arm64.tar" \
-            --build-arg CHAT_COMMIT=${{ needs.part.outputs.sha }} \
-            --cache-from type=gha,scope=egress-image-arm64 --cache-to type=gha,mode=max,scope=egress-image-arm64,ignore-error=true
+          set -euo pipefail
+          nix build --impure .#egress-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
+          out=$(nix build --impure .#egress-image --no-link --print-out-paths)
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          "$out" | docker load
+          docker tag egress:nix egress:test-arm64
+          docker rmi egress:nix
+          docker save -o "$RUNNER_TEMP/egress-image-arm64.tar" egress:test-arm64
+      - name: sign what was built and keep it in the cache
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/signing.key"
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          mapfile -t paths < <(nix path-info --recursive "$OUT")
+          nix store sign --key-file "$key" "${paths[@]}"
+          rm -f "$key"
+          for try in 1 2 3 4 5; do
+            nix copy --to "$NIX_CACHE" "${paths[@]}" && break
+            echo "::warning title=nix cache::copy try $try of 5 failed"
+            [ "$try" = 5 ] && exit 1
+            sleep $((try * 10))
+          done
       - name: smoke test
         run: |
           set -euo pipefail
-          docker load -q -i "$RUNNER_TEMP/egress-image-arm64.tar"
           test "$(docker image inspect egress:test-arm64 --format '{{.Architecture}}')" = arm64
           docker run --rm --entrypoint sh egress:test-arm64 -c 'test "$(id -u)" = 1000 && test -s egress-allowlist/allow.txt && node -e "require(\"pg\")"'
           if docker run --rm egress:test-arm64 nope; then exit 1; fi

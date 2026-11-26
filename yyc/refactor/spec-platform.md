@@ -519,8 +519,9 @@ aviary/
                             chat/sandboxd/host, renamed per hermit spec 14)
     aws/                    infra.sh, scaler-policy.json, ami-ci-policy.json, legacy-down.sh
     gvisor-patches/         as in jarvis3 (the DE0CH/gvisor fork's patch notes)
+  flake.nix                 the service images (pigeon, magpie, hermit, herald, sandboxd, aviary-testing), egress
+                            and hermit-jarvis, built by Nix (5.2)
   images/
-    pigeon/Dockerfile  magpie/Dockerfile  hermit/Dockerfile  sandboxd/Dockerfile
     sandbox/                Dockerfile, apt-wrapper.sh, docker-wrapper.sh, reportlab-cjk.py, 90sandbox,
                             sudoers.d/sandbox, profile.d/00-sandbox-path.sh, smoke.sh (hermit spec 17,
                             supervisor spec 3 and 22)
