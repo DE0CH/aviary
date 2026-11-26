@@ -1,10 +1,12 @@
 name: deploy
-# A push to main is the deploy (docs/DEPLOY.md; Deyao, 2026-11-19). Each part's workflow ends on main by building its
-# images (once per tag); this run starts when one of them completes and deploys the newest commit main has pointed at
-# whose every part's newest run is over and green and that is newer than what runs (aviary-deploy ready; the
-# deploy-<sha12> tags say what runs): a newer commit still in its checks never holds back an older one that passed
-# them, and nothing older than what runs ever deploys (Deyao, 2026-11-20). Then, in order, stopping at the first
-# failure:
+# A push to main is the deploy (docs/DEPLOY.md; Deyao, 2026-11-19). This run starts when a part's run on main completes
+# (and every 3 h) and deploys the newest commit main has pointed at whose every part's newest run is over and green and
+# that is newer than what runs (aviary-deploy ready; the deploy-<sha12> tags say what runs): a newer commit still in its
+# checks never holds back an older one that passed them, and nothing older than what runs ever deploys (Deyao,
+# 2026-11-20). The commit's source is all it depends on (Deyao, 2026-11-26): each image is tagged by its part's last
+# commit, and a part whose image (or, for aviary, release) is absent from the registry is built first by its own
+# workflow at that commit (aviary-deploy missing; the build-* jobs); the registry is only a cache. Then, in order,
+# stopping at the first failure:
 #   1. jarvis: Jarvis chat, Jarvis 4's sessions and its fabric, through DE0CH/jarvis4's git (its cluster takes changes
 #      only from git, jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release,
 #      sandbox and gateway), k8s/cluster/tenants/chat.yaml (the chat's source, this commit's tag deploy-<sha12>, and its image tags) and
@@ -42,6 +44,12 @@ jobs:
     outputs:
       go: ${{ steps.r.outputs.go }}
       sha: ${{ steps.r.outputs.sha }}
+      # the parts to build first: each one's commit, or empty
+      aviary: ${{ steps.m.outputs.aviary }}
+      pigeon_app: ${{ steps.m.outputs.pigeon_app }}
+      egress: ${{ steps.m.outputs.egress }}
+      hermit_jarvis: ${{ steps.m.outputs.hermit_jarvis }}
+      yyc_drive: ${{ steps.m.outputs.yyc_drive }}
     steps:
       # main's head, whatever finished: its history and the deploy tags are where ready looks for the commit to deploy
       - id: head
@@ -79,25 +87,92 @@ jobs:
           else
             echo "go=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: the tags, and every image there
+      - name: the parts its commit lacks in the registry (built first, each at its own commit)
+        id: m
         if: steps.r.outputs.go == 'true'
         env:
           SHA: ${{ steps.r.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # the picked commit's own images.json (it may be older than the checkout)
+          git show "$SHA:deploy/images.json" > "$RUNNER_TEMP/images.json"
+          tools/aviary-deploy/target/release/aviary-deploy missing "$RUNNER_TEMP/images.json" "$SHA" | tee -a "$GITHUB_OUTPUT"
+
+  build-aviary:
+    # the part's own workflow at its commit (its tests too): only when its commit's image is absent
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && needs.ready.outputs.aviary != ''
+    uses: ./.github/workflows/ci.yml
+    with: {sha: "${{ needs.ready.outputs.aviary }}"}
+    secrets: inherit
+    permissions: {contents: write, packages: write, attestations: write, id-token: write, actions: write, deployments: read}
+
+  build-pigeon-app:
+    # the part's own workflow at its commit (its tests too): only when its commit's image is absent
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && needs.ready.outputs.pigeon_app != ''
+    uses: ./.github/workflows/app.yml
+    with: {sha: "${{ needs.ready.outputs.pigeon_app }}"}
+    secrets: inherit
+    permissions: {contents: write, packages: write, attestations: write, id-token: write, actions: write, deployments: read}
+
+  build-egress:
+    # the part's own workflow at its commit (its tests too): only when its commit's image is absent
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && needs.ready.outputs.egress != ''
+    uses: ./.github/workflows/egress.yml
+    with: {sha: "${{ needs.ready.outputs.egress }}"}
+    secrets: inherit
+    permissions: {contents: write, packages: write, attestations: write, id-token: write, actions: write, deployments: read}
+
+  build-hermit-jarvis:
+    # the part's own workflow at its commit (its tests too): only when its commit's image is absent
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && needs.ready.outputs.hermit_jarvis != ''
+    uses: ./.github/workflows/jarvis.yml
+    with: {sha: "${{ needs.ready.outputs.hermit_jarvis }}"}
+    secrets: inherit
+    permissions: {contents: write, packages: write, attestations: write, id-token: write, actions: write, deployments: read}
+
+  build-yyc-drive:
+    # the part's own workflow at its commit (its tests too): only when its commit's image is absent
+    needs: ready
+    if: needs.ready.outputs.go == 'true' && needs.ready.outputs.yyc_drive != ''
+    uses: ./.github/workflows/drive.yml
+    with: {sha: "${{ needs.ready.outputs.yyc_drive }}"}
+    secrets: inherit
+    permissions: {contents: write, packages: write, attestations: write, id-token: write, actions: write, deployments: read}
+
+  images:
+    # the commit's tags, and every image now there: what jarvis and yyc deploy
+    needs: [ready, build-aviary, build-pigeon-app, build-egress, build-hermit-jarvis, build-yyc-drive]
+    if: ${{ !cancelled() && needs.ready.outputs.go == 'true' && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SHA: ${{ needs.ready.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.ready.outputs.sha }}", fetch-depth: 0, filter: "blob:none"}
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: {workspaces: tools/aviary-deploy}
+      - run: cargo build --locked --release --manifest-path tools/aviary-deploy/Cargo.toml
+      - name: the tags, and every image there
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/deploy"
-          # the picked commit's own images.json (it may be older than the checkout)
-          git show "$SHA:deploy/images.json" > "$RUNNER_TEMP/images.json"
-          tools/aviary-deploy/target/release/aviary-deploy tags "$RUNNER_TEMP/images.json" "$SHA" > "$RUNNER_TEMP/deploy/tags.json"
+          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "$SHA" > "$RUNNER_TEMP/deploy/tags.json"
           tools/aviary-deploy/target/release/aviary-deploy digests "$RUNNER_TEMP/deploy/tags.json" > "$RUNNER_TEMP/deploy/digests.json"
           cp tools/aviary-deploy/target/release/aviary-deploy "$RUNNER_TEMP/deploy/"
           cat "$RUNNER_TEMP/deploy/tags.json"
-      - if: steps.r.outputs.go == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: deploy, path: "${{ runner.temp }}/deploy", retention-days: 7}
 
   jarvis:
-    needs: ready
+    needs: [ready, images]
     if: needs.ready.outputs.go == 'true' && github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -186,9 +261,9 @@ jobs:
           [ -n "$token" ]
 
   yyc:
-    needs: [ready, jarvis]
+    needs: [ready, images, jarvis]
     if: >-
-      always() && needs.ready.outputs.go == 'true' &&
+      always() && needs.ready.outputs.go == 'true' && needs.images.result == 'success' &&
       (needs.jarvis.result == 'success' || (github.event_name == 'schedule' && needs.jarvis.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -334,8 +409,8 @@ jobs:
   record:
     # the deploys' records: pigeon-app's image keeps the app builds served within the Access session lifetime
     # (app/scripts/pigeon-app/deployments.mjs reads these)
-    needs: [ready, jarvis, yyc]
-    if: always() && needs.ready.outputs.go == 'true' && github.event_name != 'schedule'
+    needs: [ready, images, jarvis, yyc]
+    if: always() && needs.ready.outputs.go == 'true' && needs.images.result == 'success' && github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {contents: read, deployments: write}
@@ -359,7 +434,7 @@ jobs:
 
   tell:
     # a red deploy on main, and the first good one after it, to YYC's Discord
-    needs: [ready, jarvis, yyc, yyc-e2e]
+    needs: [ready, build-aviary, build-pigeon-app, build-egress, build-hermit-jarvis, build-yyc-drive, images, jarvis, yyc, yyc-e2e]
     if: always() && needs.ready.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -370,12 +445,12 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.YYC_DISCORD_WEBHOOK }}
           GH_TOKEN: ${{ github.token }}
-          STATUS: ${{ (needs.jarvis.result == 'failure' || needs.yyc.result == 'failure' || needs['yyc-e2e'].result == 'failure') && 'failure' || 'success' }}
+          STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
         run: |
           prev=$(gh api "repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=main&status=completed&per_page=2" \
             --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})][0].conclusion" 2>/dev/null || echo unknown)
           url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ "$STATUS" != success ]; then msg="aviary deploy: the run failed (Jarvis chat, YYC AI or its live check); what runs may not match main. $url"
+          if [ "$STATUS" != success ]; then msg="aviary deploy: the run failed (a part's build, Jarvis chat, YYC AI or its live check); what runs may not match main. $url"
           elif [ "$prev" = failure ]; then msg="aviary deploy: runs succeed again. $url"
           else exit 0; fi
           [ -n "$WEBHOOK" ] && curl -s -X POST -H "Content-Type: application/json" -d "$(jq -n --arg c "$msg" '{content:$c}')" "$WEBHOOK" >/dev/null || true

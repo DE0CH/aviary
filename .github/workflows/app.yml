@@ -7,7 +7,7 @@
 #   (app/scripts/touch-targets: every control on a phone at least 44 px), and the contract check against pigeon's frames
 #   (tools/check-frames) with its self-test on a seeded incompatible frame. Runs the app's dependencies' code, so it
 #   holds no secrets and a read-only token.
-# image (main, once per app tag): merges in the hashed assets of the pigeon-app builds served within the 720 h Access
+# image (main, or a deploy run's call when the tag is absent; once per app tag): merges in the hashed assets of the pigeon-app builds served within the 720 h Access
 #   session lifetime (restored from their own images if :main lost them, and while the size budget allows the last 5
 #   and any of the last 30 days) and of every yyc-ai-ui image served within it: the builds deployed from aviary come
 #   from the deploy run's records (app/scripts/pigeon-app/deployments.mjs), the earlier ones from DE0CH/yyc-code's pin
@@ -33,9 +33,15 @@ on:
       - ".github/workflows/app.yml"
       - ".github/workflows/app-tests.yml"
   workflow_dispatch:
+  # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
+  # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
+  workflow_call:
+    inputs:
+      sha: {type: string, required: true}
 
 concurrency:
-  group: app-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # a deploy's call builds its own commit, beside main's own runs
+  group: app-${{ inputs.sha && format('deploy-{0}', inputs.sha) || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
   # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
   # finish (they build what the deploy ships)
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -50,6 +56,7 @@ jobs:
   # the staff UI's whole test suite first (YYC AI is test-first, claude-env yyc-ai skill): nothing is built from a red commit
   tests:
     uses: ./.github/workflows/app-tests.yml
+    with: {sha: "${{ inputs.sha }}"}
 
   build:
     needs: tests
@@ -63,6 +70,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.3
@@ -138,11 +146,13 @@ jobs:
       have: ${{ steps.p.outputs.have }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none", ref: "${{ inputs.sha || github.sha }}"}
       - id: p
+        env:
+          SHA: ${{ inputs.sha || github.sha }}
         run: |
           # shellcheck disable=SC2046 # a list of paths
-          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."pigeon-app".paths | join(" ")' deploy/images.json))
+          sha=$(git log -1 --format=%H "$SHA" -- $(jq -r '."pigeon-app".paths | join(" ")' deploy/images.json))
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/pigeon-app:pull" | jq -r .token)
           code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
@@ -174,6 +184,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.sha || github.sha }}
           # every commit of main (no old trees or blobs), to resolve the builds' tags to their commits
           fetch-depth: 0
           filter: tree:0

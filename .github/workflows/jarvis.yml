@@ -14,10 +14,15 @@ on:
             crates/magpie-api/**, crates/supervisor-api/**, testing/fakes/**, rust-toolchain.toml, deploy/images.json,
             .github/workflows/jarvis.yml]
   workflow_dispatch:
+  # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
+  # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
+  workflow_call:
+    inputs:
+      sha: {type: string, required: true}
 permissions:
   contents: read
 concurrency:
-  group: jarvis-${{ github.ref }}
+  group: jarvis-${{ inputs.sha && format('deploy-{0}', inputs.sha) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
   # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
@@ -32,13 +37,13 @@ jobs:
       have: ${{ steps.p.outputs.have }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
       - id: p
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # shellcheck disable=SC2046 # a list of paths
-          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."hermit-jarvis".paths | join(" ")' deploy/images.json))
+          sha=$(git log -1 --format=%H "${{ inputs.sha || github.sha }}" -- $(jq -r '."hermit-jarvis".paths | join(" ")' deploy/images.json))
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           # the image and the release both, or the build runs (it makes whichever is missing)
           token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/hermit-jarvis:pull" | jq -r .token)
@@ -57,6 +62,7 @@ jobs:
     defaults: {run: {working-directory: jarvis/hermit}}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -92,6 +98,7 @@ jobs:
       PART_SHA: ${{ needs.part.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: the cache service's token for buildx (type=gha)
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0

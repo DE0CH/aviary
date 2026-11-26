@@ -14,6 +14,7 @@
 
 mod decide;
 mod kustomize;
+mod missing;
 mod registry;
 mod tags;
 mod yyc;
@@ -42,6 +43,44 @@ fn gh(path: &str) -> Result<serde_json::Value> {
         .body_mut()
         .read_json()
         .with_context(|| format!("GET {path} body"))
+}
+
+/// `f` tried again while it fails (a network call: a dropped connection, a registry's 5xx), at most 6 times
+fn retried<T>(what: &str, mut f: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut pause = std::time::Duration::from_secs(2);
+    for attempt in 1..=6 {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < 6 => {
+                eprintln!("{what}: {e:#} (try {attempt} of 6)");
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(std::time::Duration::from_secs(30));
+            }
+            Err(e) => return Err(e.context(format!("{what}: 6 tries"))),
+        }
+    }
+    unreachable!()
+}
+
+/// whether this repository has the GitHub release `tag`
+fn release_exists(tag: &str) -> Result<bool> {
+    let api = std::env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".into());
+    let repo = std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "DE0CH/aviary".into());
+    let mut req = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .new_agent()
+        .get(&format!("{api}/repos/{repo}/releases/tags/{tag}"))
+        .header("Accept", "application/vnd.github+json");
+    if let Ok(tok) = env("GITHUB_TOKEN") {
+        req = req.header("Authorization", &format!("Bearer {tok}"));
+    }
+    let r = req.call().with_context(|| format!("GET release {tag}"))?;
+    match r.status().as_u16() {
+        200 => Ok(true),
+        404 => Ok(false),
+        s => bail!("GET release {tag}: HTTP {s}"),
+    }
 }
 
 /// the git of the checkout, in the current directory
@@ -158,13 +197,35 @@ fn main() -> Result<()> {
             let t = tags::tags(&cfg, |p| tags::git_last(dir, rev, p))?;
             println!("{}", serde_json::to_string_pretty(&t)?);
         }
+        ["missing", config, rev] => {
+            // the parts the deploy builds first (missing.rs), one `<part with _>=<commit>` line each, for $GITHUB_OUTPUT
+            let cfg: tags::Config = serde_json::from_str(&std::fs::read_to_string(config)?)?;
+            let dir = std::path::Path::new(".");
+            let commits = tags::commits(&cfg, |p| tags::git_last(dir, rev, p))?;
+            let todo = missing::missing(&cfg, &commits, Some("aviary"), |image, tag| {
+                if image.starts_with("release:") {
+                    retried(&format!("release aviary-{tag}"), || {
+                        release_exists(&format!("aviary-{tag}"))
+                    })
+                } else {
+                    retried(&format!("ghcr.io/de0ch/{image}:{tag}"), || {
+                        Ok(registry::digest(image, tag)?.is_some())
+                    })
+                }
+            })?;
+            for (part, sha) in todo {
+                println!("{}={sha}", part.replace('-', "_"));
+            }
+        }
         ["ready", head, workflows] => ready(head, workflows, false)?,
         ["ready", head, workflows, "--again"] => ready(head, workflows, true)?,
         ["digests", tags] => {
             let mut out = BTreeMap::new();
             let mut missing = Vec::new();
             for (image, tag) in read_tags(tags)? {
-                match registry::digest(&image, &tag)? {
+                match retried(&format!("ghcr.io/de0ch/{image}:{tag}"), || {
+                    registry::digest(&image, &tag)
+                })? {
                     Some(d) => {
                         out.insert(image, serde_json::json!({"tag": tag, "digest": d}));
                     }
@@ -218,7 +279,7 @@ fn main() -> Result<()> {
             std::fs::write(dir.join("hermit/gateway.release"), format!("aviary-{aviary}\n"))?;
         }
         _ => bail!(
-            "usage: aviary-deploy tags CONFIG [REV] | ready HEAD WORKFLOWS [--again] | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
+            "usage: aviary-deploy tags CONFIG [REV] | missing CONFIG REV | ready HEAD WORKFLOWS [--again] | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
         ),
     }
     Ok(())
