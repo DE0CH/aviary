@@ -46,6 +46,8 @@ import {
 } from "./history-start-pagination";
 import { useStreamTopOverlayInset } from "./top-overlay";
 import { EaseHeight } from "@/components/ui/ease-height";
+import Animated, { scrollTo, useAnimatedRef, useScrollViewOffset } from "react-native-reanimated";
+import { RowAnchorContext, type RowAnchor } from "./row-anchor";
 import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
@@ -97,6 +99,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const flatListRef = useRef<FlatList<StreamItem>>(null);
+  // the same list for the UI thread: a row that grows keeps its top still (row-anchor.tsx)
+  const animatedListRef = useAnimatedRef<FlatList<StreamItem>>();
+  const scrollOffset = useScrollViewOffset(animatedListRef);
+  const setListRef = useCallback(
+    (list: FlatList<StreamItem> | null) => {
+      flatListRef.current = list;
+      animatedListRef(list);
+    },
+    [animatedListRef],
+  );
   const streamViewportMetricsRef = useRef({
     containerKey: "native-virtualized",
     contentHeight: 0,
@@ -543,6 +555,16 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId]);
 
+  const rowAnchor = useMemo<RowAnchor>(
+    () => ({
+      keepTop: (delta: number) => {
+        "worklet";
+        scrollTo(animatedListRef, 0, scrollOffset.value + delta, false);
+      },
+    }),
+    [animatedListRef, scrollOffset],
+  );
+
   const liveHeaderContent = useMemo(() => {
     // Stable render events read the latest expansion state; this revision makes
     // the memo invoke them again when that state changes.
@@ -592,9 +614,10 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // RN's FlatList strictMode keeps its internal renderItem wrapper stable when
   // data or the live header changes, preserving the row identities above.
   return (
-    <FlatList
+    <RowAnchorContext.Provider value={rowAnchor}>
+    <Animated.FlatList
       {...listInsetProps}
-      ref={flatListRef}
+      ref={setListRef}
       data={historyRows}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
@@ -624,6 +647,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       showsVerticalScrollIndicator
       inverted
     />
+    </RowAnchorContext.Provider>
   );
 }
 

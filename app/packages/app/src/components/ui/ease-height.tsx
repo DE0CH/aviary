@@ -12,6 +12,7 @@ import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "re
 import Animated, {
   Easing,
   runOnJS,
+  useAnimatedReaction,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -30,6 +31,8 @@ export interface EaseHeightProps {
   /** Ease out to zero, then call onLeft (the owner drops it). */
   leaving?: boolean;
   onLeft?: () => void;
+  /** Each frame's change of height, on the UI thread (a list keeps the row's top still with it). Must be a worklet. */
+  onHeightDelta?: (delta: number) => void;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -41,6 +44,7 @@ export function EaseHeight({
   fromZero = false,
   leaving = false,
   onLeft,
+  onHeightDelta,
   style,
   testID,
 }: EaseHeightProps) {
@@ -78,6 +82,13 @@ export function EaseHeight({
     if (leaving) go(0, onLeft);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when it starts leaving
   }, [leaving]);
+
+  useAnimatedReaction(
+    () => height.value,
+    (now, before) => {
+      if (onHeightDelta && before !== null && now !== before) onHeightDelta(now - before);
+    },
+  );
 
   const clipStyle = useAnimatedStyle(() => (clipped ? { height: height.value } : {}), [clipped]);
   return (

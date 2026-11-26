@@ -195,8 +195,8 @@ async function main() {
     check("the Activity panel's header is below the status bar, where the chat's is",
       chatTop !== null && panelTop !== null && panelTop >= chatTop - 4,
       `chat title top ${chatTop}, Activity title top ${panelTop}`);
-    // a tool call opens in place on a phone, its header held where the finger was (Deyao, 2026-11-20); the list
-    // once also scrolled by each frame's growth and the header slid down by the details' height (2026-11-26)
+    // a tool call opens in place on a phone, its header held where the finger was (Deyao, 2026-11-20): the list is
+    // inverted, so without the scroll it gives back each frame the header would rise by the details' height
     const steps = await flowWithRetry(maestro, udid, "walk-tool", env);
     check("the conversation with steps opens and its turn shows its tool calls", steps);
     if (!steps) return;

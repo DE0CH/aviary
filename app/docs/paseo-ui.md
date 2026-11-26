@@ -489,8 +489,9 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
   card where it was asked pin to the bottom, so only their top edge moves, and an answered card eases out before it
   goes; a live row (the reply streaming, a step arriving) pins to the top and follows its content on a soft spring,
   so new lines rise in instead of the list jumping a line at a time. A tool call, and a group of them, opens in
-  place (no sheet) on a spring and stops sticking to the bottom; the native list keeps the header where the finger
-  was (the iPhone walk checks it). Reduce Motion sets every height at once.
+  place (no sheet) on a spring; the list is inverted, so it gives each frame's change of height back as scroll on the
+  UI thread and the header stays where the finger was (`agent-stream/row-anchor.tsx`), and stops sticking to the
+  bottom. Reduce Motion sets every height at once.
 - **Not there**: push notifications.
 - **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI apps' 1.0); the build number is the CI
   run.
