@@ -3,7 +3,7 @@
 `aviary-conformance` checks an implementation of an aviary contract from the outside (platform spec 8);
 `test-gateway` is the reference implementation of the sandbox gateway contract (platform 3.11, 7.3) and the oracle
 the gateway suite is tested against. Both are in the `ghcr.io/de0ch/aviary-testing:<sha12>` image
-(`images/aviary-testing`; the container's command names the binary, e.g. `aviary-conformance gateway …`; see the
+(`aviary-testing-image` in `flake.nix`; the container's command names the binary, e.g. `aviary-conformance gateway …`; see the
 deviations). The image is built and run in CI but not pushed yet: WP-28's publish job pushes it.
 
 ```
@@ -116,7 +116,7 @@ binary never sets them, and `tests/gateway.rs` checks that the suite fails each.
   identity: magpie checks it against hermit's current sandbox. `headers::FORWARDED` keeps it, and `route.magpie`
   sends one and requires it to reach magpie unchanged.
 - **The testing image has no argv[0] entrypoint.** Platform 5.2 says one image whose entrypoint picks the binary
-  by an argv[0] symlink; `images/aviary-testing` instead puts every binary on PATH under its own name with no
+  by an argv[0] symlink; the testing image instead puts every binary on PATH under its own name with no
   entrypoint, so the container command names it: jarvis3's `chat.yml` (platform 17.3) runs
   `aviary-conformance gateway …` and `aviary-conformance model …` explicitly. Same result, no dispatcher binary.
 - **Liveness errors without a separate hermit listener.** Without `--serve-hermit-fakes` the outage's "refused"

@@ -12,7 +12,7 @@ filesystem by rsync). hermit is its only client.
 - Memory bound and how it is enforced and tested: [docs/MEMORY.md](docs/MEMORY.md).
 - Network, storage, migration, security on a host: [docs/HOST.md](docs/HOST.md).
 - Host scripts: `fabric/host` (setup.sh, make-certs.sh, fetch-sandboxd.sh), `fabric/aws` (the IAM policies; the AWS side
-  itself is `crates/fabric-aws`, binary `fabric-aws` in each release), `fabric/gvisor-patches`; the gateway pod's image `images/sandboxd` (sandboxd as its main process,
+  itself is `crates/fabric-aws`, binary `fabric-aws` in each release), `fabric/gvisor-patches`; the gateway pod's image `sandboxd-image` in `flake.nix` (sandboxd as its main process,
   docs/HOST.md "Gateway").
 
 Moved from DE0CH/jarvis3 `chat/sandboxd/daemon` on 2026-11-02 (jarvis3 commit 52c9b8c, platform spec 4.1); jarvis3
@@ -58,8 +58,8 @@ SANDBOXD_DUMP=/tmp/sbx-dump cargo test -p sandboxd-api --test live -- --ignored
 
 The release build must use profile `sandboxd` (`panic = "unwind"`: each connection runs in `catch_unwind`); the
 workspace release profile aborts on panic. CI (`ci.yml`): `test` runs the unit tests, `sandboxd-soak` the soak and
-the live contract check, `build` puts the binary in `dist` (checked static, `--version`, `budget`) and builds and runs
-the gateway pod's image `images/sandboxd` (not pushed), then runs `tests/gateway/adopt.sh` with that image;
+the live contract check, `build` puts the binary in `dist` (checked static, `--version`, `budget`); `images` builds and runs
+the gateway pod's image (`sandboxd-image` in `flake.nix`, not pushed), then runs `tests/gateway/adopt.sh` with that image;
 `sandboxd-soak` also runs `tests/gateway/adopt.sh` with the binary.
 
 `fabric/host/fetch-sandboxd.sh` (and so `setup.sh` and `fabric-aws ami`) installs sandboxd from the pinned

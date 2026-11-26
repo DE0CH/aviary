@@ -195,8 +195,9 @@ tables in 7.9, the app bundle path `/srv/app`.
 
 ### 3.4 Image
 
-`ghcr.io/de0ch/pigeon:<sha12>` (platform 5.2): static musl binary on `gcr.io/distroless/static-debian12:nonroot`
-(uid 65532), read-only root filesystem, built and published by aviary's `ci.yml` (platform 6.1). The app bundle is NOT in this image (17.1): pigeon serves whatever bundle the pod mounts at
+`ghcr.io/de0ch/pigeon:<sha12>` (platform 5.2): static musl binary on a distroless-like root (CA certificates,
+time zones, uid 65532; `pigeon-image` in `flake.nix`), read-only root filesystem, built by Nix and published by
+aviary's `ci.yml` (platform 6.1). The app bundle is NOT in this image (17.1): pigeon serves whatever bundle the pod mounts at
 `/srv/app`, so app releases and pigeon releases are independent and each deployment pins both.
 
 ---

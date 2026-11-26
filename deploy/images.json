@@ -21,7 +21,9 @@
       "deny.toml",
       "deny-hermit-only.toml",
       ".github/ci",
-      ".github/workflows/ci.yml"
+      ".github/workflows/ci.yml",
+      "flake.nix",
+      "flake.lock"
     ]
   },
   "pigeon-app": {

@@ -1,8 +1,9 @@
 # The images built by Nix (flake.nix; Deyao, 2026-11-26): each is a pure function of its declared inputs, named by
 # their hash, so a build is a lookup in the cache (Hetzner bucket de0ch-aviary-nix-cache, project aviary-ci; signed by
-# aviary-nix-cache-1) and a build of what is absent. A part moves here from its Dockerfile once its Nix image passes
-# the same image checks its Dockerfile build passes in ci.yml; until then both run, and this workflow decides nothing
-# the deploy uses. herald and pigeon are the first.
+# aviary-nix-cache-1) and a build of what is absent. A part moves to Nix once its Nix image passes the same image
+# checks its Dockerfile build passes; until then both run, and this workflow decides nothing the deploy uses. The
+# service images of ci.yml (pigeon, magpie, hermit, herald, sandboxd, aviary-testing) have moved: ci.yml's `images`
+# builds them. hermit-jarvis (jarvis.yml) and egress (egress.yml) are checked here until theirs move.
 #
 # Nix runs single-user (no daemon): the build itself reads the cache with the job's credentials. What it builds is
 # signed and copied to the cache, so the next run (any branch, the deploy) downloads instead of building.
@@ -36,17 +37,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # each service's image, and the variable it names when it refuses to start without its secrets (ci.yml)
-          - {name: herald, kind: service, user: "65532:65532", missing: HERALD_ACCEPT_GATEWAY}
-          - {name: pigeon, kind: service, user: "65532:65532", missing: PIGEON_TOKEN_MAGPIE}
-          # the gateway pod's image: ci.yml's images/sandboxd checks and adopt.sh against the image
-          - {name: sandboxd, kind: gateway, user: "0:0"}
-          # hermit: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
-          - {name: hermit, kind: hermit, user: "65532:65532"}
-          # magpie: glibc and libheif with its HEVC decoder; it decodes the HEIC fixture with the release binary
-          - {name: magpie, kind: magpie, user: "10001:10001"}
-          # the test binaries: no entrypoint, each run by name
-          - {name: aviary-testing, kind: testing, user: "65532:65532"}
           # the Jarvis chat's hermit (jarvis.yml): it reads the chat's settings as the deploy gives them
           - {name: hermit-jarvis, kind: jarvis, user: "65532:65532"}
           # egress (Node): egress.yml's smoke test
@@ -108,8 +98,6 @@ jobs:
             and ."org.opencontainers.image.version" == (."org.opencontainers.image.revision"[0:12])' <<< "$l" >/dev/null
           test "$(docker image inspect -f '{{.Config.User}}' "$img")" = "${{ matrix.user }}"
           case "${{ matrix.kind }}" in
-            hermit) docker run --rm "$img" --help ;;
-            testing) docker run --rm "$img" test-gateway --version; docker run --rm "$img" aviary-conformance --help ;;
             jarvis) docker run --rm -v "$PWD/jarvis/deploy:/chat:ro" "$img" check-settings /chat/settings.json ;;
             egress)
               docker run --rm --entrypoint sh "$img" -c 'test "$(id -u)" = 1000 && test -s egress-allowlist/allow.txt && node -e "require(\"pg\")"'
@@ -117,45 +105,3 @@ jobs:
               if docker run --rm "$img" nope; then exit 1; fi ;;
             *) docker run --rm "$img" --version ;;
           esac
-      - name: a service refuses to start without its secrets, naming the variable, never a value (exit 78)
-        if: matrix.kind == 'service'
-        run: |
-          set -euo pipefail
-          img=${{ matrix.name }}:nix
-          set +e
-          out=$(docker run --rm --read-only -e POD_NAME=ci "$img" 2>&1)
-          code=$?
-          set -e
-          echo "$out"
-          test "$code" = 78
-          grep -q '"name":"${{ matrix.missing }}"' <<< "$out"
-      - name: the gateway's commands, and its refusal of a host.json it cannot run with
-        if: matrix.kind == 'gateway'
-        run: |
-          set -euo pipefail
-          img=${{ matrix.name }}:nix
-          docker run --rm --entrypoint sh "$img" -c 'ip -V && wg --version && nft -v && sysctl --version && crane version && tar --version | head -1 && zstd --version'
-          g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.95.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
-          printf '%s' "$g" > "$RUNNER_TEMP/gw-bad.json"
-          if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" "$img"; then echo "the image started on a bad host.json" >&2; exit 1; fi
-      - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
-        if: matrix.kind == 'gateway'
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
-          sudo SBX_GATEWAY_IMAGE="${{ matrix.name }}:nix" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
-      - name: hermit's juicefs CLI, the catalogue check, and its refusal to start without secrets (exit 78)
-        if: matrix.kind == 'hermit'
-        run: |
-          set -euo pipefail
-          img=${{ matrix.name }}:nix
-          docker run --rm --entrypoint /usr/local/bin/juicefs "$img" version
-          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
-          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" "$img" catalogue-check /c.json
-          code=0; docker run --rm "$img" serve || code=$?; test "$code" -eq 78
-      - name: magpie decodes the HEIC fixture (libheif and its HEVC decoder are in the image)
-        if: matrix.kind == 'magpie'
-        run: |
-          set -euo pipefail
-          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" "${{ matrix.name }}:nix" check-image /photo.heic)
-          echo "$out"
-          test "$out" = "image/heic 640x480"

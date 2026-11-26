@@ -77,7 +77,7 @@ Contents
 | **egress** | jarvis3 `chat/src/egress`, TypeScript | 2 | Postgres `egress` | YYC's sandbox gateway (HTTP part): proxy credential check, the fixed names, self hosts (package mirror), internet rules, `model` = OpenRouter with forced ZDR, model list, cost and budget. In-cluster API on 8082 (`model` for pigeon, ops summary for hermit). |
 | **tools** | jarvis3 `chat/src/tools`, TypeScript | 2 | Postgres `tools` | Read-only MCP behind `tools` (yyc-mcp, Exa, TikHub, AnyAPI, capture). |
 | cloudflared | image | 2 | — | connectors of tunnel `yyc-ai-pigeon` → Service `pigeon`. |
-| hermit-gateway | aviary `fabric/host` + `images/sandboxd`, DaemonSet in `yyc-ai-fabric` | 1 node | the host's network namespace (`wg0`, nft, routes); hostPath state | YYC's sandbox gateway (network part): sandboxd in gateway mode as a host-network pod pinned to one Talos node (15.6): WireGuard hub, DNAT of VIP `10.202.1.1:3128` to ready egress pods, overlay route. |
+| hermit-gateway | aviary `fabric/host` + `sandboxd-image` (`flake.nix`), DaemonSet in `yyc-ai-fabric` | 1 node | the host's network namespace (`wg0`, nft, routes); hostPath state | YYC's sandbox gateway (network part): sandboxd in gateway mode as a host-network pod pinned to one Talos node (15.6): WireGuard hub, DNAT of VIP `10.202.1.1:3128` to ready egress pods, overlay route. |
 | Paseo web + iOS apps | claudecodeui `paseo/` | — | client caches | unchanged; pigeon speaks their protocol. The web bundle ships as image `pigeon-app`. |
 
 ### 2.2 Picture (YYC)

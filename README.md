@@ -28,8 +28,9 @@ the end-to-end harness, and `testing/paseo-contract` (Node) checks Paseo frames 
 The toolchain is pinned in `rust-toolchain.toml`; service binaries are static musl builds linked with rust-lld
 (`cargo build --release --target x86_64-unknown-linux-musl`, and `aarch64-unknown-linux-musl` on an arm64 machine),
 except magpie, which links libheif and is built on
-Debian trixie with `libheif-dev` (`.github/ci/build-magpie.sh`); its image (`images/magpie`) is `debian:trixie-slim`
-with `libheif1` and `libheif-plugin-libde265`, and CI decodes a HEIC photo with it.
+Debian trixie with `libheif-dev` (`.github/ci/build-magpie.sh`). The service images are built by Nix (`flake.nix`:
+`nix build --impure .#<name>-image`, `AVIARY_REVISION` naming the commit); magpie's links nixpkgs' libheif with its
+HEVC decoder, and CI decodes a HEIC photo with it.
 
 The musl build needs a musl C compiler as well as rust-lld: ring (under rustls) compiles C with cc-rs, and
 `.cargo/config.toml` points `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` at `musl-gcc` (Debian/Ubuntu package `musl-tools`).
@@ -71,11 +72,11 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   linking.
 - magpie is built by a `docker run` of the pinned Rust image plus `libheif-dev`, as the runner's uid, rather than
   in a job container, so it shares the build job's `dist/` and cargo cache. That image is Debian trixie, not bookworm:
-  libheif-rs (HEIC/HEIF/AVIF uploads) needs libheif 1.17 or later, and bookworm has 1.15, so magpie's runtime image
-  is `debian:trixie-slim` with `libheif1` and `libheif-plugin-libde265` (the HEVC decoder libheif loads as a plugin).
-  The lint and test jobs install Ubuntu 24.04's `libheif-dev` (1.17). `images/magpie` is that runtime image; the
-  build job builds it and runs `magpie check-image` on the HEIC fixture inside it, so an image without the plugin
-  (where every HEIC upload would answer 415) fails CI.
+  libheif-rs (HEIC/HEIF/AVIF uploads) needs libheif 1.17 or later, and bookworm has 1.15, so magpie's `dist` binary
+  is built on trixie and its image (`magpie-image` in `flake.nix`) carries nixpkgs' libheif with its HEVC decoder.
+  The lint and test jobs install Ubuntu 24.04's `libheif-dev` (1.17). The `images` job builds the image and runs
+  `magpie check-image` on the HEIC fixture inside it, so an image without the plugin (where every HEIC upload would
+  answer 415) fails CI.
 - magpie reads an upload (50 MiB at most) or a sandbox blob `PUT` (64 MiB) whole before it puts it in the bucket,
   where magpie 5.2/10.1 stream the body: the bucket key is the body's SHA-256, known only at its end, and an image is
   decoded from the whole body anyway. Memory is bounded instead: decodes take a byte-weighted budget
