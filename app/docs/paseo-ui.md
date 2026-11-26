@@ -488,10 +488,10 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
   one edge (`components/ui/ease-height.tsx`, decided in `ease-height-motion.ts`): the answer card and a question's
   card where it was asked pin to the bottom, so only their top edge moves, and an answered card eases out before it
   goes; a live row (the reply streaming, a step arriving) pins to the top and follows its content on a soft spring,
-  so new lines rise in instead of the list jumping a line at a time. A tool call, and a group of them, opens in place (no sheet) on a
-  spring; the list is inverted, so it gives each frame's change of height back as scroll on the UI thread and the
-  header stays where the finger was (`agent-stream/row-anchor.tsx`), and stops sticking to the bottom. Reduce Motion
-  sets every height at once.
+  so new lines rise in instead of the list jumping a line at a time. A tool call, and a group of them, opens in
+  place (no sheet) on a spring; the list is inverted, so it gives each frame's change of height back as scroll on the
+  UI thread and the header stays where the finger was (`agent-stream/row-anchor.tsx`), and stops sticking to the
+  bottom. Reduce Motion sets every height at once.
 - **Not there**: push notifications.
 - **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI apps' 1.0); the build number is the CI
   run.
