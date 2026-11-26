@@ -173,7 +173,10 @@ jobs:
 
   jarvis:
     needs: [ready, images]
-    if: needs.ready.outputs.go == 'true' && github.event_name != 'schedule'
+    # a status function: without one, `if` also requires every job before `images` to have succeeded, and a build-*
+    # job that was not needed is skipped (2026-11-26: the first deploy after the build-* jobs went green and deployed
+    # nothing)
+    if: ${{ !cancelled() && needs.ready.outputs.go == 'true' && needs.images.result == 'success' && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     environment: jarvis   # main only: jarvis4's deploy key, the chat site check's Access token
