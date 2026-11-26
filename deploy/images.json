@@ -11,6 +11,7 @@
     "paths": [
       "crates",
       "images",
+      "tools/sandbox-image",
       "fabric",
       "harness/qwen-code",
       "Cargo.toml",

@@ -1,5 +1,5 @@
 //! Images (magpie 5.5, 10.2): the sniffed type, dimensions from the header bytes (no decode), EXIF orientation, and
-//! the three derived copies: the model copy made at upload, and the lazily made thumbnail and display copy.
+//! whether the model takes an image as it is, and the two lazily made copies: the thumbnail and the display copy.
 //!
 //! Every function here is CPU-bound and synchronous; callers run them on the blocking pool under
 //! [`super::Blobs`]'s decode permit (at most [`limits::DECODES`] at once per replica).
@@ -285,16 +285,6 @@ fn has_alpha(img: &DynamicImage) -> bool {
     img.color().has_alpha()
 }
 
-/// Whether any pixel of `img` is not opaque (read in place for 8-bit images).
-#[must_use]
-pub fn is_transparent(img: &DynamicImage) -> bool {
-    match img {
-        DynamicImage::ImageRgba8(b) => b.as_raw().as_chunks::<4>().0.iter().any(|p| p[3] < 255),
-        DynamicImage::ImageLumaA8(b) => b.as_raw().as_chunks::<2>().0.iter().any(|p| p[1] < 255),
-        _ => has_alpha(img) && img.to_rgba8().pixels().any(|p| p.0[3] < 255),
-    }
-}
-
 /// `img` as 8-bit RGB or RGBA: itself when it is one already.
 fn eight_bit(img: &DynamicImage) -> Cow<'_, DynamicImage> {
     match img {
@@ -323,105 +313,18 @@ pub fn fit(img: &DynamicImage, edge: u32) -> Result<Cow<'_, DynamicImage>, Image
     Ok(Cow::Owned(dst))
 }
 
-/// `img` on white, without alpha (itself when it is 8-bit RGB).
-#[must_use]
-pub fn on_white(img: &DynamicImage) -> Cow<'_, RgbImage> {
-    if let DynamicImage::ImageRgb8(b) = img {
-        return Cow::Borrowed(b);
-    }
-    if !has_alpha(img) {
-        return Cow::Owned(img.to_rgb8());
-    }
-    let rgba = img.to_rgba8();
-    let mut out = RgbImage::new(rgba.width(), rgba.height());
-    for (o, p) in out.pixels_mut().zip(rgba.pixels()) {
-        let a = u16::from(p.0[3]);
-        for c in 0..3 {
-            let v = (u16::from(p.0[c]) * a + 255 * (255 - a) + 127) / 255;
-            o.0[c] = u8::try_from(v).unwrap_or(255);
-        }
-    }
-    Cow::Owned(out)
-}
-
-fn encode(img: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
-    let mut out = Cursor::new(Vec::new());
-    img.write_to(&mut out, format)
-        .map_err(|e| ImageError::Unsupported(format!("encode: {e}")))?;
-    Ok(out.into_inner())
-}
-
-fn jpeg(img: &RgbImage, quality: u8) -> Result<Vec<u8>, ImageError> {
-    let mut out = Vec::new();
-    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
-    img.write_with_encoder(enc)
-        .map_err(|e| ImageError::Unsupported(format!("jpeg: {e}")))?;
-    Ok(out)
-}
-
-/// A copy made for the model.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Copy {
-    /// The bytes.
-    pub bytes: Vec<u8>,
-    /// `image/png` or `image/jpeg`.
-    pub mime: &'static str,
-    /// Width.
-    pub width: u32,
-    /// Height.
-    pub height: u32,
-}
-
-/// The model copy of an uploaded image (magpie 10.2): `None` when the original is used as it is (a model-native type,
-/// long edge <= 2,000 px, <= 3,932,160 bytes, no EXIF rotation); otherwise decoded, turned upright, fitted to
-/// 2,000 px, PNG for a transparent PNG/WebP when it fits, else JPEG at quality 85, 70, then 55 on white (and, should
-/// even that not fit, at half the size again, until it does).
+/// Whether the model takes the image as it is (magpie 10.2): a model-native type, long edge <= 2,000 px, at most
+/// 3,932,160 bytes, no EXIF rotation. Any other image reaches the agent as a file, which it converts in its own loop;
+/// magpie makes no copy of it for the model.
 ///
 /// # Errors
-/// [`ImageError`] from the decode.
-pub fn model_copy(bytes: &[u8], mime: &str) -> Result<Option<Copy>, ImageError> {
+/// [`ImageError`] from reading its dimensions.
+pub fn model_takes(bytes: &[u8], mime: &str) -> Result<bool, ImageError> {
     let (w, h) = dimensions(bytes, mime)?;
-    let cap = limits::MODEL_IMAGE_MAX_BYTES;
-    if MODEL_NATIVE.contains(&mime)
+    Ok(MODEL_NATIVE.contains(&mime)
         && w.max(h) <= limits::MODEL_IMAGE_EDGE
-        && bytes.len() <= cap
-        && orientation(bytes, mime) == 1
-    {
-        return Ok(None);
-    }
-    let img = decode(bytes, mime)?;
-    let mut edge = limits::MODEL_IMAGE_EDGE;
-    loop {
-        let fit_ = fit(&img, edge)?;
-        if matches!(mime, "image/png" | "image/webp") && is_transparent(&fit_) {
-            let png = encode(&fit_, ImageFormat::Png)?;
-            if png.len() <= cap {
-                return Ok(Some(Copy {
-                    bytes: png,
-                    mime: "image/png",
-                    width: fit_.width(),
-                    height: fit_.height(),
-                }));
-            }
-        }
-        let white = on_white(&fit_);
-        let white = white.as_ref();
-        for q in limits::MODEL_JPEG_QUALITIES {
-            let j = jpeg(white, q)?;
-            if j.len() <= cap {
-                return Ok(Some(Copy {
-                    bytes: j,
-                    mime: "image/jpeg",
-                    width: white.width(),
-                    height: white.height(),
-                }));
-            }
-        }
-        if edge <= 64 {
-            return Err(ImageError::Unsupported("no model copy fits".into()));
-        }
-        edge /= 2;
-    }
+        && bytes.len() <= limits::MODEL_IMAGE_MAX_BYTES
+        && orientation(bytes, mime) == 1)
 }
 
 /// A lossy WebP (quality 80) of `bytes` fitted into a long edge of `edge` (a thumbnail or a display copy).

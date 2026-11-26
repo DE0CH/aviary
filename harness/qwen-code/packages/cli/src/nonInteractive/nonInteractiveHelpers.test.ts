@@ -173,6 +173,25 @@ describe('extractPartsFromUserMessage', () => {
     ]);
   });
 
+  it('refuses a block the protocol does not define instead of pasting it in as text (de0ch)', () => {
+    const message = {
+      type: 'user',
+      session_id: 'test-session',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as CLIUserMessage;
+    expect(() => extractPartsFromUserMessage(message)).toThrow(/"image"/);
+  });
+
   it('should return null for empty content array', () => {
     const message: CLIUserMessage = {
       type: 'user',

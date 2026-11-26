@@ -1181,14 +1181,11 @@ describe('runNonInteractiveStreamJson', () => {
   });
 
   it('passes the text blocks apart from the others only when a message has both', async () => {
-    const image = {
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
-    };
+    const result = { type: 'tool_result', tool_use_id: 't1', content: 'ok' };
     const mixed = createUserMessage('');
     mixed.message.content = [
       { type: 'text', text: 'Describe' },
-      image,
+      result,
       { type: 'text', text: 'briefly' },
     ] as CLIUserMessage['message']['content'];
     const textOnly = createUserMessage('');
@@ -1205,13 +1202,46 @@ describe('runNonInteractiveStreamJson', () => {
 
     expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
     const [first, second] = runNonInteractiveMock.mock.calls;
-    expect(first[2]).toBe(`Describe\n${JSON.stringify(image)}\nbriefly`);
+    expect(first[2]).toBe(`Describe\n${JSON.stringify(result)}\nbriefly`);
     expect(first[4].promptParts).toEqual({
       text: 'Describe\nbriefly',
-      blocks: [JSON.stringify(image)],
+      blocks: [JSON.stringify(result)],
     });
     expect(second[2]).toBe('Hello');
     expect(second[4]).not.toHaveProperty('promptParts');
+  });
+
+  it('refuses a message with a block the protocol does not define, and never pastes it in as text (de0ch)', async () => {
+    // The stream-json protocol's user blocks are text, thinking, tool_use and
+    // tool_result. Any other block is refused, never passed on as its JSON text.
+    const image = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/AAAA' },
+    };
+    const withImage = createUserMessage('');
+    withImage.message.content = [
+      { type: 'text', text: 'Describe' },
+      image,
+    ] as unknown as CLIUserMessage['message']['content'];
+    const next = createUserMessage('Hello');
+    mockInputReader.read = async function* () {
+      yield withImage;
+      await vi.waitFor(() =>
+        expect(mockOutputAdapter.emitResult).toHaveBeenCalledTimes(1),
+      );
+      yield next;
+    };
+
+    await runNonInteractiveStreamJson(config, '');
+
+    expect(mockOutputAdapter.emitResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isError: true,
+        errorMessage: expect.stringContaining('"image"'),
+      }),
+    );
+    expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    expect(runNonInteractiveMock.mock.calls[0][2]).toBe('Hello');
   });
 
   it('marks a message that answers a tool call as one no person typed', async () => {

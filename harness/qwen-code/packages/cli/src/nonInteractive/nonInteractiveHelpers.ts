@@ -42,11 +42,35 @@ import type { ICommandLoader } from '../services/types.js';
 
 const debugLogger = createDebugLogger('NON_INTERACTIVE');
 
+/** The block types of a stream-json user message (`ContentBlock`). */
+const KNOWN_BLOCK_TYPES = new Set(['text', 'thinking', 'tool_use', 'tool_result']);
+
+/**
+ * Throws when a user message holds a block the stream-json protocol does not
+ * define (an `image` block, say), naming its type. Such a block is never
+ * passed on as its JSON text: a file is named by `@path` in the text instead.
+ */
+export function refuseUnknownBlocks(message: CLIUserMessage): void {
+  const content = message.message?.content;
+  if (!Array.isArray(content)) return;
+  for (const block of content) {
+    if (!block || typeof block !== 'object' || !('type' in block)) continue;
+    const type = (block as { type: unknown }).type;
+    if (typeof type !== 'string' || !KNOWN_BLOCK_TYPES.has(type)) {
+      throw new Error(
+        `A user message block of type ${JSON.stringify(type)} is not part of the stream-json input ` +
+          '(text, thinking, tool_use, tool_result); name a file by @path in the text.',
+      );
+    }
+  }
+}
+
 /**
  * Extracts user message parts from a CLI protocol message.
  *
  * @param message - User message sourced from the CLI protocol layer
  * @returns Extracted parts or null if the message lacks textual content
+ * @throws when a block is not one the protocol defines ({@link refuseUnknownBlocks})
  */
 export function extractPartsFromUserMessage(
   message: CLIUserMessage | undefined,
@@ -54,6 +78,7 @@ export function extractPartsFromUserMessage(
   if (!message) {
     return null;
   }
+  refuseUnknownBlocks(message);
 
   const content = message.message?.content;
   if (typeof content === 'string') {

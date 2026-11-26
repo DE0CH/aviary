@@ -3,6 +3,8 @@
 //!   aviary-deploy tags deploy/images.json [REV]           image → tag (JSON)
 //!   aviary-deploy ready HEAD WORKFLOW,… [--again]          go SHA | wait … | nothing … (stdout); red = exit 1:
 //!                                                           the newest green commit newer than what runs (decide.rs)
+//!   aviary-deploy wait-built CONFIG REV [--except P,…]   until REV's images are in GHCR: waits while the runs that build
+//!                                                           them run, fails once they are over without them (built.rs)
 //!   aviary-deploy digests TAGS.json                         image → {tag, digest}; a missing image = exit 1
 //!   aviary-deploy set KUSTOMIZATION TAGS.json               the tags written into its `images:`
 //!   aviary-deploy fabric DIR TAGS.json DIGESTS.json         Jarvis 4's fabric (DE0CH/jarvis4 k8s/cluster/fabric): hermit's tag and
@@ -12,6 +14,7 @@
 //!
 //! `ready` reads GitHub with `GITHUB_TOKEN` for `GITHUB_REPOSITORY` (`GITHUB_API_URL`, default api.github.com).
 
+mod built;
 mod decide;
 mod kustomize;
 mod missing;
@@ -94,6 +97,80 @@ fn git(args: &[&str]) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// whether GHCR has `image:tag` (or, for `release:<part>`, whether the release aviary-<tag> exists)
+fn present(image: &str, tag: &str) -> Result<bool> {
+    if image.starts_with("release:") {
+        retried(&format!("release aviary-{tag}"), || {
+            release_exists(&format!("aviary-{tag}"))
+        })
+    } else {
+        retried(&format!("ghcr.io/de0ch/{image}:{tag}"), || {
+            Ok(registry::digest(image, tag)?.is_some())
+        })
+    }
+}
+
+/// `wait-built CONFIG REV [--except PARTS]`: REV's images (and aviary's release) all in GHCR, or the reason they never
+/// will be. Each pass asks GHCR and the absent parts' workflow runs (built.rs); between passes it waits 60 s, a poll of
+/// GitHub, not a deadline: the runs it waits for end the wait
+fn wait_built(config: &str, rev: &str, except: &[&str]) -> Result<()> {
+    let repo = env("GITHUB_REPOSITORY")?;
+    let mut cfg: tags::Config = serde_json::from_str(&std::fs::read_to_string(config)?)?;
+    cfg.retain(|part, _| !except.contains(&part.as_str()));
+    let dir = std::path::Path::new(".");
+    let commits = tags::commits(&cfg, |p| tags::git_last(dir, rev, p))?;
+    loop {
+        let todo = missing::missing(&cfg, &commits, Some("aviary"), present)?;
+        let mut absent = Vec::new();
+        for (part, sha) in &todo {
+            let workflow = built::workflow_of(&cfg[part].paths);
+            let mut runs = Vec::new();
+            if let Some(w) = &workflow {
+                // the commits that build the part's tag: its own and every later one up to REV
+                let mut shas: Vec<String> = git(&["rev-list", "--max-count=50", rev, &format!("^{sha}")])?
+                    .lines()
+                    .map(String::from)
+                    .collect();
+                shas.push(sha.clone());
+                for c in shas {
+                    let v = retried(&format!("runs of {c}"), || {
+                        gh(&format!("/repos/{repo}/actions/runs?head_sha={c}&per_page=100"))
+                    })?;
+                    for r in v["workflow_runs"].as_array().into_iter().flatten() {
+                        if r["path"].as_str() == Some(w.as_str()) {
+                            runs.push(built::Run {
+                                id: r["id"].as_u64().unwrap_or_default(),
+                                path: w.clone(),
+                                status: r["status"].as_str().unwrap_or_default().to_string(),
+                                conclusion: r["conclusion"].as_str().map(String::from),
+                            });
+                        }
+                    }
+                }
+            }
+            absent.push(built::Absent {
+                part: part.clone(),
+                workflow,
+                runs,
+            });
+        }
+        match built::verdict(&absent) {
+            built::Verdict::Ready => {
+                println!("ready: every image of {rev} is in GHCR");
+                return Ok(());
+            }
+            built::Verdict::Wait(parts) => {
+                eprintln!(
+                    "waiting for the builds of {} (their runs are not over)",
+                    parts.join(", ")
+                );
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+            built::Verdict::Fail(why) => bail!("{}", why.join("; ")),
+        }
+    }
 }
 
 fn runs_of(v: &serde_json::Value) -> Vec<(String, decide::Run)> {
@@ -202,20 +279,14 @@ fn main() -> Result<()> {
             let cfg: tags::Config = serde_json::from_str(&std::fs::read_to_string(config)?)?;
             let dir = std::path::Path::new(".");
             let commits = tags::commits(&cfg, |p| tags::git_last(dir, rev, p))?;
-            let todo = missing::missing(&cfg, &commits, Some("aviary"), |image, tag| {
-                if image.starts_with("release:") {
-                    retried(&format!("release aviary-{tag}"), || {
-                        release_exists(&format!("aviary-{tag}"))
-                    })
-                } else {
-                    retried(&format!("ghcr.io/de0ch/{image}:{tag}"), || {
-                        Ok(registry::digest(image, tag)?.is_some())
-                    })
-                }
-            })?;
+            let todo = missing::missing(&cfg, &commits, Some("aviary"), present)?;
             for (part, sha) in todo {
                 println!("{}={sha}", part.replace('-', "_"));
             }
+        }
+        ["wait-built", config, rev] => wait_built(config, rev, &[])?,
+        ["wait-built", config, rev, "--except", parts] => {
+            wait_built(config, rev, &parts.split(',').collect::<Vec<_>>())?;
         }
         ["ready", head, workflows] => ready(head, workflows, false)?,
         ["ready", head, workflows, "--again"] => ready(head, workflows, true)?,
@@ -279,7 +350,7 @@ fn main() -> Result<()> {
             std::fs::write(dir.join("hermit/gateway.release"), format!("aviary-{aviary}\n"))?;
         }
         _ => bail!(
-            "usage: aviary-deploy tags CONFIG [REV] | missing CONFIG REV | ready HEAD WORKFLOWS [--again] | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
+            "usage: aviary-deploy tags CONFIG [REV] | missing CONFIG REV | wait-built CONFIG REV [--except PARTS] | ready HEAD WORKFLOWS [--again] | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
         ),
     }
     Ok(())

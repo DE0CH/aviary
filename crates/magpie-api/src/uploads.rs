@@ -208,8 +208,10 @@ pub struct AttachedImage {
     pub path: Option<String>,
     /// The original.
     pub blob: BlobPointer,
-    /// The model copy (long edge <= 2000 px, <= 3,932,160 bytes; also the `display` variant).
-    pub model_blob: BlobPointer,
+    /// The original again when the model got the image with the message (it takes it as it is: magpie 10.2); absent
+    /// when the agent got it as a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_blob: Option<BlobPointer>,
 }
 
 /// A file of a sent-file snapshot in `files.sent` (magpie 7.2 `SentFile`).

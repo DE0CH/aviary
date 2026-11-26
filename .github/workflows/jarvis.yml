@@ -9,7 +9,7 @@ name: jarvis
 #   build would refuse at its start, among others a model that names no `reasoning` of its own (Deyao, 2026-11-17).
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
+    branches: ['**']  # every branch: the gate waits for it
     paths: [jarvis/**, crates/aviary-core/**, crates/aviary-pg/**, crates/hermit-api/**, crates/gateway-api/**,
             crates/magpie-api/**, crates/supervisor-api/**, testing/fakes/**, rust-toolchain.toml, deploy/images.json,
             .github/workflows/jarvis.yml]

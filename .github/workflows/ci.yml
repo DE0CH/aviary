@@ -5,7 +5,7 @@ on:
   push:
     branches: ['**']   # not tags: publish pushes the release tag aviary-<sha12>
     # aviary's part (deploy/images.json "aviary") and its tests; app/, egress/, jarvis/, yyc/ have their own workflows
-    paths: [crates/**, images/**, fabric/**, testing/**, harness/qwen-code/**, tools/aviary-deploy/**, deploy/images.json,
+    paths: [crates/**, images/**, fabric/**, testing/**, harness/qwen-code/**, tools/aviary-deploy/**, tools/sandbox-image/**, deploy/images.json,
             Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .config/**, deny.toml, deny-hermit-only.toml,
             clippy.toml, rustfmt.toml, .github/ci/**, .github/workflows/ci.yml]
   workflow_dispatch:
@@ -103,7 +103,7 @@ jobs:
           (cd packages/core && corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/image-view.test.ts src/utils/fileUtils.test.ts src/utils/pathReader.test.ts src/tools/read-file.test.ts src/tools/readManyFiles.test.ts src/core/upstream-refusal.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts src/services/backgroundShellRegistry.test.ts src/tools/shell.test.ts)
           (cd packages/core && corepack pnpm exec vitest run src/services/chatRecordingService.test.ts -t "de0ch")
           (cd packages/core && corepack pnpm exec vitest run src/core/llm-chat.test.ts -t "DE0CH fork")
-          (cd packages/cli && corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts src/nonInteractive/control/ControlDispatcher.test.ts src/nonInteractive/session.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.recordIdentity.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.dualOutput.test.ts)
+          (cd packages/cli && corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts src/nonInteractive/control/ControlDispatcher.test.ts src/nonInteractive/session.test.ts src/nonInteractive/nonInteractiveHelpers.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.recordIdentity.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.dualOutput.test.ts)
       - name: build, bundle, pack
         if: steps.have.outputs.have == 'false'
         run: |
@@ -392,7 +392,7 @@ jobs:
 
   images:
     # platform 6.1 `images`: every image of 5.2 built from `build`'s dist/ with 5.3's labels (images/build.sh,
-    # images/sandbox/build.sh), run here, and saved as one tar artifact each (`image-<name>`), which the later jobs
+    # tools/sandbox-image), run here, and saved as one tar artifact each (`image-<name>`), which the later jobs
     # load and `publish` pushes; GHA layer cache scopes per image and architecture. The service images (pigeon,
     # magpie, hermit, sandboxd, aviary-testing) for linux/amd64 and linux/arm64, each built and run natively on its
     # own runner from that architecture's dist/ (artifacts `image-services`, `image-services-arm64`; publish joins
@@ -506,7 +506,10 @@ jobs:
             --build-arg QWEN_CODE_TAG=qwen-code-${{ needs.tags.outputs.qwen }}
             --build-arg QWEN_CODE_SHA256=${{ needs.qwen.outputs.sha256 }}
         run: |
-          images/sandbox/build.sh dist "hermit-sandbox:$SHA12" "$PART_SHA"
+          # the build's tool, checked as aviary-deploy is (tags)
+          (cd tools/sandbox-image && cargo fmt --check && cargo clippy --locked --all-targets -q -- -D warnings \
+            && cargo test --locked -q && cargo build --release --locked -q)
+          tools/sandbox-image/target/release/sandbox-image build dist "hermit-sandbox:$SHA12" "$PART_SHA"
           docker save -o "$RUNNER_TEMP/images/hermit-sandbox.tar" "hermit-sandbox:$SHA12"
       - name: the labels (platform 5.3) and the architecture
         run: |

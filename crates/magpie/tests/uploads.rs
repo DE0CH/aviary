@@ -1,4 +1,4 @@
-//! Uploads (M13, magpie 10): limits and types, the model copy's bounds and EXIF rotation, HEIC, the decode cap,
+//! Uploads (M13, magpie 10): limits and types, what the model gets, EXIF rotation, HEIC, the decode cap,
 //! the display variant of an upload, view-as recording, retention of unattached uploads.
 
 #![allow(
@@ -138,7 +138,7 @@ async fn display(r: &common::Replica, up: &UploadResponse) -> (String, image::Dy
 }
 
 #[tokio::test]
-async fn uploads_limits_types_and_model_copies() {
+async fn uploads_limits_types_and_what_the_model_gets() {
     let db = common::fresh_db("uploads").await;
     let t = common::Tokens::new();
     let r = common::replica(&db.url, &t).await;
@@ -206,7 +206,7 @@ async fn uploads_limits_types_and_model_copies() {
         415
     );
 
-    // a small model-native image is its own model copy (and display variant)
+    // a small upright model-native image is what the model gets (and its own display variant)
     let small = png(300, 200, false, false);
     let up = upload(&r, "small.png", UploadKind::Image, "image/png", small.clone())
         .await
@@ -223,17 +223,32 @@ async fn uploads_limits_types_and_model_copies() {
         .get(0);
     assert!(same);
 
-    // a large incompressible PNG: fitted to 2000 px, JPEG, within 3,932,160 bytes
+    // an image the model cannot take as it is gets no copy: the agent has it as a file; it still shows as a picture
+    let model_blob = |id| {
+        let r = &r;
+        async move {
+            r.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one("select model_blob from uploads where id = $1", &[&id])
+                .await
+                .unwrap()
+                .get::<_, Option<Vec<u8>>>(0)
+        }
+    };
+
+    // a large incompressible PNG: shown fitted to 2000 px
     let big = png(3000, 2400, false, true);
     assert!(big.len() > 3_932_160);
     let up = upload(&r, "big.png", UploadKind::Image, "image/png", big)
         .await
         .unwrap();
     assert_eq!((up.width, up.height), (Some(3000), Some(2400)));
-    let (ct, img, len) = display(&r, &up).await;
-    assert_eq!(ct, "image/jpeg");
+    assert_eq!(model_blob(up.upload_id).await, None);
+    let (ct, img, _) = display(&r, &up).await;
+    assert_eq!(ct, "image/webp");
     assert_eq!((img.width(), img.height()), (2000, 1600));
-    assert!(len <= 3_932_160, "{len}");
 
     // a transparent PNG over 2000 px stays PNG
     let up = upload(
@@ -245,12 +260,13 @@ async fn uploads_limits_types_and_model_copies() {
     )
     .await
     .unwrap();
+    assert_eq!(model_blob(up.upload_id).await, None);
     let (ct, img, _) = display(&r, &up).await;
-    assert_eq!(ct, "image/png");
+    assert_eq!(ct, "image/webp");
     assert_eq!((img.width(), img.height()), (2000, 1000));
     assert!(img.color().has_alpha());
 
-    // EXIF orientation 6 (rotate 90°): the copy is upright, and the upload reports upright dimensions
+    // EXIF orientation 6 (rotate 90°): no copy; shown upright, and the upload reports upright dimensions
     let up = upload(
         &r,
         "photo.jpg",
@@ -261,8 +277,9 @@ async fn uploads_limits_types_and_model_copies() {
     .await
     .unwrap();
     assert_eq!((up.width, up.height), (Some(300), Some(400)));
+    assert_eq!(model_blob(up.upload_id).await, None);
     let (ct, img, _) = display(&r, &up).await;
-    assert_eq!(ct, "image/jpeg");
+    assert_eq!(ct, "image/webp");
     assert_eq!((img.width(), img.height()), (300, 400));
     // the red gradient ran left to right; turned 90° clockwise it runs top to bottom
     let px = img.to_rgb8();
@@ -271,17 +288,18 @@ async fn uploads_limits_types_and_model_copies() {
         "not rotated"
     );
 
-    // HEIC: decoded through libheif, its copy a JPEG
+    // HEIC: no copy; shown decoded through libheif
     let up = upload(&r, "IMG_0042.HEIC", UploadKind::Image, "image/heic", HEIC.to_vec())
         .await
         .unwrap();
     assert_eq!(up.mime_type, "image/heic");
     assert_eq!((up.width, up.height), (Some(640), Some(480)));
+    assert_eq!(model_blob(up.upload_id).await, None);
     let (ct, img, _) = display(&r, &up).await;
-    assert_eq!(ct, "image/jpeg");
+    assert_eq!(ct, "image/webp");
     assert_eq!((img.width(), img.height()), (640, 480));
 
-    // the original and the model copy are referenced by the upload
+    // only the original is referenced by the upload
     let refs: i64 = r
         .pool()
         .get()
@@ -294,7 +312,7 @@ async fn uploads_limits_types_and_model_copies() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(refs, 2);
+    assert_eq!(refs, 1);
 }
 
 #[tokio::test]

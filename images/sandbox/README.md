@@ -19,8 +19,13 @@ keeper of the same aviary commit. Ported from jarvis3's
 | `video/engine/` | `/opt/engine`, `/usr/local/bin/edit` | the video edit engine: an edit plan (JSON, with HTML blocks) rendered by HyperFrames with a pinned headless Chrome; `GUIDE.md` is what the agent reads |
 | `video/clip`, `video/speech-times` | `/usr/local/bin/` | a stretch of footage as a small picture file and a sound file the model can open; where speech starts and stops |
 | `video/assets-manifest.json`, `video/fetch-assets.py`, `video/fonts.txt` | `/opt/assets`, `/usr/local/share/fonts/edit` | music, sound effects and animated emoji (Mixkit and Noto, fetched at build by URL and sha256: Mixkit's licence allows use, not redistribution) and Cantonese-complete fonts |
-| `build.sh` | | the build, with platform 5.3's labels |
+| `requirements.in`, `requirements.txt` | the venv `/opt/py` | the Python packages, and each (with what it pulls in) pinned by version and sha256 |
 | `smoke.sh` | | the image smoke test (`ci.yml` job `sandbox-smoke`) |
+
+One commit builds one image (Deyao, 2026-11-26): every download is named exactly. Debian's packages come from
+snapshot.debian.org at the Dockerfile's `DEBIAN_SNAPSHOT`, Docker's at their versions, gh, fonts, assets and Qwen Code
+by sha256, the Python packages by `requirements.txt`'s hashes, the base image by digest. Inside a sandbox, apt reads
+the live mirrors again (agents' installs). `sandbox-image pins` moves the pins forward.
 
 What is in it: Debian trixie with Node 22; documents, PDF and spreadsheet tools, CJK fonts, a Python venv `/opt/py`
 owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.325 root-owned at `/opt/claude-code` (the
@@ -46,7 +51,7 @@ exits 78 at once, logging `no sandbox proxy credential`.
 
 ```
 cargo build --release --locked --target x86_64-unknown-linux-musl -p supervisor -p mock-model -p fuse-rig --bins
-images/sandbox/build.sh target/x86_64-unknown-linux-musl/release hermit-sandbox:dev
+cargo run --release --locked --manifest-path tools/sandbox-image/Cargo.toml -- build target/x86_64-unknown-linux-musl/release hermit-sandbox:dev
 images/sandbox/smoke.sh hermit-sandbox:dev target/x86_64-unknown-linux-musl/release
 ```
 
@@ -59,7 +64,7 @@ and fake-tools only through the gateway's proxy as `http://model/…` and `http:
 model is a `claude-` id it does not recognise and it must state the models route's window for it (below); then
 Docker on demand as uid 1000 and a runtime stop (exit 0). On a host whose Docker bridge has no route out (an
 IPv6-only host), build with `SANDBOX_BUILD_FLAGS=--network=host` and smoke with `SMOKE_INTERNET_NETWORK=host`.
-`build.sh` exports with `rewrite-timestamp=true` (platform 5.2: the layers' file times from the commit), which needs a
+`sandbox-image build` (`tools/sandbox-image`, the build with platform 5.3's labels) exports with `rewrite-timestamp=true` (platform 5.2: the layers' file times from the commit), which needs a
 buildx builder with the `docker-container` driver (as `ci.yml`'s `setup-buildx-action` makes): Docker's own `docker`
 driver on the containerd image store refuses it ("conflicts with unpack"). Elsewhere, create one and pass
 `SANDBOX_BUILD_FLAGS=--builder=<name>`.

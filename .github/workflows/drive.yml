@@ -5,7 +5,7 @@
 name: drive
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet (not tags: jarvis.yml's releases push jarvis-<sha12>)
+    branches: ['**']  # every branch: the gate waits for it (not tags: jarvis.yml's releases push jarvis-<sha12>)
     paths: [drive/**, deploy/images.json, .github/workflows/drive.yml]
   workflow_dispatch:
   # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit

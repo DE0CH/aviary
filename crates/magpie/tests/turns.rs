@@ -2257,6 +2257,66 @@ fn small_png() -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn an_image_the_model_cannot_take_as_it_is_reaches_the_agent_as_a_file() {
+    use magpie_api::turns::ImageRef;
+    use magpie_api::uploads::UploadKind;
+    let w = World::new("turn_image_as_file", Some(Duration::ZERO)).await;
+    let me = w.a.pigeon();
+    let me = me.person(ALICE);
+    let pic = me
+        .upload("pic.png", UploadKind::Image, "image/png", small_png())
+        .await
+        .unwrap();
+    let mut bmp = std::io::Cursor::new(Vec::new());
+    image::RgbImage::new(4, 4)
+        .write_to(&mut bmp, image::ImageFormat::Bmp)
+        .unwrap();
+    let scan = me
+        .upload("scan.bmp", UploadKind::Image, "image/bmp", bmp.into_inner())
+        .await
+        .unwrap();
+    let conv = w.conversation().await;
+    let mut m = msg("m1", "see attached");
+    m.images = vec![
+        ImageRef {
+            upload_id: pic.upload_id,
+        },
+        ImageRef {
+            upload_id: scan.upload_id,
+        },
+    ];
+    me.send_turn(conv, &m).await.unwrap();
+    // the chat shows both as pictures
+    let sent: serde_json::Value = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select data from events where conversation_id = $1 and kind = 'user.sent'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(sent["images"].as_array().unwrap().len(), 2, "{sent}");
+    assert_eq!(sent["files"].as_array().map_or(0, Vec::len), 0, "{sent}");
+    // the agent sees the PNG with the message, as it is, and gets the BMP as a file
+    let sup = w.supervisor(conv).await;
+    let cmds = sup.poll(0, 0).await;
+    let CommandBody::StartTurn(st) = &cmds.commands[0].body else {
+        panic!()
+    };
+    assert_eq!(st.images.len(), 1);
+    assert_eq!(st.images[0].workspace_path, "uploads/pic.png");
+    assert_eq!(st.images[0].model_blob, st.images[0].blob);
+    assert_eq!(st.files.len(), 1);
+    assert_eq!(st.files[0].workspace_path, "uploads/scan.bmp");
+    assert_eq!(st.files[0].name, "scan.bmp");
+    assert_eq!(st.files[0].mime_type, "image/bmp");
+}
+
+#[tokio::test]
 async fn a_send_attaches_the_persons_uploads_with_unique_workspace_names() {
     use magpie_api::turns::{FileRef, ImageRef};
     use magpie_api::uploads::UploadKind;

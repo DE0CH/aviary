@@ -6,13 +6,14 @@ name: yyc
 # cluster's certificate are DE0CH/yyc-code's (a checkout of its main); the map of YYC AI's Secrets is yyc/secrets.txt.
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
+    branches: ['**']  # every branch: the gate waits for it
     paths: [yyc/**, deploy/images.json, tools/aviary-deploy/**, .github/workflows/yyc.yml]
   schedule:
     - cron: "41 3 * * *"  # the ZDR guard daily: OpenRouter's endpoint lists change without a commit
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read  # wait-built reads the runs that build this commit's images
 concurrency:
   group: yyc-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -29,8 +30,8 @@ env:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    # the wait for this commit's images (up to 90 min, while ci builds them) and the checks after it
-    timeout-minutes: 180  # the wait below for this commit's images and release (ci.yml), then the checks
+    # the runs it waits for end the wait (wait-built); this is only the hosted runner's limit, below GitHub's 6 h
+    timeout-minutes: 340
     # the catalogue (people's addresses) is the `checks` environment's secret, never a file in git
     environment: checks
     steps:
@@ -54,27 +55,26 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: this commit's tags in the folder
         # the images of a part that changed on this branch are built by the part's workflow, which may still run:
-        # wait for them (a part that did not change has its images already), and for the gateway's release
-        # (gateway.release, ci.yml's publish, after every test job: the check below read it before its sandboxd was
-        # uploaded and failed main's 5b06648e24, 2026-11-20). One deadline for both. pigeon-app is built on main only
-        # (app.yml's image job lists each build in main's clients.txt): not waited for, and the check below lets it
-        # be missing; deploy.yml deploys only once app.yml is green on main.
+        # wait for those runs (aviary-deploy wait-built: while they run it waits, once they are over an image still
+        # absent fails the check, named by the run's result; a part that did not change has its images already). No
+        # deadline of its own: how long a build takes never decides this check (Deyao, 2026-11-26; a cold arm64 build
+        # outlasted the old 150 min one). The gateway's release (gateway.release) comes from the same ci.yml publish,
+        # before that run ends (the check below read it before its sandboxd was uploaded and failed main's 5b06648e24,
+        # 2026-11-20). pigeon-app is built on main only (app.yml's image job lists each build in main's clients.txt):
+        # not waited for, and the check below lets it be missing; deploy.yml deploys only once app.yml is green on main.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
           cat "$RUNNER_TEMP/tags.json"
           jq 'del(."pigeon-app")' "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/branch-tags.json"
-          deadline=$((SECONDS + 150 * 60))
-          until aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; do
-            [ "$SECONDS" -ge "$deadline" ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
-            echo "waiting for: $(cat "$RUNNER_TEMP/digests.err")"; sleep 60
-          done
+          aviary-deploy wait-built deploy/images.json "$GITHUB_SHA" --except pigeon-app
+          aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json"
           aviary-deploy yyc "$FOLDER" "$RUNNER_TEMP/tags.json"
           rel=$(cat "$FOLDER/hermit/gateway.release")
-          until curl -fsS -o /dev/null -I "https://github.com/DE0CH/aviary/releases/download/$rel/sandboxd"; do
-            [ "$SECONDS" -ge "$deadline" ] && { echo "::error::release $rel has no sandboxd binary"; exit 1; }
-            echo "waiting for release $rel's sandboxd (ci.yml publish)"; sleep 60
-          done
+          curl -fsS -o /dev/null -I "https://github.com/DE0CH/aviary/releases/download/$rel/sandboxd" \
+            || { echo "::error::release $rel has no sandboxd binary"; exit 1; }
           git diff --stat -- "$FOLDER"
       - name: render and validate (item 1)
         run: |
