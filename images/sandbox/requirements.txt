@@ -5,7 +5,7 @@ anyio==4.16.0 \
 beautifulsoup4==4.15.0 \
     --hash=sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7 \
     --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 brotli==1.2.1 \
     --hash=sha256:0023348c448140a6ea71615eba331835c971d38ae8acf8a89b4e963b1f38f131 \
     --hash=sha256:00a50d063aae2e69c2eb28818ccf6dc3e51f2ea5b74e3c2082a47943ee23f399 \
@@ -312,7 +312,7 @@ chardet==7.7.0 \
     --hash=sha256:eb625c3ab2386ca7f3be9ac2b9b822f4c5b792595c8bb8100b3b6ea68120e92c \
     --hash=sha256:f8783b6e24a044ed9b53aa130ffafac4286aaf4a953f7843a3c1a261d7c77971 \
     --hash=sha256:feb66c96264e3e6a9ff0c7318ce0028800b6c18ad07c8000d2404a108d1ef767
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 charset-normalizer==3.5.3 \
     --hash=sha256:00edb7682962c596f774bfa126e6b6f885b7af2319f448d327591c284a482de8 \
     --hash=sha256:01b35bec964b92b89bdf94adf931d2e80a15f1c7b93bf850b4430cca23f7a2a2 \
@@ -715,7 +715,7 @@ httpcore==1.0.9 \
 httpx==0.29.0 \
     --hash=sha256:6734dcf742ced6e8018e45d3f9f7728975b6b3e1085a24f3e2c056069d858bd1 \
     --hash=sha256:700928ee6c1f4213795e67c47eba8f8553639069fea89199f71d654e38edc593
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
     --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
@@ -1044,13 +1044,13 @@ lxml==6.1.3 \
     --hash=sha256:febd35ef45f603c2d74b74655efdbf45e14f55fc0aef4ac82b663ca829b283e0 \
     --hash=sha256:ff88a92cafde90888511242d1c54afcc1a8adbb6dc0a88fa7f87e29e92400d4a
     # via
-    #   -r requirements.in
+    #   -r images/sandbox/requirements.in
     #   python-docx
     #   python-pptx
 markdown==3.11.4 \
     --hash=sha256:2e30b19cead1968f391206e184ca67dfe6805c2eb8f383fb07b4dc90f8288075 \
     --hash=sha256:c911a757f33d64a2578bed2d20c57e007b2aedd8a67bceabd593b31143d54ead
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 matplotlib==3.11.2 \
     --hash=sha256:01dc8eaaab5a9fce9ff615eca82345728f289e4715b186ee10c6d85272fc26bb \
     --hash=sha256:02329432ae5c6af87cf208ee575b701d698bdf0b1a3bb28cc6d53c36e967e575 \
@@ -1105,7 +1105,7 @@ matplotlib==3.11.2 \
     --hash=sha256:f25446b2981717dca9786bac841cb3fd7efb568e3e3c755dd980481c5cb9228d \
     --hash=sha256:f2ac30cf5eb5dff1b584627ae0b0e1186551a4f69ae3c75073911da497a29170 \
     --hash=sha256:fea03cf56568cc1cba08b470be6a0559e71c3a5b688d54b7179bb35ba23d0821
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 mutagen==1.48.1 \
     --hash=sha256:4f077fe87d3fc7fba259aa63d8c026b18382ca6a42ef37c61e16f1b1b5b82fe7 \
     --hash=sha256:8f95637ab9f6f305cec6bd1294e197debe207998e3e068596563c74f86b0a173
@@ -1184,11 +1184,11 @@ numpy==2.5.5 \
 opencc-python-reimplemented==0.1.7 \
     --hash=sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6 \
     --hash=sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 openpyxl==3.1.5 \
     --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 \
     --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 packaging==26.4 \
     --hash=sha256:81383611a09c1bc0b08b76e0fd5829d7c6824c65b27a6aee339da133f4233ea2 \
     --hash=sha256:c4b671c41ddb9bf26e543c37723610d28fb6bf7affc4da17cf048d419d2c062a
@@ -1252,7 +1252,7 @@ pandas==3.1.1 \
     --hash=sha256:f6c63d287fc2eddf698ebd3bd82089aba2dd4f520f6e4f341d28e125644a6137 \
     --hash=sha256:f89fb8e88cc5791995cc076c526eac605adc157b6ac6cc619a33ddd0b8bf5871 \
     --hash=sha256:fdd87cf4d59a3c45f17af6ec965d0bd10b9f15e1b5082d2da11a577439551bcd
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 pdfminer-six==20260107 \
     --hash=sha256:366585ba97e80dffa8f00cebe303d2f381884d8637af4ce422f1df3ef38111a9 \
     --hash=sha256:96bfd431e3577a55a0efd25676968ca4ce8fd5b53f14565f85716ff363889602
@@ -1260,7 +1260,7 @@ pdfminer-six==20260107 \
 pdfplumber==0.11.11 \
     --hash=sha256:81fd7c493ac69a0645a68da49320e4e2cace05d99824439accc7b5b3d955f3bc \
     --hash=sha256:e38eb7d3a4c822f93067cf6694dcec655f032619f4bd41ebd34f882fc22fbb87
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 pillow==13.0.0 \
     --hash=sha256:02464da86f561f410e13b061ec37c3068a9cb557a095494157742d07b3c24a27 \
     --hash=sha256:04a63720f79e22fd54d897c233a68314c50ca0603360f54ce2bd5db8f0f43782 \
@@ -1346,7 +1346,7 @@ pillow==13.0.0 \
     --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b \
     --hash=sha256:ffea6b2986a797c84b6d1d27d4f43e0b83c73fc16281a930891cd237cf0d08fe
     # via
-    #   -r requirements.in
+    #   -r images/sandbox/requirements.in
     #   matplotlib
     #   pdfplumber
     #   python-pptx
@@ -1421,7 +1421,7 @@ pymupdf==1.28.2 \
     --hash=sha256:f89fb2d86d07d643a269f17a093105057e20c79c1d06c103b53600067b6d2b01 \
     --hash=sha256:fd481ed48bef56305c41fb7e05a055c03345c899c7b101dad086258b438f8168 \
     --hash=sha256:ffe91a24edc75c80da2a4b62f50fc0f54632d34fc8fe4cbc48e5c7ff07cf8fb4
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
@@ -1429,7 +1429,7 @@ pyparsing==3.3.3 \
 pypdf==7.2.0 \
     --hash=sha256:5edb9b033dd55cecead9303370e6854c1a3b979669bde1c46024cde0228405b1 \
     --hash=sha256:b2c637b6f0be3def1f762fd8be20118736bafdffc75badab80db003d7a9ed110
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 pypdfium2==5.15.2 \
     --hash=sha256:0185193bbdf0cc39f0bf31954c25f12edb81048bcb628ea4fc3dccf8d2ce2aef \
     --hash=sha256:2dd2ef2e966181b199870e109ae3c17af4415fc012ba12b7f8d7e08d521bd480 \
@@ -1463,26 +1463,26 @@ python-dateutil==4.0.0 \
     --hash=sha256:a5e246f79eb80475e691bf93862cead98decd8a498cf53ba0516fcdc0f50dc1c \
     --hash=sha256:d7295ff14fdc0f92f662100bfb6c551d160ca090f2939f1ec5b9794265c03f06
     # via
-    #   -r requirements.in
+    #   -r images/sandbox/requirements.in
     #   matplotlib
     #   pandas
 python-docx==1.2.0 \
     --hash=sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7 \
     --hash=sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 python-pptx==1.0.2 \
     --hash=sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba \
     --hash=sha256:479a8af0eaf0f0d76b6f00b0887732874ad2e3188230315290cd1f9dd9cc7095
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 reportlab==5.1.2 \
     --hash=sha256:2d2785281fc435e39fb33eee7f8c10b10ffee626dad9de360310390aacaf2f38 \
     --hash=sha256:8ec602de18aff4db94f3b5846f877e66edbcb42969c4100b2ae5dd69a7f3e84e
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
     # via
-    #   -r requirements.in
+    #   -r images/sandbox/requirements.in
     #   yt-dlp
 soupsieve==4.1.3 \
     --hash=sha256:13f70186c8f40bf8d0ff7bbab09a18fb149600b465269207b5e5b588f55fda08 \
@@ -1491,7 +1491,7 @@ soupsieve==4.1.3 \
 tabulate==0.10.0 \
     --hash=sha256:e2cfde8f79420f6deeffdeda9aaec3b6bc5abce947655d17ac662b126e48a60d \
     --hash=sha256:f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 tinycss2==1.5.1 \
     --hash=sha256:3415ba0f5839c062696996998176c4a3751d18b7edaaeeb658c9ce21ec150661 \
     --hash=sha256:d339d2b616ba90ccce58da8495a78f46e55d4d25f9fd71dfd526f07e7d53f957
@@ -1523,7 +1523,7 @@ urllib3==2.8.0 \
 weasyprint==70.0 \
     --hash=sha256:5043e55e38d2a2af2b2b871e869697b1f65dad5f8b4a3677961d04ceacf9c5fe \
     --hash=sha256:c263abf0e86c747b12af678b67f85f4abbfb97d18a20503031e7ba94e4b8cf8c
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 webencodings==0.6.1 \
     --hash=sha256:565f9ad031c702dae404e27a099e3e09186a3ab1b9520f06d215502b651fd910 \
     --hash=sha256:7fab6269c8bf237c657876b52058ccb182e861518d1c695c1a9aaa8c1c105d5b
@@ -1691,12 +1691,12 @@ xlsxwriter==3.3.4 \
     --hash=sha256:3512f4210622d4040e0f2882e2caf7263a3fd8be876704304314f0e275377fea \
     --hash=sha256:da62fecb24fdd0f003c874c86109b9e1245ae89533052745ab85a085eb2b04d7
     # via
-    #   -r requirements.in
+    #   -r images/sandbox/requirements.in
     #   python-pptx
 yt-dlp==2026.11.23 \
     --hash=sha256:1db83772a8de7855a2dab551a94d7f617c88629dfdf506531c06b369b47f88a4 \
     --hash=sha256:e9188e0c559905f7ee05acc1ba0b6fb3f310e7565bf6dea5f62b5300e0775e35
-    # via -r requirements.in
+    # via -r images/sandbox/requirements.in
 yt-dlp-ejs==0.8.0 \
     --hash=sha256:79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4 \
     --hash=sha256:d5fa1639f63b5c4af8d932495f60689d5370f1a095782c944f7f62a303eb104e
