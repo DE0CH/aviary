@@ -12,7 +12,7 @@ on:
   push:
     branches: ['**']
     paths: [flake.nix, flake.lock, Cargo.toml, Cargo.lock, rust-toolchain.toml, ".cargo/**", "crates/**", "testing/**",
-            ".github/workflows/nix.yml"]
+            "jarvis/hermit/**", ".github/workflows/nix.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -47,6 +47,8 @@ jobs:
           - {name: magpie, kind: magpie, user: "10001:10001"}
           # the test binaries: no entrypoint, each run by name
           - {name: aviary-testing, kind: testing, user: "65532:65532"}
+          # the Jarvis chat's hermit (jarvis.yml): it reads the chat's settings as the deploy gives them
+          - {name: hermit-jarvis, kind: jarvis, user: "65532:65532"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -106,6 +108,7 @@ jobs:
           case "${{ matrix.kind }}" in
             hermit) docker run --rm "$img" --help ;;
             testing) docker run --rm "$img" test-gateway --version; docker run --rm "$img" aviary-conformance --help ;;
+            jarvis) docker run --rm -v "$PWD/jarvis/deploy:/chat:ro" "$img" check-settings /chat/settings.json ;;
             *) docker run --rm "$img" --version ;;
           esac
       - name: a service refuses to start without its secrets, naming the variable, never a value (exit 78)

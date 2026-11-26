@@ -111,6 +111,36 @@
         };
       };
 
+      # jarvis/hermit: hermit-jarvis, the Jarvis chat's hermit, a workspace of its own (its Cargo.lock) using
+      # aviary's crates by path, which inherit from the root workspace: glibc, as its Dockerfile builds it on Debian
+      jarvisSrc = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./rust-toolchain.toml ./.cargo ./crates ./testing ./jarvis/hermit ];
+      };
+      jarvisCommon = {
+        src = jarvisSrc;
+        cargoToml = ./jarvis/hermit/Cargo.toml;
+        cargoLock = ./jarvis/hermit/Cargo.lock;
+        postUnpack = ''
+          cd $sourceRoot/jarvis/hermit
+          sourceRoot=.
+        '';
+        strictDeps = true;
+        doCheck = false;
+      };
+      hermit-jarvis-deps = craneLib.buildDepsOnly (jarvisCommon // {
+        pname = "hermit-jarvis-deps";
+        version = "0.0.0";
+        cargoExtraArgs = "--locked --bin hermit-jarvis";
+      });
+      hermit-jarvis = craneLib.buildPackage (jarvisCommon // {
+        pname = "hermit-jarvis";
+        version = "0.0.0";
+        cargoArtifacts = hermit-jarvis-deps;
+        cargoExtraArgs = "--locked --bin hermit-jarvis";
+        AVIARY_REVISION = sourceHash;
+      });
+
       # magpie: glibc, not musl, with libheif (and its HEVC decoder) as .github/ci/build-magpie.sh builds it on Debian
       magpieCommon = {
         inherit src;
@@ -241,7 +271,14 @@
           description = "hermit: sandboxes, people and workspaces";
           extraBins = [ juicefs ];
         };
-        inherit magpie-deps magpie aviary-testing-deps aviary-testing aviary-testing-image;
+        inherit magpie-deps magpie aviary-testing-deps aviary-testing aviary-testing-image hermit-jarvis-deps hermit-jarvis;
+        # jarvis/hermit/Dockerfile: distroless cc (glibc), an entrypoint and no command
+        hermit-jarvis-image = image {
+          name = "hermit-jarvis";
+          bin = hermit-jarvis;
+          description = "hermit-jarvis: the Jarvis chat's hermit";
+          cmd = [ ];
+        };
         magpie-image = image {
           name = "magpie";
           bin = magpie;
