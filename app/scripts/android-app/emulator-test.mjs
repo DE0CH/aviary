@@ -92,6 +92,7 @@ function dumpUi(label) {
         if (!b) continue;
         nodes.push({
           id: attr("resource-id"),
+          pkg: attr("package"),
           cls: attr("class"),
           text: attr("text").replace(/&#10;/g, "\n").replace(/&amp;/g, "&"),
           desc: attr("content-desc"),
@@ -494,12 +495,19 @@ async function main() {
       // the cover's layout first, so the panel looked at is the cover's
       await waitFor((n) => (n.length > 0 && !byId(n, "wide-shell") ? n : null), 60_000, "cover-activity-layout");
       await checkPanelBelowStatusBar("cover");
-      // closed with its own back arrow: Android's Back left the app for the launcher here (2026-11-26), and the hinge
-      // below folded the launcher with the app behind it, which only the app's process id had been checked for
-      const back = await waitFor((n) => byId(n, "header-back-button"), 60_000, "activity-back");
-      if (back) tap(back);
-      const closed = await waitFor((n) => !byId(n, "activity-title") && byId(n, "message-input-root"), 60_000, "activity-closed");
-      check("cover: the Activity panel's back arrow returns to the conversation", closed);
+      // Android's Back closes the panel (yyc/side-panel-back.ts): it had left the app for the launcher (2026-11-26)
+      shell("input", "keyevent", "KEYCODE_BACK");
+      const closed = await waitFor(
+        (n) => (n.some((m) => m.pkg === pkg) && !byId(n, "activity-title") && byId(n, "message-input-root") ? n : null)
+          || (n.length > 0 && !n.some((m) => m.pkg === pkg) ? "left" : null),
+        60_000, "activity-closed");
+      check("cover: Android's Back closes the Activity panel and stays in the app", closed && closed !== "left",
+        closed === "left" ? "the app left the screen" : "");
+      // the hinge below folds the app, not the launcher (an app left by Back keeps its process, all the old check saw)
+      if (closed === "left") {
+        shell("am", "start", "-n", `${pkg}/.MainActivity`);
+        await waitFor(coverLayout, 60_000, "app-again");
+      }
     }
 
     // ---- the emulator's own hinge (a foldable profile's posture, not a size override) ----
