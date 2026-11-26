@@ -45,6 +45,8 @@ jobs:
           - {name: hermit, kind: hermit, user: "65532:65532"}
           # magpie: glibc and libheif with its HEVC decoder; it decodes the HEIC fixture with the release binary
           - {name: magpie, kind: magpie, user: "10001:10001"}
+          # the test binaries: no entrypoint, each run by name
+          - {name: aviary-testing, kind: testing, user: "65532:65532"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -101,7 +103,11 @@ jobs:
             and (."org.opencontainers.image.revision" | test("^[0-9a-z]{32}$"))
             and ."org.opencontainers.image.version" == (."org.opencontainers.image.revision"[0:12])' <<< "$l" >/dev/null
           test "$(docker image inspect -f '{{.Config.User}}' "$img")" = "${{ matrix.user }}"
-          if [ "${{ matrix.kind }}" = hermit ]; then docker run --rm "$img" --help; else docker run --rm "$img" --version; fi
+          case "${{ matrix.kind }}" in
+            hermit) docker run --rm "$img" --help ;;
+            testing) docker run --rm "$img" test-gateway --version; docker run --rm "$img" aviary-conformance --help ;;
+            *) docker run --rm "$img" --version ;;
+          esac
       - name: a service refuses to start without its secrets, naming the variable, never a value (exit 78)
         if: matrix.kind == 'service'
         run: |

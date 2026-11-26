@@ -73,6 +73,44 @@
       });
       service = name: serviceWith name "release";
 
+      # images/aviary-testing: the test binaries, one build (their dependencies built once for all of them)
+      testingCrates = [ "aviary-conformance" "test-gateway" "mock-model" "fake-tools" "fake-access" "fake-sandboxd" "aviary-e2e" ];
+      testingArgs = "--locked " + lib.concatMapStringsSep " " (c: "-p ${c}") testingCrates;
+      aviary-testing-deps = craneLib.buildDepsOnly (common // {
+        pname = "aviary-testing-deps";
+        version = "0.0.0";
+        cargoExtraArgs = testingArgs;
+      });
+      aviary-testing = craneLib.buildPackage (common // {
+        pname = "aviary-testing";
+        version = "0.0.0";
+        cargoArtifacts = aviary-testing-deps;
+        cargoExtraArgs = testingArgs + " --bins";
+        AVIARY_REVISION = sourceHash;
+      });
+      aviary-testing-image = pkgs.dockerTools.streamLayeredImage {
+        name = "aviary-testing";
+        tag = "nix";
+        contents = [ base aviary-testing ];
+        extraCommands = ''
+          mkdir -p usr/local/bin tmp
+          ${lib.concatMapStrings (c: "cp ${aviary-testing}/bin/${c} usr/local/bin/${c}\n") testingCrates}
+          chmod 755 usr/local/bin/*
+          chmod 1777 tmp
+        '';
+        config = {
+          User = "65532:65532";
+          Env = [ "PATH=/usr/local/bin:/bin" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" "TZDIR=/share/zoneinfo" ];
+          Labels = {
+            "org.opencontainers.image.source" = "https://github.com/DE0CH/aviary";
+            "org.opencontainers.image.revision" = sourceHash;
+            "org.opencontainers.image.version" = builtins.substring 0 12 sourceHash;
+            "org.opencontainers.image.licenses" = "AGPL-3.0-or-later";
+            "org.opencontainers.image.description" = "aviary's test binaries: conformance suites, reference gateway, fakes";
+          };
+        };
+      };
+
       # magpie: glibc, not musl, with libheif (and its HEVC decoder) as .github/ci/build-magpie.sh builds it on Debian
       magpieCommon = {
         inherit src;
@@ -203,7 +241,7 @@
           description = "hermit: sandboxes, people and workspaces";
           extraBins = [ juicefs ];
         };
-        inherit magpie-deps magpie;
+        inherit magpie-deps magpie aviary-testing-deps aviary-testing aviary-testing-image;
         magpie-image = image {
           name = "magpie";
           bin = magpie;
