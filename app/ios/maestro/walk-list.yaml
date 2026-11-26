@@ -1,17 +1,9 @@
-# The iPhone walk's first half (scripts/ios-app/simulator-walk.mjs), against the stand-in for pigeon: sign in (iOS's
-# prompt for the server, Continue; the stand-in answers the sign-in straight back to the app), open the conversation
-# list, a long press on a plain and on a pinned conversation opens its menu, then the conversation with tasks.
+# The iPhone walk's list (scripts/ios-app/simulator-walk.mjs), right after walk-sign-in.yaml (no relaunch: the simulator
+# build is unsigned, so the Keychain refuses the token and it lives only in the running app): open the
+# conversation list, a long press on a plain and on a pinned conversation opens its menu, then the conversation with
+# tasks.
 appId: ${APP_ID}
 ---
-- launchApp
-- extendedWaitUntil:
-    visible: "登入|Sign in"
-    timeout: 90000
-- tapOn: "登入|Sign in"
-- extendedWaitUntil:
-    visible: ".*Wants to Use.*"
-    timeout: 30000
-- tapOn: "Continue"
 - extendedWaitUntil:
     visible:
       id: "menu-button"
@@ -28,8 +20,10 @@ appId: ${APP_ID}
       id: "sidebar-workspace-context-menu-.*"
     timeout: 10000
 - takeScreenshot: plain-menu
+# the menu's backdrop covers the screen; a tap on its left edge, below the status bar (which iOS keeps for itself)
+# and beside any menu (they open at the row's right), closes it
 - tapOn:
-    point: "50%,3%"
+    point: "10%,50%"
 - extendedWaitUntil:
     notVisible:
       id: "sidebar-workspace-context-menu-.*"
@@ -40,8 +34,10 @@ appId: ${APP_ID}
       id: "sidebar-workspace-context-menu-.*"
     timeout: 10000
 - takeScreenshot: pinned-menu
+# the menu's backdrop covers the screen; a tap on its left edge, below the status bar (which iOS keeps for itself)
+# and beside any menu (they open at the row's right), closes it
 - tapOn:
-    point: "50%,3%"
+    point: "10%,50%"
 - extendedWaitUntil:
     notVisible:
       id: "sidebar-workspace-context-menu-.*"
