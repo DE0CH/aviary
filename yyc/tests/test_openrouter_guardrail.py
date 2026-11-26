@@ -22,12 +22,20 @@ class Guardrail(unittest.TestCase):
         sent = {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)}
         if e.get("embedding"):
             sent.add(e["embedding"]["id"])
+        if e.get("transcription"):
+            sent.add(e["transcription"]["id"])
         self.assertEqual(sorted(sent - set(load().MODELS)), [])
 
     def test_the_embedding_model_is_listed(self):
         e = json.load(open(EGRESS))
         self.assertIn("embedding", e, "egress.json names the search's embedding model")
         self.assertIn(e["embedding"]["id"], load().MODELS)
+
+    def test_the_transcription_model_is_listed(self):
+        # lessons/128: a new kind of model call on a key with a guardrail is refused until the guardrail lists it
+        e = json.load(open(EGRESS))
+        self.assertIn("transcription", e, "egress.json names the speech-to-text model")
+        self.assertIn(e["transcription"]["id"], load().MODELS)
 
 
 if __name__ == "__main__":

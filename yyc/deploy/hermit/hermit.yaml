@@ -115,8 +115,10 @@ spec:
               - {key: report.SKILL.md, path: report/SKILL.md}
               - {key: schedules.SKILL.md, path: schedules/SKILL.md}
               - {key: telegram.SKILL.md, path: telegram/SKILL.md}
+              - {key: transcribe.SKILL.md, path: transcribe/SKILL.md}
               - {key: video.SKILL.md, path: video/SKILL.md}
               - {key: web.SKILL.md, path: web/SKILL.md}
+              - {key: youtube.SKILL.md, path: youtube/SKILL.md}
         - {name: jfs, persistentVolumeClaim: {claimName: hermit-jfs}}
         - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
 ---

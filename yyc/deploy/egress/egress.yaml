@@ -74,6 +74,8 @@ spec:
             - {name: LABELS_AI_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: egress, key: LABELS_AI_CLIENT_SECRET}}}
             # the sandbox route code: read-only on DE0CH/yyc-code (GitHub token yyc-ai-code-read)
             - {name: CODE_GITHUB_BASIC, valueFrom: {secretKeyRef: {name: egress, key: CODE_GITHUB_BASIC}}}
+            # exit.via: the sandboxes' YouTube and Hong Kong broadcaster traffic through YYC AI's ISP IP (CHAT.md "The exit")
+            - {name: EXIT_VIA_YYC_AI_ISP, valueFrom: {secretKeyRef: {name: egress, key: EXIT_VIA_YYC_AI_ISP}}}
           readinessProbe:
             httpGet: {path: /readyz, port: ops}
             periodSeconds: 3

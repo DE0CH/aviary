@@ -8,13 +8,18 @@ name: egress
 # checked against the built one).
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
+    branches: ['**']  # every branch: the gate waits for it
     paths: ["egress/**", "crates/hermit/fixtures/catalogue-cases.json", "testing/conformance/**", "testing/mock-model/**",
             "deploy/images.json", ".github/workflows/egress.yml"]
   workflow_dispatch:
+  # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
+  # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
+  workflow_call:
+    inputs:
+      sha: {type: string, required: true}
 
 concurrency:
-  group: egress-${{ github.ref }}
+  group: egress-${{ inputs.sha && format('deploy-{0}', inputs.sha) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
@@ -35,11 +40,11 @@ jobs:
       have: ${{ steps.p.outputs.have }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
       - id: p
         run: |
           # shellcheck disable=SC2046 # a list of paths
-          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '.egress.paths | join(" ")' deploy/images.json))
+          sha=$(git log -1 --format=%H "${{ inputs.sha || github.sha }}" -- $(jq -r '.egress.paths | join(" ")' deploy/images.json))
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/egress:pull" | jq -r .token)
           code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
@@ -65,6 +70,7 @@ jobs:
       TEST_DATABASE_URL: postgres://claude:dev@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -91,6 +97,7 @@ jobs:
       id: ${{ steps.load.outputs.id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: build time
         id: built
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
@@ -128,6 +135,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -151,7 +159,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: conformance
+          name: egress-conformance  # not ci.yml's `conformance`: a deploy run may call both
           path: ${{ runner.temp }}/conformance
 
   image-arm64:
@@ -163,6 +171,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: the cache service's token for buildx (type=gha)
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0

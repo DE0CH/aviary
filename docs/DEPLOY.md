@@ -38,10 +38,17 @@ commit still in its checks, or red, never holds back an older one that passed th
 10-20 min and its ci takes 2 h, so waiting for main's head deployed nothing for 7 h), and nothing older than what runs
 deploys. Then:
 
-1. **Images.** Each image is tagged by the last commit that changed its inputs (`deploy/images.json` lists each
-   image's paths): an unchanged part keeps its tag, so its pods are not rolled. The part's workflow builds that tag on
-   whichever branch first lacks it (pigeon-app on main only: its image job lists each build in main's
-   `testing/paseo-contract/clients.txt`); the deploy run only checks it exists.
+1. **Images, from the commit's source.** Each image is tagged by the last commit that changed its inputs
+   (`deploy/images.json` lists each image's paths): an unchanged part keeps its tag, so its pods are not rolled. The
+   registry is only a cache of those builds (Deyao, 2026-11-26): the deploy run looks up every part's tag
+   (`aviary-deploy missing`), and a part with an image (or, for aviary, its release `aviary-<sha12>`) absent is built
+   first by its own workflow, called at that part's commit (`build-*` jobs: `ci.yml`, `app.yml`, `egress.yml`,
+   `jarvis.yml`, `drive.yml`, each with a `workflow_call` input `sha`), its tests included. Builds are deterministic,
+   so building again from the same commit is the same build. Normally the part's workflow has built the tag already,
+   on whichever branch first lacked it (pigeon-app on main: its image job lists each build in main's
+   `testing/paseo-contract/clients.txt`), and the deploy finds it; a build lost on main (2026-11-26: app.yml's run on
+   af83802f99 cancelled at its time limit, so every deploy after it stopped on "not built") is built again by the next
+   deploy run instead.
 2. **Jarvis chat and Jarvis 4's sessions.** Jarvis 4's cluster takes changes only from git (jarvis4 DECISIONS 14), so
    the deploy run pushes the tag `deploy-<sha12>` and makes one commit in DE0CH/jarvis4 with that repository's deploy
    key: the chat tenant (`k8s/cluster/tenants/chat.yaml`: `jarvis/deploy` at that tag, with this commit's image

@@ -143,6 +143,15 @@ RUN apt-get -o Acquire::Retries=5 update \
  && test "$(ls | wc -l)" = "$(grep -vc '^#' /opt/image-setup/video/fonts.txt)" \
  && fc-cache -f && chown -R root:root /opt/engine /opt/assets && chmod -R go-w /opt/engine /opt/assets
 
+# Video and sound from a link (managed skills): yt-dlp in the venv, which reads YouTube's player through Node
+# (`--js-runtimes node` in its system config: Deno, its default, is not in the image). The sandboxes' YouTube and Hong
+# Kong broadcaster traffic leaves through egress's `exit.via` (the deployment's own proxy), so nothing here names one.
+RUN /opt/py/bin/pip install --no-cache-dir 'yt-dlp[default]' \
+ && printf -- '--js-runtimes node\n' > /etc/yt-dlp.conf \
+ && /opt/py/bin/yt-dlp --version \
+ && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
+ && chown -R 1000:1000 /opt/py
+
 # Installing system packages (A5.F4): `apt-get`/`apt` are wrappers that go through sudo for uid 1000 and fetch the
 # package lists on the first install (the image ships without them). apt reaches the Debian mirrors through the
 # sandbox's proxy: sudo keeps the proxy variables, and the supervisor writes /etc/apt/apt.conf.d/80sandbox-proxy at

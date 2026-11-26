@@ -9,11 +9,16 @@ on:
             Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .config/**, deny.toml, deny-hermit-only.toml,
             clippy.toml, rustfmt.toml, .github/ci/**, .github/workflows/ci.yml]
   workflow_dispatch:
+  # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
+  # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
+  workflow_call:
+    inputs:
+      sha: {type: string, required: true}
 
 # a branch's newer push cancels its older run; on main every commit gets its own group, so none is cancelled or
 # replaced while queued (a group keeps one pending run) and every main commit is gated and published (6.1)
 concurrency:
-  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ci-${{ inputs.sha && format('deploy-{0}', inputs.sha) || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -39,7 +44,7 @@ jobs:
       qwen: ${{ steps.t.outputs.qwen }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {fetch-depth: 0, filter: "blob:none"}
+        with: {ref: "${{ inputs.sha || github.sha }}", fetch-depth: 0, filter: "blob:none"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - name: aviary-deploy's tests, and the tool
@@ -51,15 +56,15 @@ jobs:
           cargo build --locked --release
       - id: t
         run: |
-          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
+          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "${{ inputs.sha || github.sha }}" > "$RUNNER_TEMP/tags.json"
           cat "$RUNNER_TEMP/tags.json"
           paths=$(jq -r '.aviary.paths | join(" ")' deploy/images.json)
           # shellcheck disable=SC2086 # a list of paths
-          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $paths)
+          sha=$(git log -1 --format=%H "${{ inputs.sha || github.sha }}" -- $paths)
           echo "aviary_sha=$sha" >> "$GITHUB_OUTPUT"
           echo "aviary=${sha::12}" >> "$GITHUB_OUTPUT"
           test "$(jq -r .pigeon "$RUNNER_TEMP/tags.json")" = "${sha::12}"
-          echo "qwen=$(git log -1 --format=%h --abbrev=12 "$GITHUB_SHA" -- harness/qwen-code)" >> "$GITHUB_OUTPUT"
+          echo "qwen=$(git log -1 --format=%h --abbrev=12 "${{ inputs.sha || github.sha }}" -- harness/qwen-code)" >> "$GITHUB_OUTPUT"
 
   qwen:
     # the Qwen Code fork's tarball, released once per change of harness/qwen-code as qwen-code-<sha12> with its
@@ -82,6 +87,7 @@ jobs:
     defaults: {run: {working-directory: harness/qwen-code}}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - id: have
         run: |
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
@@ -147,6 +153,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.sha || github.sha }}
           fetch-depth: 0 # gitleaks scans the whole history
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
@@ -187,6 +194,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: hermit's operator page (its state colours; the page's own script run in the runner's Node)
         run: node --test crates/hermit/tests/ops_page.test.mjs
       - name: toolchain (rust-toolchain.toml, exactly)
@@ -243,6 +251,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -294,6 +303,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -332,6 +342,7 @@ jobs:
       AVIARY_REVISION: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -401,6 +412,7 @@ jobs:
       PART_SHA: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ matrix.dist }}
@@ -540,6 +552,7 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -564,6 +577,7 @@ jobs:
       SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -590,6 +604,7 @@ jobs:
       SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -634,6 +649,7 @@ jobs:
         working-directory: testing/paseo-contract
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.4
@@ -665,6 +681,7 @@ jobs:
       SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-services
@@ -713,6 +730,7 @@ jobs:
       SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-services
@@ -756,7 +774,8 @@ jobs:
     # before the merge, and main deploys them (deploy.yml) once its runs are green; a tag that exists is left as it is.
     # A run started by workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push
     # that starts no workflow) and dispatches this workflow on main.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # A deploy's call (deploy.yml, its commit's images absent) publishes too: what it builds is what it ships.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || inputs.sha != ''
     needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e, e2e-chaos]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -769,7 +788,7 @@ jobs:
       PART_SHA: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {fetch-depth: 0, filter: "blob:none"}  # ci-release reads the part's commit
+        with: {ref: "${{ inputs.sha || github.sha }}", fetch-depth: 0, filter: "blob:none"}  # ci-release reads the part's commit
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -848,6 +867,7 @@ jobs:
       TAG: aviary-${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
       - name: free disk space (the sandbox image, unpacked)
@@ -896,7 +916,7 @@ jobs:
     steps:
       # this commit (E2E_HERMIT_JARVIS builds its jarvis/hermit), then jarvis4 beside it
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
       - name: the release and its sandbox image, by digest, into the session image's aviary.json
@@ -975,7 +995,7 @@ jobs:
     steps:
       # this commit (E2E_HERMIT_JARVIS builds its jarvis/hermit), then jarvis4 beside it
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
       - name: free disk space (the session image and the fabric image, unpacked)

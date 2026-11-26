@@ -55,12 +55,14 @@ def fake(zdr_models, bad_sha=None, tags=None, text_only=(), efforts=None):
 def models(root):
     e = json.load(open(os.path.join(root, "next", "egress", "egress.json")))
     return {m["id"] for m in e["models"]} | {e["defaultModel"], e["smallModel"], e["titleModel"]} \
-        | ({e["embedding"]["id"]} if e.get("embedding") else set())
+        | ({e["embedding"]["id"]} if e.get("embedding") else set()) \
+        | ({e["transcription"]["id"]} if e.get("transcription") else set())
 
 
 def pins(root):
     e = json.load(open(os.path.join(root, "next", "egress", "egress.json")))
-    return {m["id"]: m.get("providers", []) for m in e["models"]}
+    t = e.get("transcription")
+    return {m["id"]: m.get("providers", []) for m in e["models"]} | ({t["id"]: t.get("providers", [])} if t else {})
 
 
 def edit(root, f):
@@ -88,6 +90,19 @@ class Seeded(unittest.TestCase):
         fails = _run_in(root, fake(models(root) - {"vendor/embed-no-zdr"}, tags=pins(root)))
         self.assertTrue(any("vendor/embed-no-zdr" in f for f in fails), fails)
         self.assertFalse(any("embed-no-zdr takes images" in f for f in fails), fails)
+
+    def test_non_zdr_transcription_model(self):
+        # the speech-to-text model hears whatever a sandbox sends: ZDR like the others
+        root = tree()
+        edit(root, lambda e: e.update(transcription={"id": "vendor/asr-no-zdr"}))
+        fails = _run_in(root, fake(models(root) - {"vendor/asr-no-zdr"}, tags=pins(root)))
+        self.assertTrue(any("vendor/asr-no-zdr" in f for f in fails), fails)
+
+    def test_transcription_endpoint_not_zdr(self):
+        root = tree()
+        edit(root, lambda e: e.update(transcription={"id": "vendor/asr", "providers": ["vendor/asr-retains"]}))
+        fails = _run_in(root, fake(models(root), tags={k: v for k, v in pins(root).items() if k != "vendor/asr"}))
+        self.assertTrue(any("vendor/asr pinned endpoint vendor/asr-retains" in f for f in fails), fails)
 
     def test_pinned_endpoint_not_zdr(self):
         root = tree()

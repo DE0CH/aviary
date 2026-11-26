@@ -5,11 +5,16 @@
 name: drive
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet (not tags: jarvis.yml's releases push jarvis-<sha12>)
+    branches: ['**']  # every branch: the gate waits for it (not tags: jarvis.yml's releases push jarvis-<sha12>)
     paths: [drive/**, deploy/images.json, .github/workflows/drive.yml]
   workflow_dispatch:
+  # deploy.yml runs this workflow at a commit whose image is absent (docs/DEPLOY.md: the deploy builds what its commit
+  # lacks; the registry is only a cache): `sha` is that commit, and everything here builds and tests it
+  workflow_call:
+    inputs:
+      sha: {type: string, required: true}
 concurrency:
-  group: drive-${{ github.ref }}
+  group: drive-${{ inputs.sha && format('deploy-{0}', inputs.sha) || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
@@ -26,11 +31,11 @@ jobs:
       have: ${{ steps.p.outputs.have }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
+        with: {ref: "${{ inputs.sha || github.sha }}", persist-credentials: false, fetch-depth: 0, filter: "blob:none"}
       - id: p
         run: |
           # shellcheck disable=SC2046 # a list of paths
-          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $(jq -r '."yyc-drive".paths | join(" ")' deploy/images.json))
+          sha=$(git log -1 --format=%H "${{ inputs.sha || github.sha }}" -- $(jq -r '."yyc-drive".paths | join(" ")' deploy/images.json))
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/yyc-drive:pull" | jq -r .token)
           code=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $token" \
@@ -45,6 +50,7 @@ jobs:
     defaults: {run: {working-directory: drive/server}}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - name: toolchain 1.99.1 with clippy
         run: rustup toolchain install 1.99.1 --profile minimal --component clippy && rustup override set 1.99.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -62,6 +68,7 @@ jobs:
     defaults: {run: {working-directory: drive}}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 22}
       - run: npm install -g pnpm@11.28.11
@@ -75,6 +82,7 @@ jobs:
     defaults: {run: {working-directory: drive/edge}}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 22}
       - run: npm test
@@ -102,6 +110,7 @@ jobs:
       TAG: ${{ needs.part.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: the cache service's token for buildx (type=gha)
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0

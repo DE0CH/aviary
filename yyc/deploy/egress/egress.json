@@ -53,6 +53,13 @@
     "id": "qwen/qwen3-embedding-8b",
     "queryInstruction": "Instruct: Given a search query, retrieve the messages of a person's chat conversations that are relevant to it\nQuery: "
   },
+  "transcription": {
+    "id": "qwen/qwen3-asr-1.7b",
+    "providers": [
+      "deepinfra/us",
+      "primeintellect/bf16"
+    ]
+  },
   "routes": [
     {
       "name": "model",
@@ -64,7 +71,8 @@
       "allowPaths": [
         "/v1/messages",
         "/v1/chat/completions",
-        "/v1/embeddings"
+        "/v1/embeddings",
+        "/v1/audio/transcriptions"
       ]
     },
     {
@@ -152,6 +160,24 @@
   },
   "exit": {
     "socks": "socks.egress.svc.cluster.local:1080",
-    "sandboxProfile": "sandbox"
+    "sandboxProfile": "sandbox",
+    "via": [
+      {
+        "hosts": [
+          ".youtube.com",
+          "youtu.be",
+          ".googlevideo.com",
+          ".ytimg.com",
+          ".ggpht.com",
+          ".youtube-nocookie.com",
+          ".now.com",
+          ".nowe.com",
+          ".viu.tv",
+          ".tvb.com",
+          ".mytvsuper.com"
+        ],
+        "proxyEnv": "EXIT_VIA_YYC_AI_ISP"
+      }
+    ]
   }
 }
