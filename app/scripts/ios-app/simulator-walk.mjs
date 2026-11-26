@@ -108,26 +108,31 @@ async function flowWithRetry(maestro, udid, name, env) {
 }
 
 /**
- * Signs in, up to three times (as the Fold's test does, android-app/emulator-test.mjs). The part that fails now and
- * then is iOS's, not the app's: its "Wants to Use" prompt not shown yet, or XCTest timing out on the sign-in page's
- * Safari view while it closes ("Request for viewHierarchy failed"), after which XCTest's runner restarts and every
- * later try in the same simulator fails alike (2026-11-26: two runs with all three tries lost). So a failed try
- * restarts the simulator (the app stays installed) before the next; walk-sign-in.yaml goes on from wherever the
- * last try left it.
+ * Signs in. The part that fails now and then is iOS's, not the app's (2026-11-26, stand-in.log: the app had signed in
+ * and connected while the walk failed): XCTest reads the screen while the sign-in sheet's Safari view closes, hangs
+ * on it ("Request for viewHierarchy failed") and its runner restarts, or the "Wants to Use" prompt is late. So the
+ * sign-in (walk-sign-in.yaml) ends at Continue and nothing reads the screen in that Maestro run after it; a run of
+ * its own (walk-signed-in.yaml) then waits for the signed-in app, again if XCTest fails it, with the app left as it
+ * is (a relaunch would sign it out: the unsigned build's Keychain refuses the token). The sign-in itself is tried
+ * up to three times, as the Fold's test does (android-app/emulator-test.mjs).
  */
 async function signIn(maestro, udid, env) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const result = await runFlow(maestro, udid, "walk-sign-in", env);
-    if (result === true) return true;
-    console.log(`sign-in attempt ${attempt} failed (${result === "driver" ? "Maestro's driver did not start" : "see walk-sign-in.log"})`);
-    if (attempt < 3) {
-      fs.copyFileSync(path.join(out, "walk-sign-in.log"), path.join(out, `walk-sign-in-${attempt}.log`));
-      run("xcrun", ["simctl", "shutdown", udid]);
-      run("xcrun", ["simctl", "boot", udid]);
-      run("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+    const started = await flowWithRetry(maestro, udid, "walk-sign-in", env);
+    for (let look = 1; started && look <= 3; look += 1) {
+      if (await flowWithRetry(maestro, udid, "walk-signed-in", env)) return true;
+      keep("walk-signed-in", `${attempt}-${look}`);
     }
+    console.log(`sign-in attempt ${attempt} failed (see walk-sign-in*.log and walk-signed-in*.log)`);
+    keep("walk-sign-in", `${attempt}`);
   }
   return false;
+}
+
+/** Keeps a flow's log under another name before the flow runs again. */
+function keep(name, suffix) {
+  const log = path.join(out, `${name}.log`);
+  if (fs.existsSync(log)) fs.copyFileSync(log, path.join(out, `${name}-${suffix}.log`));
 }
 
 /** Maestro's UI tree, read beside this process as a flow is (the stand-in keeps answering). */
@@ -174,7 +179,8 @@ async function main() {
   try {
     const env = { APP_ID: appId, ...TEXTS };
     const signedIn = await signIn(maestro, udid, env);
-    check("sign-in returns to the app, signed in", signedIn, "walk-sign-in.log names the step that failed");
+    check("sign-in returns to the app, signed in", signedIn,
+      "walk-sign-in*.log and walk-signed-in*.log name the step that failed");
     if (!signedIn) return;
     const listed = await flowWithRetry(maestro, udid, "walk-list", env);
     check("the list, and a long press on a plain and a pinned conversation opening its menu", listed,
