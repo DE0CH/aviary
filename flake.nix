@@ -73,6 +73,27 @@
       });
       service = name: serviceWith name "release";
 
+      # magpie: glibc, not musl, with libheif (and its HEVC decoder) as .github/ci/build-magpie.sh builds it on Debian
+      magpieCommon = {
+        inherit src;
+        strictDeps = true;
+        nativeBuildInputs = [ pkgs.pkg-config pkgs.rustPlatform.bindgenHook ];
+        buildInputs = [ pkgs.libheif ];
+        doCheck = false;
+      };
+      magpie-deps = craneLib.buildDepsOnly (magpieCommon // {
+        pname = "magpie-deps";
+        version = "0.0.0";
+        cargoExtraArgs = "--locked -p magpie";
+      });
+      magpie = craneLib.buildPackage (magpieCommon // {
+        pname = "magpie";
+        version = "0.0.0";
+        cargoArtifacts = magpie-deps;
+        cargoExtraArgs = "--locked -p magpie --bin magpie";
+        AVIARY_REVISION = sourceHash;
+      });
+
       # gcr.io/distroless/static-debian12:nonroot, as the Dockerfiles start from: CA certificates, time zones, the
       # nonroot user and group 65532, a writable /tmp
       base = pkgs.runCommand "distroless-static" { } ''
@@ -95,8 +116,9 @@
         pkgs.dockerTools.streamLayeredImage {
         inherit name;
         tag = "nix";
-        # one root: the distroless files and the tools (linked from the store)
-        contents = [ base ] ++ tools;
+        # one root: the distroless files, the tools, and the service's package (linked from the store; it brings
+        # the libraries a dynamically linked binary loads, magpie's libheif)
+        contents = [ base bin ] ++ tools;
         # the binary as a real file at /usr/local/bin, as the Dockerfile puts it (a link into the store would be what
         # /proc/<pid>/exe names, and adopt.sh checks it is /usr/local/bin/sandboxd); /tmp writable by anyone, as
         # distroless has it (a store path is read-only)
@@ -180,6 +202,14 @@
           bin = hermit;
           description = "hermit: sandboxes, people and workspaces";
           extraBins = [ juicefs ];
+        };
+        inherit magpie-deps magpie;
+        magpie-image = image {
+          name = "magpie";
+          bin = magpie;
+          description = "magpie: conversations, timelines and blobs of aviary";
+          ports = [ 8080 9090 ];
+          user = "10001:10001";
         };
         default = herald-image;
       };

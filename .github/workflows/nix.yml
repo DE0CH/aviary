@@ -43,6 +43,8 @@ jobs:
           - {name: sandboxd, kind: gateway, user: "0:0"}
           # hermit: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
           - {name: hermit, kind: hermit, user: "65532:65532"}
+          # magpie: glibc and libheif with its HEVC decoder; it decodes the HEIC fixture with the release binary
+          - {name: magpie, kind: magpie, user: "10001:10001"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -135,3 +137,10 @@ jobs:
           printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
           docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" "$img" catalogue-check /c.json
           code=0; docker run --rm "$img" serve || code=$?; test "$code" -eq 78
+      - name: magpie decodes the HEIC fixture (libheif and its HEVC decoder are in the image)
+        if: matrix.kind == 'magpie'
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" "${{ matrix.name }}:nix" check-image /photo.heic)
+          echo "$out"
+          test "$out" = "image/heic 640x480"
