@@ -10,11 +10,17 @@ appId: ${APP_ID}
     visible:
       id: "menu-button"
     timeout: 90000
-- tapOn:
-    id: "menu-button"
-- extendedWaitUntil:
-    visible: "${STEPS}"
-    timeout: 30000
+# a tap on the list's button just after a screen change is sometimes not taken (the list stays shut: 2026-11-26,
+# once after sign-in, once after the Activity panel's back), so it is tapped again when the list does not show
+- waitForAnimationToEnd
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: "menu-button"
+      - extendedWaitUntil:
+          visible: "${STEPS}"
+          timeout: 10000
 - tapOn: "${STEPS}"
 - extendedWaitUntil:
     visible:
