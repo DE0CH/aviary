@@ -23,8 +23,8 @@ fs.mkdirSync(out, { recursive: true });
 const here = path.dirname(new URL(import.meta.url).pathname);
 const flows = path.join(here, "../../ios/maestro");
 const PORT = 8787;
-// the stand-in's conversations (scripts/touch-targets/content.mjs), as in the Fold walk
-const TEXTS = { PLAIN: "新產品命名諗法", PINNED: "員工旅行行程", TASKS: "客戶電郵草稿" };
+// the stand-in's conversations (scripts/touch-targets/content.mjs), as in the Fold walk; STEPS has tool calls
+const TEXTS = { PLAIN: "新產品命名諗法", PINNED: "員工旅行行程", TASKS: "客戶電郵草稿", STEPS: "季度銷售報告" };
 
 const run = (cmd, args, opts = {}) =>
   execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, ...opts });
@@ -108,19 +108,31 @@ async function flowWithRetry(maestro, udid, name, env) {
 }
 
 /**
- * Signs in, up to three times (as the Fold's test does, android-app/emulator-test.mjs). The part that fails now and
- * then is iOS's, not the app's: its "Wants to Use" prompt not shown yet, or XCTest timing out on the sign-in page's
- * Safari view while it closes ("Request for viewHierarchy failed"). walk-sign-in.yaml relaunches the app and goes on
- * from wherever the last try left it.
+ * Signs in. The part that fails now and then is iOS's, not the app's (2026-11-26, stand-in.log: the app had signed in
+ * and connected while the walk failed): XCTest reads the screen while the sign-in sheet's Safari view closes, hangs
+ * on it ("Request for viewHierarchy failed") and its runner restarts, or the "Wants to Use" prompt is late. So the
+ * sign-in (walk-sign-in.yaml) ends at Continue and nothing reads the screen in that Maestro run after it; a run of
+ * its own (walk-signed-in.yaml) then waits for the signed-in app, again if XCTest fails it, with the app left as it
+ * is (a relaunch would sign it out: the unsigned build's Keychain refuses the token). The sign-in itself is tried
+ * up to three times, as the Fold's test does (android-app/emulator-test.mjs).
  */
 async function signIn(maestro, udid, env) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const result = await runFlow(maestro, udid, "walk-sign-in", env);
-    if (result === true) return true;
-    console.log(`sign-in attempt ${attempt} failed (${result === "driver" ? "Maestro's driver did not start" : "see walk-sign-in.log"})`);
-    if (attempt < 3) fs.copyFileSync(path.join(out, "walk-sign-in.log"), path.join(out, `walk-sign-in-${attempt}.log`));
+    const started = await flowWithRetry(maestro, udid, "walk-sign-in", env);
+    for (let look = 1; started && look <= 3; look += 1) {
+      if (await flowWithRetry(maestro, udid, "walk-signed-in", env)) return true;
+      keep("walk-signed-in", `${attempt}-${look}`);
+    }
+    console.log(`sign-in attempt ${attempt} failed (see walk-sign-in*.log and walk-signed-in*.log)`);
+    keep("walk-sign-in", `${attempt}`);
   }
   return false;
+}
+
+/** Keeps a flow's log under another name before the flow runs again. */
+function keep(name, suffix) {
+  const log = path.join(out, `${name}.log`);
+  if (fs.existsSync(log)) fs.copyFileSync(log, path.join(out, `${name}-${suffix}.log`));
 }
 
 /** Maestro's UI tree, read beside this process as a flow is (the stand-in keeps answering). */
@@ -131,33 +143,44 @@ function hierarchy(maestro, udid) {
   });
 }
 
-/** The top edge of the element whose identifier is `id` in Maestro's UI tree, or null. */
-async function topOf(maestro, udid, id, label) {
+/** The top edges of the elements whose identifier is `id` in Maestro's UI tree, top first. */
+async function topsOf(maestro, udid, id, label) {
   const tree = JSON.parse((await hierarchy(maestro, udid)).replace(/^[^{]*/, ""));
   fs.writeFileSync(path.join(out, `tree-${label}.json`), JSON.stringify(tree, null, 1));
+  const tops = [];
   const stack = [tree];
   while (stack.length) {
     const node = stack.pop();
     const attrs = node.attributes ?? {};
     if (Object.values(attrs).includes(id)) {
       const bounds = String(attrs.bounds ?? "").match(/\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/);
-      if (bounds && +bounds[4] > +bounds[2]) return +bounds[2];
+      if (bounds && +bounds[4] > +bounds[2]) tops.push(+bounds[2]);
     }
     stack.push(...(node.children ?? []));
   }
-  return null;
+  return tops.sort((a, b) => a - b);
+}
+
+/** The top edge of the element whose identifier is `id`, or null. */
+async function topOf(maestro, udid, id, label) {
+  return (await topsOf(maestro, udid, id, label))[0] ?? null;
 }
 
 async function main() {
   const appId = plist("CFBundleIdentifier");
   const scheme = plist("CFBundleURLTypes.0.CFBundleURLSchemes.0");
-  const standIn = await startStandIn({ appDir: path.join(here, "../../packages/app/public"), port: PORT, appScheme: scheme, quiet: true });
+  const heard = path.join(out, "stand-in.log");
+  const onRequest = (method, url) => fs.appendFileSync(heard, `${new Date().toISOString()} ${method} ${url}\n`);
+  const standIn = await startStandIn({
+    appDir: path.join(here, "../../packages/app/public"), port: PORT, appScheme: scheme, quiet: true, onRequest,
+  });
   const maestro = maestroBin();
   const udid = bootSimulator();
   try {
     const env = { APP_ID: appId, ...TEXTS };
     const signedIn = await signIn(maestro, udid, env);
-    check("sign-in returns to the app, signed in", signedIn, "walk-sign-in.log names the step that failed");
+    check("sign-in returns to the app, signed in", signedIn,
+      "walk-sign-in*.log and walk-signed-in*.log name the step that failed");
     if (!signedIn) return;
     const listed = await flowWithRetry(maestro, udid, "walk-list", env);
     check("the list, and a long press on a plain and a pinned conversation opening its menu", listed,
@@ -172,6 +195,19 @@ async function main() {
     check("the Activity panel's header is below the status bar, where the chat's is",
       chatTop !== null && panelTop !== null && panelTop >= chatTop - 4,
       `chat title top ${chatTop}, Activity title top ${panelTop}`);
+    // a tool call opens in place on a phone, its header held where the finger was (Deyao, 2026-11-20): the list is
+    // inverted, so without the scroll it gives back each frame the header would rise by the details' height
+    const steps = await flowWithRetry(maestro, udid, "walk-tool", env);
+    check("the conversation with steps opens and its turn shows its tool calls", steps);
+    if (!steps) return;
+    const closedTop = await topOf(maestro, udid, "tool-call-badge", "tool-closed");
+    const toolOpened = await flowWithRetry(maestro, udid, "walk-tool-open", env);
+    check("a tap on a tool call opens it", toolOpened);
+    if (!toolOpened) return;
+    const openTop = await topOf(maestro, udid, "tool-call-badge", "tool-open");
+    check("an opened tool call's header stays where it was tapped",
+      closedTop !== null && openTop !== null && Math.abs(openTop - closedTop) <= 4,
+      `header top ${closedTop} closed, ${openTop} open`);
   } finally {
     try {
       run("xcrun", ["simctl", "io", udid, "screenshot", path.join(out, "final.png")]);

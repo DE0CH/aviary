@@ -4,10 +4,8 @@ import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { IndentRail } from "@/components/indent-rail";
 import { ExpandableBadge } from "@/components/message";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useOverviewSummaryLabel } from "./label";
 import type { OverviewToolCallGroup } from "./model";
-import { OverviewToolCallGroupSheet } from "./sheet";
 
 interface OverviewGroupProps {
   group: OverviewToolCallGroup;
@@ -27,7 +25,6 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   children,
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
-  const isCompact = useIsCompactFormFactor();
   const aggregateSummary = useOverviewSummaryLabel(group.summary);
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
@@ -35,9 +32,6 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   const toggle = useCallback(() => {
     onExpandedChange(group.run.id, !expanded);
   }, [expanded, group.run.id, onExpandedChange]);
-  const close = useCallback(() => {
-    onExpandedChange(group.run.id, false);
-  }, [group.run.id, onExpandedChange]);
   const renderDetails = useCallback(
     () => (
       <ScrollView
@@ -54,25 +48,7 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     [children, scrollToLatest],
   );
 
-  if (isCompact) {
-    return (
-      <>
-        <ExpandableBadge
-          testID="tool-call-group"
-          label={aggregateSummary}
-          icon={Wrench}
-          isLoading={group.isLoading}
-          isExpanded={false}
-          isLastInSequence={isLastInSequence}
-          onToggle={toggle}
-        />
-        <OverviewToolCallGroupSheet visible={expanded} summary={aggregateSummary} onClose={close}>
-          {children}
-        </OverviewToolCallGroupSheet>
-      </>
-    );
-  }
-
+  // Opens in place on every screen, as a single tool call does (Deyao, 2026-11-20: no bottom sheet on a phone)
   return (
     <ExpandableBadge
       testID="tool-call-group"
