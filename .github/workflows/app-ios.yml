@@ -64,6 +64,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        # the build number counts main's commits (testing/ios-build-number)
+        with: {fetch-depth: 0, filter: "blob:none"}
 
       - name: Select Xcode
         run: |
@@ -81,9 +83,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: The build number
+        # main's commit count, then the run's attempt (testing/ios-build-number): App Store Connect refuses a number
+        # that is not above every build of the app it holds, and every branch checks this one against its record
+        # (app.yml ios-build-number, ios-builds.yml) before the merge
+        working-directory: .
+        run: |
+          rustup toolchain install
+          number=$(cargo run --locked -q -p ios-build-number -- number)
+          echo "BUILD_NUMBER=$number" >> "$GITHUB_ENV"
+          echo "::notice title=iOS build number::$number"
+
       - name: Generate the iOS project
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
         run: ios/prepare.sh
 
       - name: Find the workspace
