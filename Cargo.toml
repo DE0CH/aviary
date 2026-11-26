@@ -17,6 +17,7 @@ members = [
   "testing/ci-services",
   "testing/ci-release",
   "testing/e2e-harness",
+  "testing/ios-build-number",
 ]
 # throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
 # jarvis/hermit (hermit-jarvis, aviary-gateway: on these crates by path), drive/server (YYC Drive) and tools/ are
