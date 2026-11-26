@@ -2180,10 +2180,7 @@ async fn a_qwen_turn_names_its_images_by_at_path_and_sends_no_image_block() {
         .filter(|o| o.contains("images="))
         .collect();
     assert!(out.contains("images=0"), "no image block: {out}");
-    let at = format!(
-        "@{}/uploads/image-1\\\\ \\\\(3\\\\).jpeg",
-        w.ws.to_string_lossy()
-    );
+    let at = format!("@{}/uploads/image-1\\\\ \\\\(3\\\\).jpeg", w.ws.to_string_lossy());
     assert!(out.contains(&at), "{at} in {out}");
     assert!(out.contains("<image_uploads>"), "the listed paths stay: {out}");
 }

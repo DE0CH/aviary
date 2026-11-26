@@ -310,13 +310,7 @@ impl Blobs {
     /// # Errors
     /// 415 `unsupported_type` for `display`/`thumb` of a non-image or an image over the decode limit; as
     /// [`Blobs::stored_bytes`].
-    pub async fn variant(
-        &self,
-        pool: &Pool,
-        row: &BlobRow,
-        variant: BlobVariant,
-        shown: &Shown,
-    ) -> Result<Served> {
+    pub async fn variant(&self, pool: &Pool, row: &BlobRow, variant: BlobVariant, shown: &Shown) -> Result<Served> {
         match variant {
             BlobVariant::Full => Ok(Served {
                 bytes: self.original(pool, row).await?,

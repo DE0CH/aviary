@@ -257,7 +257,10 @@ mod tests {
             at_path("/workspace/uploads/image-1 (3).jpeg"),
             r"@/workspace/uploads/image-1\ \(3\).jpeg"
         );
-        assert_eq!(at_path("/w/a,b;c[1]{2}'#&!~.png"), r"@/w/a\,b\;c\[1\]\{2\}\'\#\&\!\~.png");
+        assert_eq!(
+            at_path("/w/a,b;c[1]{2}'#&!~.png"),
+            r"@/w/a\,b\;c\[1\]\{2\}\'\#\&\!\~.png"
+        );
         assert_eq!(at_path("/w/報告.png"), "@/w/報告.png");
         let shown = [
             Attached {

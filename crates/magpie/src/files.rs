@@ -113,7 +113,9 @@ pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant, request: 
             .await?;
         match u.map(|r| r.get::<_, Option<Vec<u8>>>(0)) {
             Some(Some(m)) => match Sha::try_from(m.as_slice()) {
-                Ok(m) => blobs::row(&conn, &m).await?.map_or(blobs::read::Shown::Fitted, blobs::read::Shown::Blob),
+                Ok(m) => blobs::row(&conn, &m)
+                    .await?
+                    .map_or(blobs::read::Shown::Fitted, blobs::read::Shown::Blob),
                 Err(_) => blobs::read::Shown::Fitted,
             },
             Some(None) => blobs::read::Shown::Fitted,
