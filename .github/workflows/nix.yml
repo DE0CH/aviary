@@ -41,6 +41,8 @@ jobs:
           - {name: pigeon, kind: service, user: "65532:65532", missing: PIGEON_TOKEN_MAGPIE}
           # the gateway pod's image: ci.yml's images/sandboxd checks and adopt.sh against the image
           - {name: sandboxd, kind: gateway, user: "0:0"}
+          # hermit: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
+          - {name: hermit, kind: hermit, user: "65532:65532"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -97,7 +99,7 @@ jobs:
             and (."org.opencontainers.image.revision" | test("^[0-9a-z]{32}$"))
             and ."org.opencontainers.image.version" == (."org.opencontainers.image.revision"[0:12])' <<< "$l" >/dev/null
           test "$(docker image inspect -f '{{.Config.User}}' "$img")" = "${{ matrix.user }}"
-          docker run --rm "$img" --version
+          if [ "${{ matrix.kind }}" = hermit ]; then docker run --rm "$img" --help; else docker run --rm "$img" --version; fi
       - name: a service refuses to start without its secrets, naming the variable, never a value (exit 78)
         if: matrix.kind == 'service'
         run: |
@@ -124,3 +126,12 @@ jobs:
         run: |
           sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
           sudo SBX_GATEWAY_IMAGE="${{ matrix.name }}:nix" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
+      - name: hermit's juicefs CLI, the catalogue check, and its refusal to start without secrets (exit 78)
+        if: matrix.kind == 'hermit'
+        run: |
+          set -euo pipefail
+          img=${{ matrix.name }}:nix
+          docker run --rm --entrypoint /usr/local/bin/juicefs "$img" version
+          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
+          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" "$img" catalogue-check /c.json
+          code=0; docker run --rm "$img" serve || code=$?; test "$code" -eq 78

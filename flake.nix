@@ -90,7 +90,8 @@
       # an image as images/<name>/Dockerfile describes it: the binary at /usr/local/bin, the same labels, user, ports
       # and command. `revision` and `version` name the source by the hash Nix gives it, not by a commit: a commit in
       # the image would make every commit a new image, and no build would ever come from the cache.
-      image = { name, bin, description, ports ? [ ], user ? "65532:65532", cmd ? [ "serve" ], tools ? [ ], env ? [ ] }:
+      image = { name, bin, description, ports ? [ ], user ? "65532:65532", cmd ? [ "serve" ], tools ? [ ], env ? [ ],
+                extraBins ? [ ] }:
         pkgs.dockerTools.streamLayeredImage {
         inherit name;
         tag = "nix";
@@ -102,7 +103,8 @@
         extraCommands = ''
           mkdir -p usr/local/bin tmp
           cp ${bin}/bin/${name} usr/local/bin/${name}
-          chmod 755 usr/local/bin/${name}
+          ${lib.concatMapStrings (b: "cp ${b}/bin/* usr/local/bin/\n") extraBins}
+          chmod 755 usr/local/bin/*
           chmod 1777 tmp
         '';
         config = {
@@ -120,6 +122,19 @@
           };
         };
       };
+
+      # images/hermit/Dockerfile's juicefs: the same release, checked by the same sha256 (a fetch is the one step whose
+      # answer may vary; its bytes may not)
+      juicefs = pkgs.runCommand "juicefs-1.4.1" {
+        src = pkgs.fetchurl {
+          url = "https://github.com/juicedata/juicefs/releases/download/v1.4.1/juicefs-1.4.1-linux-amd64.tar.gz";
+          sha256 = "01ee09a21a9351a465e09906f113845e1c6a19bea70f530e5e2b2125b2dd3b82";
+        };
+      } ''
+        mkdir -p $out/bin
+        tar -xzf $src -C $out/bin juicefs
+        chmod 755 $out/bin/juicefs
+      '';
 
       # the hash of the source's store path: it changes exactly when the source does
       sourceHash = builtins.substring 0 32 (baseNameOf src);
@@ -156,6 +171,15 @@
           # pkgs.crane by name: inside `with pkgs`, `crane` is this flake's crane input (`with` never shadows)
           tools = with pkgs; [ iproute2 nftables wireguard-tools procps gnutar zstd pkgs.crane.crane bash coreutils ];
           env = [ "SBX_CONFIG=/etc/sbx/host.json" ];
+        };
+        inherit juicefs;
+        hermit-deps = deps "hermit" "release";
+        hermit = service "hermit";
+        hermit-image = image {
+          name = "hermit";
+          bin = hermit;
+          description = "hermit: sandboxes, people and workspaces";
+          extraBins = [ juicefs ];
         };
         default = herald-image;
       };
