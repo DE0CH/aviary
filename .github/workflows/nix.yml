@@ -72,7 +72,8 @@ jobs:
       - name: the image, as ci.yml checks herald's Dockerfile image
         run: |
           set -euo pipefail
-          nix run .#herald-image.copyToDockerDaemon
+          # the image's tarball, written by the script dockerTools.streamLayeredImage builds
+          "$(nix build .#herald-image --no-link --print-out-paths)" | docker load
           img=herald:nix
           test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$img")" = linux/amd64
           l=$(docker image inspect -f '{{json .Config.Labels}}' "$img")

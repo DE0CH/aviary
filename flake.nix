@@ -6,24 +6,19 @@
   description = "aviary: images built from source by Nix";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     crane.url = "github:ipetkov/crane";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nix2container = {
-      url = "github:nlewo/nix2container";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, crane, rust-overlay, nix2container }:
+  outputs = { self, nixpkgs, crane, rust-overlay }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; overlays = [ rust-overlay.overlays.default ]; };
       lib = pkgs.lib;
-      n2c = nix2container.packages.${system}.nix2container;
 
       # rust-toolchain.toml, exactly (1.99.1, with its musl targets), as rustup gives CI
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
@@ -77,8 +72,7 @@
       # gcr.io/distroless/static-debian12:nonroot, as the Dockerfiles start from: CA certificates, time zones, the
       # nonroot user and group 65532, a writable /tmp
       base = pkgs.runCommand "distroless-static" { } ''
-        mkdir -p $out/etc $out/tmp $out/share
-        chmod 1777 $out/tmp
+        mkdir -p $out/etc $out/share
         cp -rL ${pkgs.cacert}/etc/ssl $out/etc/ssl
         cp -rL ${pkgs.tzdata}/share/zoneinfo $out/share/zoneinfo
         echo 'root:x:0:0:root:/root:/sbin/nologin' > $out/etc/passwd
@@ -90,18 +84,19 @@
       # an image as images/<name>/Dockerfile describes it: the binary at /usr/local/bin, the same labels, user, ports
       # and command. `revision` and `version` name the source by the hash Nix gives it, not by a commit: a commit in
       # the image would make every commit a new image, and no build would ever come from the cache.
-      image = { name, bin, description, ports }: n2c.buildImage {
+      image = { name, bin, description, ports }: pkgs.dockerTools.streamLayeredImage {
         inherit name;
         tag = "nix";
-        # one root: two paths that both hold /etc are refused when one carries permissions (/tmp)
-        copyToRoot = [
+        # one root: the distroless files, then the binary at /usr/local/bin
+        contents = [
           base
           (pkgs.runCommand "${name}-bin" { } ''
             mkdir -p $out/usr/local/bin
             cp ${bin}/bin/${name} $out/usr/local/bin/${name}
           '')
         ];
-        perms = [{ path = base; regex = "/tmp"; mode = "1777"; }];
+        # /tmp writable by anyone, as distroless has it (a store path is read-only)
+        extraCommands = "mkdir -p tmp && chmod 1777 tmp";
         config = {
           User = "65532:65532";
           Entrypoint = [ "/usr/local/bin/${name}" ];
