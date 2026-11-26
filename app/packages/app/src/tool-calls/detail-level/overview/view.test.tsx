@@ -9,9 +9,7 @@ const layout = vi.hoisted(() => ({ compact: true }));
 const badges = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 
 vi.mock("react-native", () => ({
-  ScrollView: ({ children }: React.PropsWithChildren) =>
-    React.createElement("div", { "data-testid": "own-scroll" }, children),
-  View: ({ children }: React.PropsWithChildren) => React.createElement("div", null, children),
+  ScrollView: ({ children }: React.PropsWithChildren) => React.createElement("div", null, children),
 }));
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: { create: () => ({}) },
@@ -36,7 +34,6 @@ vi.mock("@/components/message", () => ({
 vi.stubGlobal("React", React);
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
-import { RowAnchorContext, type RowAnchor } from "@/agent-stream/row-anchor";
 import { OverviewToolCallGroupView } from "./view";
 import type { OverviewToolCallGroup } from "./model";
 
@@ -63,14 +60,12 @@ describe("OverviewToolCallGroupView", () => {
     container.remove();
   });
 
-  function render(expanded: boolean, anchor: RowAnchor | null = null) {
+  function render(expanded: boolean) {
     act(() => {
       root.render(
-        <RowAnchorContext.Provider value={anchor}>
-          <OverviewToolCallGroupView group={group} expanded={expanded} isLastInSequence onExpandedChange={() => {}}>
-            <span data-testid="the-calls">calls</span>
-          </OverviewToolCallGroupView>
-        </RowAnchorContext.Provider>,
+        <OverviewToolCallGroupView group={group} expanded={expanded} isLastInSequence onExpandedChange={() => {}}>
+          <span data-testid="the-calls">calls</span>
+        </OverviewToolCallGroupView>,
       );
     });
   }
@@ -90,19 +85,5 @@ describe("OverviewToolCallGroupView", () => {
     render(false);
     expect(badges.last?.isExpanded).toBe(false);
     expect(container.querySelector('[data-testid="the-calls"]')).toBeNull();
-  });
-
-  // A list that holds a row's header still (the phone's, agent-stream/row-anchor.tsx) scrolls by each frame's growth
-  // of the row; a box of its own capped at 400 px would grow less than its calls do, and the header would slide down
-  // by the difference (the iPhone walk: a call's header moved 105 px as it opened). Without that list, the box stays.
-  it("lets the list do the scrolling where the list holds the header still", () => {
-    render(true, { keepTop: () => {} });
-    expect(container.querySelector('[data-testid="own-scroll"]')).toBeNull();
-    expect(container.querySelector('[data-testid="the-calls"]')).not.toBeNull();
-  });
-
-  it("keeps its own capped scroll box elsewhere", () => {
-    render(true, null);
-    expect(container.querySelector('[data-testid="own-scroll"] [data-testid="the-calls"]')).not.toBeNull();
   });
 });

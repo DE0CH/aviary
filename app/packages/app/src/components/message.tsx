@@ -17,7 +17,6 @@ import { TaskListRow } from "@/components/task-list-row";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { EaseHeight } from "@/components/ui/ease-height";
-import { useRowAnchor } from "@/agent-stream/row-anchor";
 import { useStopFollowing } from "@/agent-stream/stop-following";
 import { isNative, isWeb } from "@/constants/platform";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
@@ -1916,9 +1915,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const [isPressed, setIsPressed] = useState(false);
   const isInteractive = Boolean(onToggle);
   const hasDetailContent = Boolean(renderDetails);
-  // On a phone the details ease open below the header and ease closed before they go, the header held still
-  // (components/ui/ease-height.tsx, agent-stream/row-anchor.tsx; Deyao, 2026-11-20). Web opens and closes at once.
-  const rowAnchor = useRowAnchor();
+  // On a phone the details ease open below the header and ease closed before they go (components/ui/ease-height.tsx;
+  // Deyao, 2026-11-20); the native list keeps the header where the finger was, once opening has stopped it following
+  // the newest text. Web opens and closes at once.
   const stopFollowing = useStopFollowing();
   const [detailsMounted, setDetailsMounted] = useState(isExpanded);
   if (isExpanded && !detailsMounted) setDetailsMounted(true);
@@ -2226,7 +2225,6 @@ export const ExpandableBadge = memo(function ExpandableBadge({
           fromZero
           leaving={!isExpanded}
           onLeft={hideDetails}
-          onHeightDelta={rowAnchor?.keepTop}
         >
           <Pressable
             ref={detailWrapperRef}

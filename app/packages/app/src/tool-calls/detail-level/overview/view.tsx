@@ -1,8 +1,7 @@
 import React, { memo, useCallback, useRef, type ReactNode } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView } from "react-native";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useRowAnchor } from "@/agent-stream/row-anchor";
 import { IndentRail } from "@/components/indent-rail";
 import { ExpandableBadge } from "@/components/message";
 import { useOverviewSummaryLabel } from "./label";
@@ -33,29 +32,20 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   const toggle = useCallback(() => {
     onExpandedChange(group.run.id, !expanded);
   }, [expanded, group.run.id, onExpandedChange]);
-  // Where the list holds a row's header still as it grows (the phone's, agent-stream/row-anchor.tsx), the list does
-  // the scrolling: a box of the group's own, capped, would grow less than its calls and the header would slide by the
-  // difference. Elsewhere the calls scroll in a box of at most 400 px, newest in view.
-  const rowAnchor = useRowAnchor();
   const renderDetails = useCallback(
-    () =>
-      rowAnchor ? (
-        <View style={styles.content}>
-          <IndentRail>{children}</IndentRail>
-        </View>
-      ) : (
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          contentContainerStyle={styles.content}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-          onContentSizeChange={scrollToLatest}
-        >
-          <IndentRail>{children}</IndentRail>
-        </ScrollView>
-      ),
-    [children, rowAnchor, scrollToLatest],
+    () => (
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        onContentSizeChange={scrollToLatest}
+      >
+        <IndentRail>{children}</IndentRail>
+      </ScrollView>
+    ),
+    [children, scrollToLatest],
   );
 
   // Opens in place on every screen, as a single tool call does (Deyao, 2026-11-20: no bottom sheet on a phone)
