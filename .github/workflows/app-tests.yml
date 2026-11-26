@@ -9,10 +9,13 @@ on:
     paths: ["app/**", ".github/workflows/app-tests.yml"]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      # the commit to test, when a caller tests another than its own (app.yml called by deploy.yml)
+      sha: {type: string, required: false, default: ""}
 
 concurrency:
   # called from app.yml or app-ios.yml, github.workflow is the caller's name: each caller's copy has its own group
-  group: ${{ github.workflow }}-tests-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ${{ github.workflow }}-tests-${{ inputs.sha && format('deploy-{0}', inputs.sha) || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
   # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
   # finish (they build what the deploy ships)
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -28,6 +31,7 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with: {ref: "${{ inputs.sha || github.sha }}"}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.3

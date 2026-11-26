@@ -23,7 +23,7 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
   6  every NetworkPolicy's and CiliumNetworkPolicy's app label and every Service selector match a workload
   8  egress.json: routes model and tools, the rest sandbox routes (platform 3.11.8, WP-61) each with allowPaths and
      named by a managed skill as http://<name>/; tools routes only /v1/ (decision 15: REST, no /mcp); selfHosts holds
-     hermit.json's egressVip; every ${VAR} in an inject is a key of Secret yyc-ai/egress; a route to a host outside
+     hermit.json's egressVip; every ${VAR} in an inject and every exit.via proxyEnv is a key of Secret yyc-ai/egress and in the egress container's env; a route to a host outside
      YYC has identity: false, and a github.com one only /DE0CH/ paths and a Basic credential from the Secret
   K  the managed CLAUDE.md, skills and title instructions fit hermit's bound (237,568 bytes as JSON);
      managed skills (decision 15, WP-62): hermit.json prompt.skills is where hermit mounts ConfigMap hermit-skills;
@@ -309,7 +309,7 @@ def clean_prefix(p):
     return all(s not in (".", "..") for s in p[1:-1].split("/"))
 
 
-def check_egress(folder, secrets):
+def check_egress(folder, secrets, objs):
     e = json.load(open(os.path.join(folder, "egress", "egress.json")))
     h = json.load(open(os.path.join(folder, "hermit", "hermit.json")))
     names = sorted(r["name"] for r in e.get("routes", []))
@@ -345,11 +345,25 @@ def check_egress(folder, secrets):
     if h["fabric"]["egressVip"] not in e.get("selfHosts", []):
         fail(8, "egress.json", f"selfHosts lacks hermit.json's egressVip {h['fabric']['egressVip']}")
     keys = secrets.get("yyc-ai/egress", set())
-    for r in e.get("routes", []):
-        for v in r.get("inject", {}).values():
-            for var in re.findall(r"\$\{([A-Z0-9_]+)\}", v):
-                if var not in keys:
-                    fail(8, "egress.json", f"route {r['name']} injects ${{{var}}}, not a key of Secret yyc-ai/egress")
+    # what egress reads from its env by name: a route's ${VAR} and an exit.via entry's proxyEnv. Each must be a key of
+    # Secret yyc-ai/egress AND passed to the egress container under that name (2026-11-26: the key was in the Secret,
+    # not in the Deployment's env, and the new egress pods crash-looped)
+    dep = next((o for o in objs if o.get("kind") == "Deployment" and o["metadata"]["name"] == "egress"
+                and o["metadata"].get("namespace") == "yyc-ai"), None)
+    env = {}
+    for c in (pod_spec(dep) or {}).get("containers", []) if dep else []:
+        if c["name"] == "egress":
+            env = {x["name"]: ((x.get("valueFrom") or {}).get("secretKeyRef") or {}) for x in c.get("env", [])}
+    named = [(f"route {r['name']} injects ${{{var}}}", var) for r in e.get("routes", []) for v in r.get("inject", {}).values()
+             for var in re.findall(r"\$\{([A-Z0-9_]+)\}", v)]
+    named += [(f"exit.via proxyEnv {v.get('proxyEnv')}", v.get("proxyEnv")) for v in (e.get("exit") or {}).get("via", [])]
+    for what, var in named:
+        if var not in keys:
+            fail(8, "egress.json", f"{what}, not a key of Secret yyc-ai/egress")
+        ref = env.get(var)
+        if ref is None or ref.get("name") != "egress" or ref.get("key") != var:
+            fail(8, "egress.json", f"{what}, not in the egress container's env (a secretKeyRef to Secret egress, key {var})"
+                 if what.startswith("route") else f"{what} is not in the egress container's env (a secretKeyRef to Secret egress, key {var})")
     return h
 
 
@@ -717,7 +731,7 @@ def main():
     check_selectors(objs)
     check_balancer(objs)
     check_tools_out(objs)
-    h = check_egress(folder, secrets)
+    h = check_egress(folder, secrets, objs)
     check_skills(folder, objs, h)
     check_gateway(folder, h, a.online)
     check_hosts(h)

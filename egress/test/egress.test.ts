@@ -77,7 +77,7 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
     titleModel: "vendor/claude-x",
     contextTokens: 1048576,
     routes: [
-      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages", "/v1/chat/completions", "/v1/embeddings"] },
+      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages", "/v1/chat/completions", "/v1/embeddings", "/v1/audio/transcriptions"] },
       { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/v1/"], timeoutSeconds: 180 },
       // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
       { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
@@ -216,7 +216,7 @@ before(async () => {
         setTimeout(() => res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2,"cost":0.0042}}\n\n'), 20);
         return;
       }
-      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens" || p === "/api/v1/chat/completions" || p === "/api/v1/embeddings") {
+      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens" || p === "/api/v1/chat/completions" || p === "/api/v1/embeddings" || p === "/api/v1/audio/transcriptions") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
       }
@@ -936,6 +936,32 @@ test("conversation search: egress.json's embedding model reaches the models answ
   assert.equal((await http("http://model/v1/embeddings", { headers: pa() })).status, 403, "POST only");
 });
 
+test("transcription: egress.json's transcription model reaches the models answer; a sandbox's /v1/audio/transcriptions call is pinned, ZDR-forced, costed and gets the real key", async () => {
+  const cfgT = config(`http://127.0.0.1:${upPort}`, { transcription: { id: "qwen/qwen3-asr-1.7b", providers: ["deepinfra/us", "primeintellect/bf16"] } });
+  assert.deepEqual(modelsAnswer(cfgT).transcription, { id: "qwen/qwen3-asr-1.7b" });
+  assert.equal("transcription" in modelsAnswer(config("http://up.test")), false, "absent: no member");
+  assert.ok(allowedModels(cfgT).includes("qwen/qwen3-asr-1.7b"));
+  assert.throws(() => config("http://up.test", { transcription: { id: "" } }), /transcription.id/);
+  assert.throws(() => config("http://up.test", { transcription: { id: "m", providers: "x" } }), /transcription.providers/);
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-transcribe"), config: cfgT }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const post = (body: unknown) => http("http://model/v1/audio/transcriptions", { port: p, method: "POST", headers: { ...pa(), "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await post({ model: "qwen/qwen3-asr-1.7b", temperature: 0, input_audio: { data: "SUQz", format: "mp3" }, provider: { zdr: false } });
+    assert.equal(r.status, 200);
+    const echo = JSON.parse(r.body).echo;
+    assert.deepEqual(echo.provider, { order: ["deepinfra/us", "primeintellect/bf16"], only: ["deepinfra/us", "primeintellect/bf16"], allow_fallbacks: false, zdr: true, data_collection: "deny" });
+    assert.deepEqual(echo.input_audio, { data: "SUQz", format: "mp3" });
+    assert.equal(upLastHeaders.authorization, "Bearer sk-real");
+    assert.equal((await post({ model: "other/asr", input_audio: { data: "SUQz", format: "mp3" } })).status, 400, "only the models egress offers");
+    await sleep(100);
+    const row = (await rows(e.log)).filter((x) => x.kind === "model" && x.path === "/v1/audio/transcriptions" && x.status === 200).at(-1)!;
+    assert.equal(Number(row.cost_usd), 0.0123, "its cost counts toward the budget");
+  } finally {
+    await e.drain();
+  }
+});
+
 test("conversation search: pigeon's query embedding through the in-cluster API, zero data retention forced, the embedding model only", async () => {
   const cfgE = config(`http://127.0.0.1:${upPort}`, { embedding: { id: "qwen/qwen3-embedding-8b" } });
   const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-embed"), config: cfgE }));
@@ -1276,6 +1302,113 @@ test("exit: tunnels and plain HTTP go out by name with the sandbox profile; its 
   } finally {
     await e.drain();
     fake.server.close();
+  }
+});
+
+/** An HTTP CONNECT proxy playing the via exit (an IPRoyal ISP IP): records [authorization, target]; a wrong login is 407. */
+class FakeViaProxy {
+  readonly seen: [string, string][] = [];
+  readonly server = createNetServer((c) => {
+    c.on("error", () => {});
+    let buf = Buffer.alloc(0);
+    const onData = (d: Buffer) => {
+      buf = Buffer.concat([buf, d]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      c.removeListener("data", onData);
+      const head = buf.subarray(0, end).toString();
+      const rest = buf.subarray(end + 4);
+      const target = /^CONNECT (\S+) HTTP\/1\.[01]/.exec(head)?.[1] ?? "";
+      const auth = /\r\nproxy-authorization: *([^\r]*)/i.exec(head)?.[1] ?? "";
+      this.seen.push([auth, target]);
+      if (auth !== `Basic ${Buffer.from("isp-user:isp-pass").toString("base64")}`) return void c.end("HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n");
+      const port = Number(target.split(":").pop());
+      const u = netConnect(port, "127.0.0.1", () => {
+        c.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        if (rest.length) u.write(rest);
+        c.pipe(u);
+        u.pipe(c);
+      });
+      u.on("error", () => c.destroy());
+    };
+    c.on("data", onData);
+  });
+  port = 0;
+  async listen() {
+    await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
+    this.port = (this.server.address() as AddressInfo).port;
+    return this;
+  }
+}
+
+test("exit via: egress.json exit.via parses; its proxy comes from the env it names, and a missing one is refused", () => {
+  process.env.TEST_VIA_PROXY = "http://isp-user:isp-pass@proxy.test:12323";
+  assert.deepEqual(parseExit({ socks: "socks:1080", via: [{ hosts: [".youtube.com", "youtu.be"], proxyEnv: "TEST_VIA_PROXY" }] }), {
+    host: "socks", port: 1080, sandboxProfile: "sandbox",
+    via: [{ hosts: [".youtube.com", "youtu.be"], proxyEnv: "TEST_VIA_PROXY", proxy: { host: "proxy.test", port: 12323, authorization: `Basic ${Buffer.from("isp-user:isp-pass").toString("base64")}` } }],
+  });
+  assert.throws(() => parseExit({ socks: "socks:1080", via: [{ hosts: [".youtube.com"], proxyEnv: "TEST_VIA_MISSING" }] }), /TEST_VIA_MISSING/);
+  assert.throws(() => parseExit({ socks: "socks:1080", via: [{ hosts: [], proxyEnv: "TEST_VIA_PROXY" }] }), /hosts/);
+  process.env.TEST_VIA_BAD = "socks5://proxy.test:1";
+  assert.throws(() => parseExit({ socks: "socks:1080", via: [{ hosts: ["a.test"], proxyEnv: "TEST_VIA_BAD" }] }), /http:\/\/user:pass@host:port/);
+});
+
+test("exit via: a listed host goes out through its proxy (CONNECT with the login, over the exit's default profile), logged allow:via; others as before", async () => {
+  const fake = await new FakeExit().listen();
+  const via = await new FakeViaProxy().listen();
+  process.env.TEST_VIA_PROXY = `http://isp-user:isp-pass@proxy.test:${via.port}`;
+  const c = config(`http://127.0.0.1:${upPort}`, { exit: { socks: `127.0.0.1:${fake.port}`, via: [{ hosts: ["allowed.test", ".nope.test"], proxyEnv: "TEST_VIA_PROXY" }] } });
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-exit-via"), config: c }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(status, 200);
+    const reply = await new Promise<string>((resolve, reject) => {
+      const tc = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => tc.write("hi"));
+      tc.on("data", (d) => { resolve(d.toString()); tc.end(); });
+      tc.on("error", reject);
+    });
+    assert.equal(reply, "echo:hi");
+    // plain HTTP to a listed host: the request goes on a CONNECT tunnel to its port
+    const h = await http(`http://allowed.test:${upPort}/plain`, { headers: pa(), port: p });
+    assert.equal(h.status, 200);
+    assert.equal(h.body, "DEB");
+    // a host not listed goes to the exit with the sandbox profile, as before
+    assert.equal((await connectVia(`evil.test:${tlsPort}`, basic(sb.token), p)).status, 403);
+    // the deny list still decides first: a listed host on it never reaches the proxy
+    assert.equal((await connectVia(`other.test:${tlsPort}`, basic(sb.token), p)).status, 403);
+    const login = `Basic ${Buffer.from("isp-user:isp-pass").toString("base64")}`;
+    assert.deepEqual(via.seen, [[login, `allowed.test:${tlsPort}`], [login, `allowed.test:${upPort}`]]);
+    assert.deepEqual(fake.seen, [["", "proxy.test", via.port], ["", "proxy.test", via.port], ["sandbox", "evil.test", tlsPort]]);
+    await sleep(100);
+    const r = (await rows(e.log)).filter((x) => x.host === "allowed.test" && [tlsPort, upPort].includes(x.port!));
+    assert.deepEqual(r.slice(-2).map((x) => [x.kind, x.decision, x.status]), [["connect", "allow:via", 200], ["http", "allow:via", 200]]);
+  } finally {
+    await e.drain();
+    fake.server.close();
+    via.server.close();
+  }
+});
+
+test("exit via: a proxy that refuses the login is a 502 to the sandbox, logged allow:via with status 502", async () => {
+  const fake = await new FakeExit().listen();
+  const via = await new FakeViaProxy().listen();
+  process.env.TEST_VIA_PROXY = `http://isp-user:wrong@proxy.test:${via.port}`;
+  const c = config(`http://127.0.0.1:${upPort}`, { exit: { socks: `127.0.0.1:${fake.port}`, via: [{ hosts: ["allowed.test"], proxyEnv: "TEST_VIA_PROXY" }] } });
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-exit-via-407"), config: c }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const r = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(r.status, 502);
+    assert.doesNotMatch(r.head, /wrong|isp-user/, "the proxy's login never reaches the sandbox");
+    await sleep(100);
+    const row = (await rows(e.log)).filter((x) => x.host === "allowed.test" && x.port === tlsPort).at(-1)!;
+    assert.deepEqual([row.decision, row.status], ["allow:via", 502]);
+    assert.match(String(row.reason ?? ""), /407/);
+  } finally {
+    await e.drain();
+    fake.server.close();
+    via.server.close();
   }
 });
 

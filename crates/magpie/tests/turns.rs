@@ -2497,7 +2497,10 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
     let turn = w.send(conv, "m1", "hi").await;
     assert!(w.state_is(turn, "preparing").await);
     let before = w.fake().live(conv).unwrap().id;
-    // admitted 14 min 57 s ago, due in 3 s: replica a stops, b's driver claims the turn with that deadline
+    // admitted 5 min ago, due in 10 min: replica a stops, b's driver claims the turn with that deadline. The first
+    // deadline is one no run of this test reaches (it was 3 s away, and a slow runner reached it before b's driver
+    // re-acquired: the turn failed and the read below found no deadline, 2026-11-26), so what is checked is the rule
+    // itself: the replacement's admission gives the turn a deadline later than the first (driver.rs: a fresh 15 min).
     w.a.start_drain();
     let a_pod = w.a.app().pod.clone();
     assert!(
@@ -2508,12 +2511,24 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
         "replica a's driver stopped"
     );
     w.sql(
-        "update turns set driver = null, driver_until = null, created_at = now() - interval '897 seconds',
-                deadline = now() + interval '3 seconds'
+        "update turns set driver = null, driver_until = null, created_at = now() - interval '300 seconds',
+                deadline = now() + interval '600 seconds'
          where conversation_id = $1",
         conv,
     )
     .await;
+    let first: f64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select extract(epoch from deadline)::float8 from turns where id = $1",
+            &[&turn],
+        )
+        .await
+        .unwrap()
+        .get(0);
     magpie::turns::driver::spawn(driver(&b), turn);
     let b_pod = b.app().pod.clone();
     assert!(
@@ -2539,14 +2554,15 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
         .await,
         "the driver asked hermit for a new sandbox"
     );
-    // the replacement's admission counts: its deadline is a new one, past the first (3 s from the claim)
-    let deadline = async || -> f64 {
+    // the replacement's admission counts: its deadline is a new one, past the first (10 min from the claim: a fresh
+    // 15 min is past it by 5)
+    let deadline = async || -> Option<f64> {
         w.pool()
             .get()
             .await
             .unwrap()
             .query_one(
-                "select extract(epoch from deadline - now())::float8 from turns where id = $1",
+                "select extract(epoch from deadline)::float8 from turns where id = $1",
                 &[&turn],
             )
             .await
@@ -2554,14 +2570,17 @@ async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
             .get(0)
     };
     assert!(
-        common::eventually(Duration::from_secs(10), async || deadline().await > 60.0).await,
-        "the replacement's own deadline"
+        common::eventually(Duration::from_secs(10), async || deadline()
+            .await
+            .is_some_and(|d| d > first + 60.0))
+        .await,
+        "the replacement's own deadline, past the first"
     );
     let (state, code_, _) = w.turn(turn).await;
     assert_eq!(
         (state.as_str(), code_),
         ("preparing", None),
-        "past the first deadline, the replacement's counts"
+        "with the replacement's deadline, the turn still waits"
     );
     w.fake().make_ready(conv);
     assert!(w.state_is(turn, "starting").await);

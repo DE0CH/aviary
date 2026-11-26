@@ -18,16 +18,26 @@ pub type Config = BTreeMap<String, Part>;
 /// `last`: the last commit (full hex) that changed any of the paths; image → tag
 pub fn tags(config: &Config, last: impl Fn(&[String]) -> Result<String>) -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
-    for (name, part) in config {
-        let sha = last(&part.paths).with_context(|| format!("part {name}"))?;
-        if sha.len() < 12 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-            bail!("part {name}: no commit changed {:?}", part.paths);
-        }
+    for (name, sha) in commits(config, last)? {
+        let part = &config[&name];
         for image in &part.images {
             if out.insert(image.clone(), sha[..12].to_string()).is_some() {
                 bail!("image {image} is in two parts");
             }
         }
+    }
+    Ok(out)
+}
+
+/// `last`: as for [`tags`]; part → its last commit, in full (what a part's workflow is run at to build it)
+pub fn commits(config: &Config, last: impl Fn(&[String]) -> Result<String>) -> Result<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    for (name, part) in config {
+        let sha = last(&part.paths).with_context(|| format!("part {name}"))?;
+        if sha.len() < 12 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("part {name}: no commit changed {:?}", part.paths);
+        }
+        out.insert(name.clone(), sha);
     }
     Ok(out)
 }
@@ -68,6 +78,19 @@ mod tests {
         assert_eq!(t["pigeon"], "a".repeat(12));
         assert_eq!(t["magpie"], "a".repeat(12));
         assert_eq!(t["pigeon-app"], "b".repeat(12));
+    }
+
+    #[test]
+    fn each_part_takes_its_last_commit_in_full() {
+        let c = commits(&config(), |p| {
+            Ok(if p[0] == "app" { "b".repeat(40) } else { "a".repeat(40) })
+        })
+        .unwrap();
+        assert_eq!(
+            c,
+            BTreeMap::from([("aviary".into(), "a".repeat(40)), ("pigeon-app".into(), "b".repeat(40))])
+        );
+        assert!(commits(&config(), |_| Ok(String::new())).is_err());
     }
 
     #[test]
