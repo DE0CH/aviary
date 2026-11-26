@@ -6,7 +6,7 @@ name: yyc
 # cluster's certificate are DE0CH/yyc-code's (a checkout of its main); the map of YYC AI's Secrets is yyc/secrets.txt.
 on:
   push:
-    branches: ['**']  # every branch: the gate waits for it
+    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
     paths: [yyc/**, deploy/images.json, tools/aviary-deploy/**, .github/workflows/yyc.yml]
   schedule:
     - cron: "41 3 * * *"  # the ZDR guard daily: OpenRouter's endpoint lists change without a commit
@@ -17,6 +17,8 @@ concurrency:
   group: yyc-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
   FOLDER: yyc/deploy
   SEALED: yyc/deploy/sealed
   NAMESPACES: yyc-ai,yyc-ai-fabric
@@ -28,7 +30,7 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     # the wait for this commit's images (up to 90 min, while ci builds them) and the checks after it
-    timeout-minutes: 120
+    timeout-minutes: 180  # the wait below for this commit's images and release (ci.yml), then the checks
     # the catalogue (people's addresses) is the `checks` environment's secret, never a file in git
     environment: checks
     steps:
@@ -43,6 +45,8 @@ jobs:
         with: {workspaces: "tools/aviary-deploy\nyyc-code/tools/yyc-apply"}
       - name: aviary-deploy and yyc-apply
         run: |
+          # its own tests first: the deploy run's decisions (which commit deploys, the tags) are this binary's
+          cargo test --locked --manifest-path tools/aviary-deploy/Cargo.toml
           cargo build --locked --release --manifest-path tools/aviary-deploy/Cargo.toml
           cargo build --locked --release --manifest-path yyc-code/tools/yyc-apply/Cargo.toml
           mkdir -p "$RUNNER_TEMP/bin"
@@ -50,7 +54,9 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: this commit's tags in the folder
         # the images of a part that changed on this branch are built by the part's workflow, which may still run:
-        # wait for them (a part that did not change has its images already). pigeon-app is built on main only
+        # wait for them (a part that did not change has its images already), and for the gateway's release
+        # (gateway.release, ci.yml's publish, after every test job: the check below read it before its sandboxd was
+        # uploaded and failed main's 5b06648e24, 2026-11-20). One deadline for both. pigeon-app is built on main only
         # (app.yml's image job lists each build in main's clients.txt): not waited for, and the check below lets it
         # be missing; deploy.yml deploys only once app.yml is green on main.
         run: |
@@ -58,12 +64,17 @@ jobs:
           aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
           cat "$RUNNER_TEMP/tags.json"
           jq 'del(."pigeon-app")' "$RUNNER_TEMP/tags.json" > "$RUNNER_TEMP/branch-tags.json"
-          for i in $(seq 1 90); do
-            if aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; then break; fi
-            [ "$i" = 90 ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
+          deadline=$((SECONDS + 150 * 60))
+          until aviary-deploy digests "$RUNNER_TEMP/branch-tags.json" > "$RUNNER_TEMP/digests.json" 2> "$RUNNER_TEMP/digests.err"; do
+            [ "$SECONDS" -ge "$deadline" ] && { cat "$RUNNER_TEMP/digests.err"; exit 1; }
             echo "waiting for: $(cat "$RUNNER_TEMP/digests.err")"; sleep 60
           done
           aviary-deploy yyc "$FOLDER" "$RUNNER_TEMP/tags.json"
+          rel=$(cat "$FOLDER/hermit/gateway.release")
+          until curl -fsS -o /dev/null -I "https://github.com/DE0CH/aviary/releases/download/$rel/sandboxd"; do
+            [ "$SECONDS" -ge "$deadline" ] && { echo "::error::release $rel has no sandboxd binary"; exit 1; }
+            echo "waiting for release $rel's sandboxd (ci.yml publish)"; sleep 60
+          done
           git diff --stat -- "$FOLDER"
       - name: render and validate (item 1)
         run: |
@@ -82,7 +93,7 @@ jobs:
           python3 yyc/tests/test_openrouter_guardrail.py
           python3 yyc/tests/test_system_prompt.py
           # bridges.sh against a real HAProxy (the bridge box's)
-          sudo apt-get update -qq && sudo apt-get install -y -qq haproxy >/dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq && sudo apt-get -o Acquire::Retries=5 install -y -qq haproxy >/dev/null
           python3 yyc/tests/test_bridges.py
       - name: sealed folder (item 5)
         run: python3 yyc-code/infra/seal.py --check --names-only --allow-unsealed --root . --map yyc/secrets.txt

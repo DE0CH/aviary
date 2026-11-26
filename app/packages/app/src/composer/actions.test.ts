@@ -1065,8 +1065,9 @@ describe("file upload preparation", () => {
       }
       setRequestHeader() {}
       abort() {}
-      send(body: FormData) {
-        requests.push({ url: this.url, name: (body.get("files") as File)?.name });
+      send(body: Uint8Array) {
+        const name = /name="files"; filename="([^"]*)"/.exec(new TextDecoder().decode(body))?.[1];
+        requests.push({ url: this.url, name });
         this.upload.onprogress?.({ loaded: 1, total: 2 });
         this.upload.onprogress?.({ loaded: 2, total: 2 });
         this.status = 201;

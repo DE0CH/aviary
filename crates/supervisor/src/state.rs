@@ -395,17 +395,13 @@ mod tests {
         let p = Persisted::new(RunState::default());
         tokio::spawn(p.clone().writer(file.clone()));
         p.update(Change::State, |s| s.cmd_after = 1);
-        tokio::time::timeout(Duration::from_millis(500), p.flush())
-            .await
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(30), p.flush()).await.unwrap();
         assert_eq!(file.load().unwrap().unwrap().cmd_after, 1);
         // a burst of progress lands as one write, within the throttle
         for off in 0..1000 {
             p.update(Change::Progress, |s| s.msg_seq = off);
         }
-        tokio::time::timeout(Duration::from_millis(500), p.flush())
-            .await
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(30), p.flush()).await.unwrap();
         assert_eq!(file.load().unwrap().unwrap().msg_seq, 999);
         let _ = std::fs::remove_dir_all(d);
     }

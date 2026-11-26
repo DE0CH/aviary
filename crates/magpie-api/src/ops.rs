@@ -69,7 +69,8 @@ pub struct HermitCreateRequest {
 
 /// `POST /v1/hermit/conversations/{id}/turns` → 202 (200 for a repeat): M7 as the conversation's person, sent by the
 /// deployment (its scheduled prompts, messages from outside the app). 404 when the conversation is not `person`'s;
-/// 409 `turn_running` while a turn runs, unless the request says `joinRunning`. The answer is M7's.
+/// 409 `turn_running` while a turn runs, unless the request says `joinRunning` or `interruptRunning`. The answer is
+/// M7's (`midTurn` when the message joined or waits behind the running turn).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HermitSendRequest {
@@ -82,6 +83,12 @@ pub struct HermitSendRequest {
     /// deployment's warning to the agent). A message with attachments joins it too (`send_attached`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub join_running: bool,
+    /// While a turn runs, it is stopped (M8, the person's stop) and the message runs right after, as a turn of its
+    /// own once the stop has ended it (the app's "send now" on a queued message): for a message that must not wait
+    /// even for the running tool call to end (a deployment's memory or disk warning, while that call fills the
+    /// machine). It is held meanwhile, never written into the turn being stopped. Overrides `joinRunning`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interrupt_running: bool,
 }
 
 /// `PUT /v1/hermit/conversations/{id}/closed` → the Conversation: the deployment closes the conversation to its

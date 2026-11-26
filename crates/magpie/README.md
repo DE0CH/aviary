@@ -83,7 +83,7 @@ of only the transcript's surviving lines in file order, an oracle that shares no
 review's truncate, rewrite, truncate, original-bytes sequence); `tests/ccfs_claude_code.rs` (Claude Code 2.1.304's
 transcripts from the FUSE gate, product text replaced by same-length placeholders, replayed in the shape of the
 gate's recorded calls with every prompt a person turn's echo, with pinned event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
-`.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
+`ci-services postgres-sync`'s primary and synchronous standby, in memory (`testing/ci-services`): p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
 for a 1 MiB image line; an 87 MB transcript from a cold bucket in under 5 s). The scanner, extraction and classification have unit and property tests in the crate.
 
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
@@ -126,6 +126,11 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   (same headers, body and answer). A message the deployment sends as the person (`/v1/hermit/conversations/{id}/turns`)
   attaches it by `images[].uploadId` as the app does, so a deployment's prompt with screenshots shows them as the
   turn's images instead of paths in its text.
+- `POST /v1/hermit/conversations/{id}/turns` with `interruptRunning` (Deyao, 2026-11-20): while a turn runs it is
+  stopped as by the person's stop (M8) and the message waits, held, then runs as a turn of its own once the stop
+  has ended it (the app's "send now" on a queued message, done by the deployment): Jarvis 4's memory and disk
+  warning, which must not wait even for the running tool call. With `joinRunning` the message joins the running
+  turn at Claude Code's next tool result instead; with neither, 409 `turn_running`.
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not
   `{deletedAt}` (magpie 9.6).
 - The applied migrations are recorded in aviary-pg's `_migrations`, not `schema_migrations` (platform 4.3).
@@ -200,9 +205,13 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
     `marker` is where the AI read the answer: that call's row takes the card (`personRead`) and the card's row says
     which call (`readBy`), so the app shows the card there and nothing where it was asked. A question's marker is
     `(answer to <askId>)`, which the `ask` command prints on every line of an answer and never before one (the id
-    alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). A retract of the
-    reading line makes the card unread again where it was asked (rule 9 rebuilds the reading row from its line, without
-    the card). `rows_person_unread` (migration 0046, built concurrently) keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
+    alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). Only a settled card
+    is read, so whatever prints the answer settles it first: magpie writes `ask.resolved` before `ask` gets the
+    answer, and the supervisor answers a person wait's end only once magpie has `wait.ended` (jarvis4's
+    `jarvis-request` prints the outcome after that end). A card stays read while the call that read it still carries
+    its marker: a retract of the reading line keeps the read when the rebuilt call's result still carries it (Claude
+    Code wrote the line again: the new line lands first, the old one is retracted after it), else the card is unread
+    again where it was asked (2026-11-20: the card stayed "Not read yet" after a rewrite). `rows_person_unread` (migration 0046, built concurrently) keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
     cards and are not rebuilt (a card row made now would land at the end of the timeline, not where it was asked).
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
     Each row records the derivation version it was made or last updated by (`rows.derivation`,

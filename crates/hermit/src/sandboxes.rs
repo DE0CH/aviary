@@ -372,7 +372,7 @@ fn silence_check_if_quiet(core: &Arc<Core>, id: Uuid) {
         let quiet = row
             .last_heartbeat_at
             .or(row.ready_at)
-            .is_some_and(|at| OffsetDateTime::now_utc() - at > c.timings.put_silence);
+            .is_some_and(|at| OffsetDateTime::now_utc() - at > c.put_silence());
         if quiet {
             crate::janitor::silence_check(&c, &row).await;
         }

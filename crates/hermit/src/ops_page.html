@@ -152,6 +152,9 @@ function hostWord(x){
 }
 function mib(b){ return Math.round(b / 1048576).toLocaleString("en-GB"); }
 
+// a card about the chat beside hermit (magpie and egress): none when hermit has no chat (hermit.json ops.chat false)
+var CHAT = true;
+function chatCard(out, c){ if (CHAT) out.push(c); }
 function renderNow(d){
   var E = d.errors || {}, out = [], H = d.health || {state: "ok", findings: []};
   // 1. the verdict and its reasons
@@ -161,7 +164,7 @@ function renderNow(d){
 
   // 1b. View as: everyone who is a user now, each with their button (opens the product as that person in a new tab;
   // pigeon allows it for admins only; recorded in History)
-  out.push(card("View as", "open " + esc(PRODUCT) + " as one of its users, in a new tab", rows((d.people || []).filter(function(u){ return !u.former; }), function(u){
+  chatCard(out, card("View as", "open " + esc(PRODUCT) + " as one of its users, in a new tab", rows((d.people || []).filter(function(u){ return !u.former; }), function(u){
     return '<div class="row"><span class="main">' + who(u.owner) + '</span><form class="va" method="post" action="/api/jarvis/view-as" target="_blank"><input type="hidden" name="user" value="' + esc(u.owner) + '"><button type="submit" title="Open ' + esc(PRODUCT) + ' as this person in a new tab (recorded in History)">View as</button></form></div>';
   }, "No users."), E.people));
 
@@ -236,7 +239,7 @@ function renderNow(d){
     } else bb += '<div class="empty">No budget configured.</div>';
     bb += '<div class="kpis" style="margin-top:8px">' + kpi(usd(tt.today), "today (" + (tt.callsToday || 0) + " calls)") + kpi(usd(tt.month), "this month (" + (tt.callsMonth || 0) + " calls)") + "</div>";
   }
-  out.push(card("Model budget", "shared by everyone; per day, person and model: History", bb, E.budget));
+  chatCard(out, card("Model budget", "shared by everyone; per day, person and model: History", bb, E.budget));
 
   // 6b. the OpenRouter balance of the models' key (OpenRouter's own figures, read every 5 min)
   var o = d.openrouter, orb = "";
@@ -249,7 +252,7 @@ function renderNow(d){
     orb += '<div class="f">' + (o.resetsAt ? "resets " + when(o.resetsAt) + " · " : "") + "this week " + usd(o.usageWeekUsd) + " · all time " + usd(o.usageTotalUsd) + " · read " + when(o.at) + " · " + esc(o.source || "") + "</div>";
   } else if (o) orb += '<div class="empty">Not read yet.</div>';
   else orb += '<div class="empty">No OpenRouter key configured (HERMIT_OPENROUTER_KEY).</div>';
-  out.push(card("OpenRouter balance", "the models' key, OpenRouter's own figures", orb, o && o.error));
+  chatCard(out, card("OpenRouter balance", "the models' key, OpenRouter's own figures", orb, o && o.error));
 
   // 7. the operator's switches and each hermit replica's workspace store
   var c = d.controls, ob = "";
@@ -308,30 +311,30 @@ function renderHistory(d){
     eb += "<h4>Model and route errors by kind</h4>" + rows(e.byStatus, function(x){ return '<div class="row"><span class="main">' + esc(x.kind) + " " + esc(x.status) + "</span>" + f("decision", esc(x.decision)) + f("count", x.n) + f("last", when(x.lastAt)) + "</div>"; }, "No model or route errors in 24 h.");
     eb += "<h4>Blocked hosts</h4>" + rows(e.deniedHosts, function(x){ return '<div class="row"><span class="main"><code>' + esc(x.host) + "</code></span>" + f("why", esc(x.why || "deny")) + f("count", x.n) + f("last", when(x.lastAt)) + "</div>"; }, "Nothing blocked in 24 h.");
   }
-  out.push(card("Egress errors", "24 h", eb, E.egress));
+  chatCard(out, card("Egress errors", "24 h", eb, E.egress));
 
   // spend
   var b = d.budget;
   var max = 0; (b && b.byDay || []).forEach(function(x){ if (x.usd > max) max = x.usd; });
-  out.push(card("Spend per day", "14 days, " + esc(TZ) + " days", rows(b && b.byDay, function(x){
+  chatCard(out, card("Spend per day", "14 days, " + esc(TZ) + " days", rows(b && b.byDay, function(x){
     return '<div class="row"><span class="t">' + esc(x.day) + '</span><span class="mini" style="width:90px"><i style="width:' + (max ? (x.usd / max * 100).toFixed(0) : 0) + '%"></i></span><span class="main">' + usd(x.usd) + "</span>" + f("calls", x.calls) + "</div>";
   }, "No model calls in 14 days."), E.budget));
-  out.push(card("Spend per person", "today · this month · since the budget started", rows(b && b.byUser, function(u){
+  chatCard(out, card("Spend per person", "today · this month · since the budget started", rows(b && b.byUser, function(u){
     return '<div class="row"><span class="main">' + who(u.owner) + '</span><span class="r">' + usd(u.today) + " · " + usd(u.month) + " · " + usd(u.sinceBudget) + "</span></div>";
   }, "No model calls this month."), null));
-  out.push(card("Spend per model", "today · this month · since the budget started", rows(b && b.byModel, function(m){
+  chatCard(out, card("Spend per model", "today · this month · since the budget started", rows(b && b.byModel, function(m){
     return '<div class="row"><span class="main"><code>' + esc(m.model) + '</code></span><span class="r">' + usd(m.today) + " · " + usd(m.month) + " · " + usd(m.sinceBudget) + "</span>" + f("calls this month", m.callsMonth) + "</div>";
   }, "No model calls this month."), null));
 
   // people, each with View as (opens the product as that person in a new tab; pigeon allows it for admins only)
-  out.push(card("Conversations per staff member", "most recent first; open now = live sandboxes", rows(d.people, function(u){
+  chatCard(out, card("Conversations per staff member", "most recent first; open now = live sandboxes", rows(d.people, function(u){
     var va = u.former ? "" : '<form class="va" method="post" action="/api/jarvis/view-as" target="_blank"><input type="hidden" name="user" value="' + esc(u.owner) + '"><button type="submit" title="Open ' + esc(PRODUCT) + ' as this person in a new tab (recorded below)">View as</button></form>';
     return '<div class="row"><span class="main">' + who(u.owner) + (u.former ? ' <span class="chip">not a user now</span>' : "") + "</span>" + f("total", u.total) + f("today", u.today) + f("7 days", u.last7d) + f("open now", u.live) + f("deleted", u.deleted) + (u.purged ? f("purged", u.purged) : "") + f("last active", u.lastActiveAt ? when(u.lastActiveAt) : "never") + va + "</div>";
   }, "No users."), E.people));
 
   // view as: each view and everything sent as someone (staff are not told)
   var VA = {start: "started viewing", send: "sent a message as", create: "started a conversation as", cancel: "stopped a reply as", upload: "uploaded a file as", admin_read: "read a conversation of"};
-  out.push(card("View as", "admins viewing " + esc(PRODUCT) + " as someone, and what they sent as them; latest 100", rows(d.viewAs, function(x){
+  chatCard(out, card("View as", "admins viewing " + esc(PRODUCT) + " as someone, and what they sent as them; latest 100", rows(d.viewAs, function(x){
     return '<div class="row">' + t(x.at) + '<span class="main' + (x.event === "start" ? "" : " warmc") + '">' + who(x.admin) + " " + esc(VA[x.event] || x.event) + " " + who(x.user) + "</span>" +
       (x.conversationId ? f("conversation", "<code>" + short(x.conversationId) + "</code>") : "") + (x.chars != null ? (x.event === "upload" ? f("size", x.chars + " bytes") : f("length", x.chars + " chars")) : "") + (x.session ? f("view", "<code>" + short(x.session) + "</code>") : "") + "</div>";
   }, "Nobody has viewed as anyone."), E["view as"]));
@@ -339,6 +342,7 @@ function renderHistory(d){
 }
 
 function render(d){
+  CHAT = d.chat !== false;
   var H = d.health || {state: "ok", findings: []};
   var v = document.getElementById("verdict");
   v.className = "pill s-" + H.state;

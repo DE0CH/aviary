@@ -351,8 +351,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .unwrap();
     assert_eq!(put.status(), 409);
 
-    // 4. Jarvis's delivery is magpie's turn as the owner, and says it joins a turn that runs (a watchdog's warning
-    //    must not wait for a long turn to end); what magpie still refuses is answered as it is
+    // 4. Jarvis's delivery is magpie's turn as the owner, and says it joins a turn that runs (at Claude Code's next
+    //    tool result, as Deyao's own mid-reply messages); what magpie still refuses is answered as it is
     let r = c
         .post(format!("{gw}/jarvis/deliver"))
         .header(TOKEN_HEADER, &b.token)
@@ -369,6 +369,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         "jarvis-1"
     );
     assert_eq!(sent[0].body.as_ref().unwrap()["joinRunning"], true);
+    assert_eq!(sent[0].body.as_ref().unwrap().get("interruptRunning"), None);
     let r = c
         .post(format!("{gw}/jarvis/deliver"))
         .header(TOKEN_HEADER, &b.token)
@@ -443,6 +444,26 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let m = &sent.last().unwrap().body.as_ref().unwrap()["message"];
     assert_eq!(m["text"], "This page is broken");
     assert_eq!(m["images"], json!([{"uploadId": up}]));
+    // a delivery that interrupts (the memory or disk watchdog): the running turn is stopped and it runs next
+    magpie.fake.script().once(
+        "hermit_send_turn",
+        Reply::json(
+            202,
+            json!({"turn": {"id": Uuid::now_v7(), "startedAt": "2026-11-11T03:00:03.000Z"}, "midTurn": true}),
+        ),
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/deliver"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&json!({"id": "jarvis-4", "text": "Jarvis watchdog: memory pressure", "interrupt": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let sent = magpie.fake.script().calls_to("hermit_send_turn");
+    let body = sent.last().unwrap().body.as_ref().unwrap();
+    assert_eq!(body["interruptRunning"], true);
+    assert_eq!(body["message"]["clientMessageId"], "jarvis-4");
 
     // 5. a fixed-name call: the identity headers and the gateway's bearer replace whatever the sandbox sent
     let r = c

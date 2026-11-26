@@ -51,10 +51,21 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e22" => e22(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
-        "chaos" => Box::pin(chaos::run(h, 60)).await,
+        "chaos" => Box::pin(chaos::run(h, 60, None)).await,
         other if other.starts_with("chaos:") => {
-            let minutes: u64 = other["chaos:".len()..].parse().context("chaos:<minutes>")?;
-            Box::pin(chaos::run(h, minutes)).await
+            // chaos:<minutes>, or chaos:<minutes>:<seed> to run a printed schedule again
+            let mut parts = other["chaos:".len()..].splitn(2, ':');
+            let minutes: u64 = parts
+                .next()
+                .unwrap_or_default()
+                .parse()
+                .context("chaos:<minutes>[:<seed>]")?;
+            let seed = parts
+                .next()
+                .map(str::parse::<u64>)
+                .transpose()
+                .context("chaos:<minutes>:<seed>")?;
+            Box::pin(chaos::run(h, minutes, seed)).await
         }
         other => bail!("no scenario {other}"),
     }
@@ -103,16 +114,44 @@ async fn agent(ws: &mut Ws, id: &str) -> anyhow::Result<Value> {
     Ok(p["agent"].clone())
 }
 
-/// Every row of the conversation (`fetch_agent_timeline_request`, tail, 500).
+/// Every row of the conversation: the `tail` page, then `before` pages while the oldest says `hasOlder` (one page
+/// holds at most `TIMELINE_MAX`, 500 rows; a conversation of more is read whole, not as its last 500).
 async fn timeline(ws: &mut Ws, id: &str) -> anyhow::Result<Vec<Value>> {
-    let (_, p) = ws
-        .rpc(
-            "fetch_agent_timeline_request",
-            json!({"agentId": id, "direction": "tail", "limit": 500}),
-        )
-        .await?;
-    ensure!(p["error"].is_null(), "timeline: {}", p["error"]);
-    Ok(p["entries"].as_array().cloned().unwrap_or_default())
+    every_row(ws, |ws, cursor| {
+        let id = id.to_owned();
+        Box::pin(async move {
+            let direction = if cursor.is_some() { "before" } else { "tail" };
+            page(ws, &id, direction, cursor.as_ref(), 500).await
+        })
+    })
+    .await
+}
+
+/// One `fetch_agent_timeline_request` page, asked of `S` (the socket; a stand-in in the tests).
+type PageFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Value>> + Send + 'a>>;
+
+/// The rows of every page, oldest first: `fetch(None)` is the tail page, `fetch(Some(startCursor))` the page before.
+async fn every_row<S>(
+    s: &mut S,
+    fetch: impl Fn(&mut S, Option<Value>) -> PageFuture<'_>,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rows: Vec<Value> = Vec::new();
+    let mut cursor = None;
+    loop {
+        let p = fetch(s, cursor.clone()).await?;
+        let mut older = p["entries"].as_array().cloned().unwrap_or_default();
+        older.append(&mut rows);
+        rows = older;
+        if p["hasOlder"] != true {
+            return Ok(rows);
+        }
+        let start = p["startCursor"].clone();
+        ensure!(
+            start.is_object() && cursor.as_ref() != Some(&start),
+            "a page says hasOlder with start cursor {start}"
+        );
+        cursor = Some(start);
+    }
 }
 
 /// Waits for the turn's end push (`turn_completed`, or fails on `turn_failed`/`turn_canceled`); the pushes of the
@@ -680,6 +719,20 @@ async fn turn_end_kind(ws: &mut Ws, id: &str, within: Duration) -> anyhow::Resul
     Ok(end["message"]["payload"]["event"].clone())
 }
 
+/// Waits until the turn's first text (a slow reply's head) is on the socket: the turn is in its pause.
+async fn in_the_pause(ws: &mut Ws, id: &str) -> anyhow::Result<()> {
+    let id2 = id.to_owned();
+    ws.wait_for("the reply's first text", TURN_WAIT, move |v| {
+        let p = &v["message"]["payload"];
+        v["message"]["type"] == "agent_stream"
+            && p["agentId"] == id2.as_str()
+            && p["event"]["type"] == "timeline"
+            && p["event"]["item"]["type"] == "assistant_message"
+    })
+    .await?;
+    Ok(())
+}
+
 /// A slow reply: `head`, a pause of `ms`, then `tail`.
 fn slow(m: &str, ms: u64, times: u32) -> Value {
     json!({"match": {"textContains": m, "model": TURN_MODEL},
@@ -722,7 +775,7 @@ async fn e8(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Take a minute ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             let asked = Instant::now();
             let (kind, p) = ws.rpc("cancel_agent_request", json!({"agentId": id})).await?;
             ensure!(
@@ -764,7 +817,7 @@ async fn e10(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Survive a restart ({m})")).await?;
             let pod = sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(6)).await;
+            in_the_pause(&mut ws, &id).await?;
             let (ok, out) = h.exec(&pod, &["sh", "-c", "kill -9 $(pidof supervisor)"]).await?;
             ensure!(ok, "kill -9 the supervisor: {out}");
             let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
@@ -800,7 +853,19 @@ async fn e11(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Lose the computer ({m})")).await?;
             let pod = sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
+            // the person's message is in magpie's transcript (what the next sandbox resumes): a sandbox lost before
+            // that leaves nothing to resume
+            eventually(
+                "the message in the transcript",
+                Duration::from_secs(60),
+                Duration::from_millis(500),
+                || async {
+                    let lines = transcript(h, &pod, &id).await.unwrap_or_default();
+                    Ok(lines.iter().any(|l| l["type"] == "user").then_some(()))
+                },
+            )
+            .await?;
             let deleted = Instant::now();
             h.delete_pod(&pod, 0).await?;
             let end = turn_end_kind(&mut ws, &id, Duration::from_secs(40)).await?;
@@ -1065,7 +1130,7 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Outlive hermit ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             scale(h, "hermit", 0).await?;
             let down = Instant::now();
             let end = turn_end_kind(&mut ws, &id, Duration::from_secs(240)).await;
@@ -1101,9 +1166,38 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
     )
     .await?;
     // a start right after hermit's return fails `hosts_full` until the hosts' next heartbeat (every host looks dead
-    // after an outage longer than hostDeadSeconds): the next scenario waits for that
-    tokio::time::sleep(Duration::from_secs(20)).await;
-    Ok(())
+    // after an outage longer than hostDeadSeconds): the next scenario waits until every host has been heard from
+    // since hermit's first answer
+    let heard = || async {
+        let v: Value = h.hermit_monitor("/ops/snapshot")?.send().await?.json().await?;
+        let hosts: Vec<(String, String)> = v["hosts"]["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|x| (x["name"].as_str().unwrap_or("").to_owned(), x["lastSeenAt"].to_string()))
+            .collect();
+        Ok::<_, anyhow::Error>(hosts)
+    };
+    let first = eventually(
+        "hermit's first snapshot",
+        Duration::from_secs(60),
+        Duration::from_secs(1),
+        || async { Ok(heard().await.ok().filter(|hs| !hs.is_empty())) },
+    )
+    .await?;
+    eventually(
+        "every host heard from after hermit's return",
+        Duration::from_secs(120),
+        Duration::from_secs(1),
+        || async {
+            let now = heard().await?;
+            Ok(now
+                .iter()
+                .all(|(n, at)| first.iter().find(|(m, _)| m == n).is_none_or(|(_, a)| a != at))
+                .then_some(()))
+        },
+    )
+    .await
 }
 
 /// One page of `fetch_agent_timeline_request`.
@@ -1806,7 +1900,7 @@ async fn e23(h: &Harness) -> anyhow::Result<()> {
         let r = async {
             let id = create(&mut ws, &format!("Through a gateway drain ({m})")).await?;
             sandbox_of(h, &id).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            in_the_pause(&mut ws, &id).await?;
             let pods = kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(h.kube.clone(), crate::NS)
                 .list(&kube::api::ListParams::default().labels("app=test-gateway"))
                 .await?;
@@ -2601,4 +2695,63 @@ async fn e26(h: &Harness) -> anyhow::Result<()> {
         eprintln!("e26 socket log: {:?}", ws.log.iter().rev().take(40).collect::<Vec<_>>());
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    /// pigeon's paging over `n` rows (seqs 1..=n): the last `limit` rows before the cursor, `startCursor` at the
+    /// first row's seq, `hasOlder` while rows remain before it.
+    struct Rows {
+        n: u64,
+        limit: u64,
+        asked: u32,
+    }
+
+    fn page_of(r: &mut Rows, cursor: Option<&Value>) -> Value {
+        r.asked += 1;
+        let end = cursor.and_then(|c| c["seq"].as_u64()).map_or(r.n, |s| s - 1);
+        let start = end.saturating_sub(r.limit) + 1;
+        let entries: Vec<Value> = (start..=end)
+            .map(|s| json!({"seqStart": s, "seqEnd": s, "item": {"type": "assistant_message", "text": format!("row {s}")}}))
+            .collect();
+        json!({"entries": entries, "startCursor": {"epoch": "e", "seq": start}, "hasOlder": start > 1, "error": null})
+    }
+
+    #[tokio::test]
+    async fn the_timeline_is_every_page_not_the_last_500_rows() {
+        // the chaos run's conversation: 231 turns of three rows, more than one page of 500
+        let mut r = Rows {
+            n: 693,
+            limit: 500,
+            asked: 0,
+        };
+        let rows = super::every_row(&mut r, |r, cursor| {
+            let p = page_of(r, cursor.as_ref());
+            Box::pin(async move { Ok(p) })
+        })
+        .await
+        .unwrap();
+        let seqs: Vec<u64> = rows.iter().filter_map(|e| e["seqEnd"].as_u64()).collect();
+        assert_eq!(seqs, (1..=693).collect::<Vec<_>>());
+        assert_eq!(r.asked, 2);
+    }
+
+    #[tokio::test]
+    async fn a_short_timeline_is_one_page() {
+        let mut r = Rows {
+            n: 7,
+            limit: 500,
+            asked: 0,
+        };
+        let rows = super::every_row(&mut r, |r, cursor| {
+            let p = page_of(r, cursor.as_ref());
+            Box::pin(async move { Ok(p) })
+        })
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(r.asked, 1);
+    }
 }

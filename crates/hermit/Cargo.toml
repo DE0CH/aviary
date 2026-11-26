@@ -51,6 +51,7 @@ uuid.workspace = true
 x25519-dalek = { workspace = true, default-features = false }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 # env::test_only for the tests' AVIARY_TEST_DATABASE_URL
 aviary-core = { path = "../aviary-core", features = ["testing"] }
 aviary-conformance = { path = "../../testing/conformance" }

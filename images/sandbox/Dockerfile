@@ -17,8 +17,8 @@ FROM node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab
 # (Claude checks its PDFs with it) stays on 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB
 # compressed). reportlab is there because Claude probes for it first and then pip-installs it; it reads only
 # TrueType, so it gets its own fonts (below).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       ca-certificates bash curl wget git openssh-client jq unzip zip xz-utils file less procps sudo \
       python3 python3-venv python3-pip \
       poppler-utils pandoc fonts-noto-cjk fonts-noto-core fontconfig \
@@ -45,8 +45,8 @@ RUN python3 -m venv /opt/py \
 ARG GOOGLE_FONTS=45e3d5269e4a17d823f6d84470bc084dc5ae46f6
 COPY reportlab-cjk.py /opt/py/lib/python3.13/site-packages/sbx_reportlab_cjk.py
 RUN set -e; d=/usr/share/fonts/truetype/noto-hk; mkdir -p $d; cd /tmp \
- && curl -fsSL -o sans.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notosanshk/NotoSansHK%5Bwght%5D.ttf" \
- && curl -fsSL -o serif.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notoserifhk/NotoSerifHK%5Bwght%5D.ttf" \
+ && curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL -o sans.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notosanshk/NotoSansHK%5Bwght%5D.ttf" \
+ && curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL -o serif.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notoserifhk/NotoSerifHK%5Bwght%5D.ttf" \
  && printf '%s  %s\n' 76098ee78ec234cd4f8c950742b3f766fea2f8b43d5180d901048f4fc86c6849 sans.ttf \
       66108860e321aa413e7cb346448b4a418b779d94ae392accb32d163c024ae661 serif.ttf | sha256sum -c - \
  && for f in Sans Serif; do lower=$(echo $f | tr A-Z a-z); \
@@ -61,20 +61,20 @@ RUN set -e; d=/usr/share/fonts/truetype/noto-hk; mkdir -p $d; cd /tmp \
 # Docker (A5.F2): dockerd starts on the first docker command (the wrapper /usr/local/bin/docker asks the supervisor,
 # supervisor spec 4.6); with no supervisor socket the wrapper says Docker isn't available.
 RUN install -m 0755 -d /etc/apt/keyrings \
- && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
+ && apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
  && mkdir -p /var/lib/docker
 COPY --chmod=755 docker-wrapper.sh /usr/local/bin/docker
 
 # gh (GitHub CLI): CI runs, PRs, releases and logs from a conversation; it reads GH_TOKEN/GITHUB_TOKEN when a user
 # gives one. From GitHub's own apt repository (Debian's is far behind).
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+RUN curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends gh \
+ && apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
  && gh --version
 
@@ -99,7 +99,7 @@ RUN npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@${CLAUDE_
 ARG QWEN_CODE_TAG
 ARG QWEN_CODE_SHA256
 RUN test -n "${QWEN_CODE_TAG}" -a -n "${QWEN_CODE_SHA256}" \
- && curl -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/aviary/releases/download/${QWEN_CODE_TAG}/qwen-code.tgz" \
+ && curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/aviary/releases/download/${QWEN_CODE_TAG}/qwen-code.tgz" \
  && printf '%s  %s\n' "${QWEN_CODE_SHA256}" /tmp/qwen-code.tgz | sha256sum -c - \
  && npm install --prefix /opt/qwen-code -g /tmp/qwen-code.tgz \
  && npm cache clean --force \
@@ -121,8 +121,8 @@ ARG CHROME_HEADLESS_SHELL=152.0.7977.30
 COPY video/engine /opt/engine
 COPY --chmod=755 video/clip video/speech-times /usr/local/bin/
 COPY video/assets-manifest.json video/fetch-assets.py video/fonts.txt /opt/image-setup/video/
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg aubio-tools fonts-noto-color-emoji \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ffmpeg aubio-tools fonts-noto-color-emoji \
       libnss3 libdbus-1-3 libatk1.0-0t64 libatk-bridge2.0-0t64 libgbm1 libasound2t64 libxrandr2 libxkbcommon0 \
       libxfixes3 libxcomposite1 libxdamage1 libcairo2 libcups2t64 \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
@@ -135,7 +135,7 @@ RUN apt-get update \
  && python3 /opt/image-setup/video/fetch-assets.py /opt/image-setup/video/assets-manifest.json /opt/assets \
  && d=/usr/local/share/fonts/edit && mkdir -p $d && cd $d \
  && grep -v '^#' /opt/image-setup/video/fonts.txt | while read -r sum file; do \
-      curl -fsSL -o "$(basename "$file")" "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/$(printf '%s' "$file" | sed 's/\[/%5B/; s/\]/%5D/')" \
+      curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL -o "$(basename "$file")" "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/$(printf '%s' "$file" | sed 's/\[/%5B/; s/\]/%5D/')" \
       && printf '%s  %s\n' "$sum" "$(basename "$file")" | sha256sum -c - || exit 1; \
     done \
  && test "$(ls | wc -l)" = "$(grep -vc '^#' /opt/image-setup/video/fonts.txt)" \

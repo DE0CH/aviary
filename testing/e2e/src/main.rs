@@ -1,5 +1,5 @@
 //! `aviary-e2e --env-file F [scenario…]`: runs the harness's scenarios (platform 7.8) from inside the
-//! harness cluster (testing/e2e/run.sh `test`), in order, and fails on the first failure. HTTPS trusts the
+//! harness cluster (`e2e-harness test`), in order, and fails on the first failure. HTTPS trusts the
 //! harness CA through `SSL_CERT_FILE` (the Job sets it).
 
 use std::io::Write as _;
@@ -12,7 +12,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(about = "aviary's end-to-end driver")]
 struct Args {
-    /// The admin and monitor tokens, `KEY=VALUE` lines (testing/e2e/gen.sh's driver.env).
+    /// The admin and monitor tokens, `KEY=VALUE` lines (the harness's driver.env).
     #[arg(long)]
     env_file: PathBuf,
     /// Scenarios (`e1` …); default all.

@@ -218,7 +218,7 @@ where
             Err(e) => match again(&e, reporter.lease() != used) {
                 Some(Again(after)) => {
                     tracing::info!(error = %e, "sent files: magpie refused, retried");
-                    tokio::time::sleep(after.map_or(delay, |a| a.max(delay))).await;
+                    reporter.clock().sleep(after.map_or(delay, |a| a.max(delay))).await;
                     delay = (delay * 2).min(REPORT_RETRY_MAX);
                 }
                 None => return Err(e),
@@ -259,7 +259,7 @@ pub async fn send(
             Err((false, e)) => Err(e),
         }
     };
-    match tokio::time::timeout(HOOK_BUDGET, run).await {
+    match reporter.clock().timeout(HOOK_BUDGET, run).await {
         Ok(Ok(sent)) => Ok(SendUserFileReply { sent }),
         Ok(Err(e)) => Err(e),
         Err(_) => Err("magpie did not store them in time".into()),

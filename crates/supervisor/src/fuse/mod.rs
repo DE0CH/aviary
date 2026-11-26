@@ -364,6 +364,12 @@ impl FuseFs {
         self.core.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// The mount point.
+    #[must_use]
+    pub fn mount(&self) -> &Path {
+        &self.cfg.mount
+    }
+
     /// magpie as the FUSE layer sees it (WP-23's heartbeat records its successes here for the stuck rule).
     #[must_use]
     pub fn remote(&self) -> &Arc<Remote> {
@@ -475,11 +481,10 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn settle(&self, deadline: tokio::time::Instant) -> BoxFuture<'_, bool> {
+    fn settle(&self, within: std::time::Duration) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             let Some(c) = self.core() else { return true };
-            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-            tokio::task::spawn_blocking(move || c.settle(left))
+            tokio::task::spawn_blocking(move || c.settle(within))
                 .await
                 .unwrap_or(false)
         })

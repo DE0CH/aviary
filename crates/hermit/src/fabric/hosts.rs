@@ -101,15 +101,12 @@ pub struct HostInfo {
     pub sandboxd_budget: Option<u64>,
     /// When the host became active (unix ms): the fresh-host switch compares it (16).
     pub active_at: Option<i64>,
-    /// The gateway only: since when it has answered every heartbeat without a gap (unix ms), `None` while it does
-    /// not. Every replica reads it for the silence rule's settle time (12 step 3).
-    pub up_since: Option<i64>,
     /// The gateway only: when the scaler leader last finished a pass (unix ms), for the ops page.
     pub last_pass_at: Option<i64>,
 }
 
 impl HostInfo {
-    /// The heartbeat's facts, keeping what the scaler derived (`jfsUnmountedSince`, `activeAt`, `upSince`).
+    /// The heartbeat's facts, keeping what the scaler derived (`jfsUnmountedSince`, `activeAt`).
     #[must_use]
     pub fn from_host(h: &sandboxd_api::Host, prev: Option<&Self>) -> Self {
         Self {
@@ -149,7 +146,6 @@ impl HostInfo {
             sandboxd_rss: Some(h.sandboxd.memory.rss),
             sandboxd_budget: Some(h.sandboxd.memory.budget),
             active_at: prev.and_then(|p| p.active_at),
-            up_since: prev.and_then(|p| p.up_since),
             last_pass_at: prev.and_then(|p| p.last_pass_at),
         }
     }

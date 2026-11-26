@@ -944,6 +944,12 @@ pods keep serving).
 }
 ```
 
+- `ops.chat` (default `true`): a chat (magpie, egress) runs beside hermit and its page reads their summaries; `false`
+  for a hermit with none (Jarvis 4's fabric), whose snapshot then has `"chat": false`, no people, View as, egress or
+  budget, and whose page leaves those cards out.
+- `fabric.aws.pruneImages` (default `false`): the image bucket's images no one uses are deleted with the EC2 reconcile
+  (all but the configured image, the images of sandboxes not gone or started in the last 7 days, and objects put there
+  in the last day); Jarvis 4's fabric sets it, YYC AI keeps every image.
 - `aws.emptyMinutes` (accepted and unused today, A3.F28) is gone. `aws.instance` (`"ai.yyc.deyaochen.com"`, an EC2
   tag, gap-1 5.7) is replaced by the explicit `tags` map; new hosts are tagged `app=hermit-host`, `hermit=yyc-ai`,
   `Name=hermit-host-<name>` (instance and volume).
@@ -1214,6 +1220,9 @@ start (205 s).
    (`sandbox_lost`). The same check runs at once, in the background, for a sandbox a `PUT` found silent for 45 s
    (3.6.2). While the gateway is down, or within 120 s of its return, the silence rule does not run at all: the
    supervisors cannot reach hermit and hermit cannot reach :7070, so silence proves nothing (13.7, 14.7).
+   `sandbox.silenceSeconds` (optional, positive) replaces the 90 s, and half of it the `PUT`'s 45 s: Jarvis 4's fabric
+   hermit, whose sandboxes report to another hermit and whose final snapshot stops the supervisor, sets it past any
+   sandbox's life. YYC AI names none.
 4. **Not allowed**: live rows whose person the catalogue no longer allows -> forced release `not_allowed` (A17.F17).
 5. **Pending releases**: retry soft releases that are due (13.12); finish forced ones whose claim lapsed (the takeover
    sweep normally does it first).

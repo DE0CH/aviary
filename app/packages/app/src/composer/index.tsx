@@ -169,6 +169,11 @@ import {
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
+import {
+  withPendingFileProgress,
+  withoutPendingFiles,
+  type PendingFileAttachment,
+} from "@/composer/pending-files";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import { lazySheet } from "@/components/lazy-area";
@@ -381,13 +386,6 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
       isCompactLayout={isCompactLayout}
     />
   );
-}
-
-interface PendingFileAttachment {
-  id: number;
-  file: SelectedFile;
-  /** How far its upload has come (yyc/asset-upload.ts). */
-  progress?: UploadProgress;
 }
 
 interface RenderAttachmentTrayArgs {
@@ -1987,9 +1985,9 @@ function ComposerContentImpl({
           files,
           onProgress: (index, progress) => {
             const id = placeholders[index]?.id;
-            setPendingFiles((pending) =>
-              pending.map((entry) => (entry.id === id ? { ...entry, progress } : entry)),
-            );
+            if (id !== undefined) {
+              setPendingFiles((pending) => withPendingFileProgress(pending, id, progress));
+            }
           },
         });
         addFiles(uploaded);
@@ -1999,7 +1997,7 @@ function ComposerContentImpl({
           error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
         );
       } finally {
-        setPendingFiles((pending) => pending.filter((entry) => !placeholders.includes(entry)));
+        setPendingFiles((pending) => withoutPendingFiles(pending, placeholders));
       }
     },
     [addFiles, client, t],

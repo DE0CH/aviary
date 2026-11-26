@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aviary_fakes::{FaultKind, Hold, Reply};
 use common::*;
@@ -23,9 +23,13 @@ async fn readiness_waits_for_facts_and_keys_only() {
         .everywhere(FaultKind::Unavailable { retry_after_secs: 1 });
     let app = h.app.clone();
     let readiness = aviary_core::ops::Readiness::detached();
+    let faulted = h.hermit.fake.faults().hits();
     app.start(&readiness);
     readiness.started();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    until("its first facts read failed", || {
+        h.hermit.fake.faults().hits() > faulted
+    })
+    .await;
     assert!(
         readiness.why().iter().any(|w| w == "deployment"),
         "{:?}",
@@ -33,11 +37,8 @@ async fn readiness_waits_for_facts_and_keys_only() {
     );
     assert!(readiness.why().iter().any(|w| w == "jwks"), "{:?}", readiness.why());
     h.hermit.fake.faults().remove(fault);
-    let started = Instant::now();
-    while !readiness.why().is_empty() && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(readiness.why().is_empty(), "{:?}", readiness.why());
+    h.advance_until(h.tuning.start_retry, "ready", || readiness.why().is_empty())
+        .await;
     // later outages do not close the gates again
     h.hermit
         .fake
@@ -47,10 +48,18 @@ async fn readiness_waits_for_facts_and_keys_only() {
         .fake
         .faults()
         .everywhere(FaultKind::Unavailable { retry_after_secs: 1 });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let before = h.hermit.fake.faults().hits();
+    h.advance_until(h.tuning.facts_every, "a facts re-read in the outage", || {
+        h.hermit.fake.faults().hits() > before
+    })
+    .await;
     assert!(readiness.why().is_empty(), "{:?}", readiness.why());
     // and a draining pigeon answers what is in flight (below)
-    h.listener.take().unwrap().drain(Duration::from_secs(1)).await;
+    h.listener
+        .take()
+        .unwrap()
+        .drain(Duration::from_secs(1), aviary_core::clock::Clock::real())
+        .await;
 }
 
 #[tokio::test]
@@ -62,11 +71,11 @@ async fn readiness_waits_for_every_teams_keys() {
         ..Opts::default()
     })
     .await;
-    let started = Instant::now();
-    while h.app.identities().facts().is_none() && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    until("the facts", || h.app.identities().facts().is_some()).await;
+    h.advance_until(h.tuning.start_retry, "the failing team retried", || {
+        h.teams[1].jwks_hits.load(std::sync::atomic::Ordering::SeqCst) >= 2
+    })
+    .await;
     let why = h.readiness.why();
     assert!(!why.iter().any(|w| w == "deployment"), "{why:?}");
     assert!(why.iter().any(|w| w == "jwks"), "one team has no keys: {why:?}");
@@ -76,11 +85,8 @@ async fn readiness_waits_for_every_teams_keys() {
     );
     // its certs answer: the gate opens
     h.teams[1].certs_up.store(true, std::sync::atomic::Ordering::SeqCst);
-    let started = Instant::now();
-    while !h.readiness.why().is_empty() && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(h.readiness.why().is_empty(), "{:?}", h.readiness.why());
+    h.advance_until(h.tuning.start_retry, "ready", || h.readiness.why().is_empty())
+        .await;
     assert_eq!(h.get_as(compat::ME, STAFF).await.status(), 200);
     let t2 = h.teams[1].token(STAFF);
     assert_eq!(h.as_token(h.get(compat::ME), &t2).send().await.unwrap().status(), 200);
@@ -107,18 +113,12 @@ async fn a_drain_closes_the_listener_and_finishes_what_is_in_flight() {
             .await
             .unwrap()
     });
-    let started = Instant::now();
-    while hold.waiting() == 0 && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(hold.waiting(), 1, "the request is in flight at magpie");
+    until("the request in flight at magpie", || hold.waiting() == 1).await;
     let listener = h.listener.take().unwrap();
-    let drain = tokio::spawn(listener.drain(Duration::from_secs(30)));
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // the drain's 30 s bound is on pigeon's clock, which this test does not move: only the request ends it
+    let drain = tokio::spawn(listener.drain(Duration::from_secs(30), h.app.clock()));
     // the listener is closed: a new connection is refused
-    let fresh = reqwest::Client::new();
-    let refused = fresh.get(format!("{}/", h.url)).send().await;
-    assert!(refused.is_err(), "a new connection after the drain began: {refused:?}");
+    refused_soon(&h.url).await;
     assert!(!drain.is_finished(), "the drain waits for the request in flight");
     hold.release();
     let r = inflight.await.unwrap();
@@ -136,9 +136,13 @@ async fn a_drain_with_nothing_moving_ends_at_once() {
     let mut h = Harness::start().await;
     // a kept-alive idle connection does not hold the drain
     assert_eq!(h.get("/").send().await.unwrap().status(), 200);
-    let started = Instant::now();
-    h.listener.take().unwrap().drain(Duration::from_secs(30)).await;
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    // the 30 s bound is on the clock, which does not move: a drain that waited for it would never end
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        h.listener.take().unwrap().drain(Duration::from_secs(30), h.app.clock()),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("the drain ends by itself"));
     tokio::time::timeout(Duration::from_secs(1), h.app.transfers().idle())
         .await
         .unwrap();
@@ -146,7 +150,7 @@ async fn a_drain_with_nothing_moving_ends_at_once() {
 
 #[tokio::test]
 async fn an_upload_across_a_drain_completes() {
-    // spec 18.3 scaled for CI: a throttled upload (4 MiB at about 2 MiB/s) with the drain starting 0.5 s in
+    // spec 18.3 scaled for CI: an upload part-way through its body when the drain starts; the rest is sent only then
     let mut h = Harness::start().await;
     h.magpie.fake.script().always(
         "upload",
@@ -168,10 +172,13 @@ async fn an_upload_across_a_drain_completes() {
         parts.push(chunk.clone());
     }
     parts.push(tail.into_bytes());
-    let stream = futures_util::stream::unfold(parts.into_iter(), |mut it| async move {
-        let next = it.next()?;
-        tokio::time::sleep(Duration::from_millis(120)).await;
-        Some((Ok::<_, std::io::Error>(next), it))
+    let (go, gate) = tokio::sync::watch::channel(false);
+    let stream = futures_util::stream::unfold((parts.into_iter().enumerate(), gate), |(mut it, mut gate)| async move {
+        let (i, next) = it.next()?;
+        if i == 5 {
+            let _ = gate.wait_for(|g| *g).await;
+        }
+        Some((Ok::<_, std::io::Error>(next), (it, gate)))
     });
     let url = format!("{}/api/assets/files", h.url);
     let token = h.token(STAFF);
@@ -186,10 +193,11 @@ async fn an_upload_across_a_drain_completes() {
             .await
             .unwrap()
     });
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(h.app.transfers().active(), 1, "the upload is a transfer");
-    let drain_started = Instant::now();
-    let drain = tokio::spawn(h.listener.take().unwrap().drain(Duration::from_secs(60)));
+    until("the upload is a transfer", || h.app.transfers().active() == 1).await;
+    let drain = tokio::spawn(h.listener.take().unwrap().drain(Duration::from_secs(60), h.app.clock()));
+    refused_soon(&h.url).await;
+    assert!(!drain.is_finished(), "the drain waits for the upload");
+    go.send_replace(true);
     let r = upload.await.unwrap();
     assert_eq!(r.status(), 201);
     let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
@@ -198,10 +206,6 @@ async fn an_upload_across_a_drain_completes() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        drain_started.elapsed() > Duration::from_millis(800),
-        "the drain waited for the upload"
-    );
     assert_eq!(h.app.transfers().active(), 0);
 }
 
@@ -219,30 +223,27 @@ async fn sigterm_through_mains_wiring_turns_unready_closes_and_exits_at_once() {
     h.app.start(ops.readiness());
     ops.readiness().started();
     let readyz = format!("http://{ops_addr}/readyz");
-    let started = Instant::now();
-    while reqwest::get(&readyz).await.unwrap().status() != 200 && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    until("pigeon ready", || {
+        h.readiness.why().is_empty() && ops.readiness().why().is_empty()
+    })
+    .await;
     assert_eq!(reqwest::get(&readyz).await.unwrap().status(), 200);
     // a kept-alive idle connection does not hold the drain
     assert_eq!(h.get("/").send().await.unwrap().status(), 200);
     let d = h.app.drain(ops.readiness(), h.listener.take().unwrap());
     let (tx, mut signals) = Signals::channel();
     let run = tokio::spawn(async move { d.run(&mut signals).await });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
     assert!(!run.is_finished(), "nothing happens before the signal");
-    let signalled = Instant::now();
     tx.send(Signal::Term).unwrap();
+    // the transfer bound is on pigeon's clock, which does not move: a drain that waited for it would not end
     let outcome = tokio::time::timeout(Duration::from_secs(20), run)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(outcome, Outcome::Drained);
-    assert!(
-        signalled.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        signalled.elapsed()
-    );
     assert_eq!(
         reqwest::get(&readyz).await.unwrap().status(),
         503,
@@ -250,4 +251,18 @@ async fn sigterm_through_mains_wiring_turns_unready_closes_and_exits_at_once() {
     );
     let refused = reqwest::Client::new().get(format!("{}/", h.url)).send().await;
     assert!(refused.is_err(), "the listener is closed: {refused:?}");
+}
+
+/// Waits until a new connection to `url` is refused (the listener closed): looked at again and again, never after a
+/// time the test assumes; 30 s only stops a test that would hang.
+async fn refused_soon(url: &str) {
+    let addr = url.trim_start_matches("http://").to_owned();
+    let wait = async {
+        while tokio::net::TcpStream::connect(&addr).await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(30), wait)
+        .await
+        .unwrap_or_else(|_| panic!("the listener never closed"));
 }

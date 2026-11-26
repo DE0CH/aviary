@@ -3,16 +3,17 @@
 The real turn path on one machine: the app protocol into pigeon, magpie, hermit, the supervisor in the real sandbox
 image, Claude Code 2.1.325, the reference gateway and mock-model, with real Postgres, a real S3, real JuiceFS for
 `/workspace`, real NetworkPolicies and real rollouts. No cloud account, no model cost. ci.yml's `e2e` job runs it on
-every push; the same script runs on a laptop with Docker.
+every push; the same harness runs on a laptop with Docker.
 
 ```
-testing/e2e/run.sh up <pigeon> <magpie> <hermit> <aviary-testing> <hermit-sandbox>   # images by local tag
-testing/e2e/run.sh test [e1 e2 …]                                                      # the driver Job
-testing/e2e/run.sh artifacts <dir>                                                     # logs, events
-testing/e2e/run.sh down
+cargo build --release -p aviary-e2e-harness        # testing/e2e-harness; run it from the repository's root
+e2e-harness up <pigeon> <magpie> <hermit> <aviary-testing> <hermit-sandbox>   # images by local tag
+e2e-harness test [e1 e2 …]                                                      # the driver Job
+e2e-harness artifacts <dir>                                                     # logs, events
+e2e-harness down
 ```
 
-Needs docker, k3d 5.8.3, kubectl, jq, openssl, juicefs 1.4.1 and sudo (the FUSE mounts). Every wait has a bound.
+Needs docker, k3d 5.8.3, kubectl, openssl, juicefs 1.4.1 and sudo (the FUSE mounts). Every command has a bound and its exit status is read; a download or a pull is tried again. Images go into the node by `docker save | ctr import`, and the node is checked to have each.
 `E2E_PRELOAD=1` copies the cluster's own images (Calico's, k3s's) from the local Docker into the node, for a
 machine whose containers cannot pull (an IPv6-only build host).
 
@@ -21,7 +22,7 @@ machine whose containers cannot pull (an IPv6-only build host).
 | Piece | Where | Notes |
 |---|---|---|
 | Postgres 17.11 (the production image, TLS, scram) | container `aviary-e2e-pg` on Docker network `aviary-e2e` (172.30.0.10), host port 15432 (`E2E_PG_PORT`) | databases and roles `magpie`, `hermit`, `jfs` |
-| S3 (versitygw 1.9.0) | container `aviary-e2e-s3` (172.30.0.11), host port 19000 (`E2E_S3_PORT`) | buckets `magpie`, `jfs` (MinIO publishes no image any more, `.github/ci/s3.sh`) |
+| S3 (versitygw 1.9.0) | container `aviary-e2e-s3` (172.30.0.11), host port 19000 (`E2E_S3_PORT`) | buckets `magpie`, `jfs` (MinIO publishes no image any more, `testing/ci-services`) |
 | JuiceFS | two host mounts under `/mnt/aviary` (rshared, shared with the node) | `jfs` with `root-squash=1000:1000` (the hosts' mount: sandboxes' `/workspace`), `jfs-hermit` with `all-squash=1000:1000` (hermit's `/jfs`), as hermit spec 15.4 has them in YYC; `ws/` owned by 1000 (YYC's jfs-owner Job) |
 | k3d cluster `aviary-e2e` | rancher/k3s:v1.36.5-k3s1, one server | Calico (NetworkPolicy, and Pods at fixed addresses), traefik off |
 | pigeon x2, magpie x2, hermit x2, test-gateway x2 | Deployments of the images under test | env is secrets only; `SSL_CERT_FILE` (the harness CA) for pigeon (fake-access) and hermit (the stand-in EC2) |
@@ -31,7 +32,7 @@ machine whose containers cannot pull (an IPv6-only build host).
 | sandboxes | Pods of `hermit-sandbox` at the addresses hermit chose (10.52.128.0/17) | privileged (FUSE, Docker), `/workspace` from the hosts' mount, no DNS |
 | driver | Job `driver` of `aviary-testing` (`aviary-e2e`) | Paseo over `ws://pigeon/paseo-ws`, magpie's and hermit's admin routes, the Kubernetes API for probes |
 
-`gen.sh` makes every credential per run: pair tokens, hermit's token keys, the fabric PKI, the harness CA with
+The harness (`testing/e2e-harness/src/secrets.rs`) makes every credential per run: pair tokens, hermit's token keys, the fabric PKI, the harness CA with
 fake-access's and EC2's certificates, the Access RSA keys, `hermit.json` with the run's image digest.
 
 ## Where this differs from platform 7 (and why)
@@ -100,8 +101,9 @@ from inside a sandbox through the gateway: an append, its retry under a new `opI
 nothing written twice), a different append at that stale offset (409 `offset_mismatch`), the append at the size, and
 magpie's bytes read back. It takes the conversation's lease, so it runs last.
 
-Not in the default run: `chaos` (nightly.yml `e2e-chaos`, platform 6.2): Alice and Bob send turns one after another
-for 60 min (`chaos:<minutes>` sets the length) while pigeon, magpie, hermit and the gateway roll in a random order
+Not in the default run: `chaos` (ci.yml's own job `e2e-chaos` on every push, platform 6.1): Alice and Bob send turns one
+after another for 60 min (`chaos:<minutes>` sets the length; the run prints its seed and `chaos:<minutes>:<seed>` runs
+that schedule again) while pigeon, magpie, hermit and the gateway roll in a random order
 every 2-5 min and a random sandbox's supervisor is killed every 10 min. Every turn must complete (no `error` row, one
 reply end per turn), each socket, reopened and resumed after each drain, must have seen every row exactly once, and
 every send must be accepted within 180 s (a refusal during a rollout is sent again under the same message id and
@@ -109,7 +111,7 @@ printed). `run.sh test` bounds the driver Job by `E2E_DRIVER_SECONDS` (default 2
 
 The `cc` scenario prints `cc-counts {"events": …, "rows": …}` (magpie's events by kind without the timing-dependent
 `sandbox.*` and the title, and the rows by kind). nightly.yml's `claude-code-gate` runs `cc`, `e21` and `e22` with the
-release's sandbox image and with its Claude Code replaced by the newest release (`.github/ci/claude-code-gate.sh`),
+release's sandbox image and with its Claude Code replaced by the newest release (`e2e-harness gate`),
 and `claude-code-verdict` fails on an `unclassified path` or an `unanswered opcode` (the supervisor's once-per-opcode
 log of what the mount refuses: ENOSYS, ENOTSUP, EOPNOTSUPP, and EPERM for LINK and MKNOD) that the pinned release did
 not log, or on any change in those counts.

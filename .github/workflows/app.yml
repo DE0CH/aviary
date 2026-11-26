@@ -34,8 +34,17 @@ on:
       - ".github/workflows/app-tests.yml"
   workflow_dispatch:
 
+concurrency:
+  group: app-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
+  # finish (they build what the deploy ships)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
+
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
 
 jobs:
   # the staff UI's whole test suite first (YYC AI is test-first, claude-env yyc-ai skill): nothing is built from a red commit

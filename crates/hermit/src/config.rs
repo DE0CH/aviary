@@ -115,6 +115,12 @@ pub struct SandboxJson {
     pub supervisor_wait_seconds: u32,
     pub start_deadline_seconds: u32,
     pub pool_victim_idle_seconds: u32,
+    /// How long a ready sandbox may go without an activity report before the silence rule's two health checks
+    /// (hermit 12 step 3), and half of it for a `PUT`'s early check. Absent = the timings' own (90 s and 45 s). A
+    /// deployment whose supervisors report to another hermit (Jarvis 4's fabric hermit) sets it past any sandbox's
+    /// life.
+    #[serde(default)]
+    pub silence_seconds: Option<u32>,
     pub reserve_seconds: u32,
     pub activity_every_seconds: u32,
     pub workspace: WorkspaceJson,
@@ -297,6 +303,13 @@ pub struct AwsJson {
     /// none. Absent: the gateway is the hosts' image server.
     #[serde(default)]
     pub image_bucket: Option<String>,
+    /// Images of the bucket no one uses are deleted (scaler step 8, with the EC2 reconcile): every image but the
+    /// configured one, those of the sandboxes that are not gone (frozen ones restore on theirs), those of the sandboxes
+    /// started in the last 7 days (a replica of a rollout still on the image before) and those put there in the last
+    /// day. Absent or false: nothing is ever deleted from the bucket (YYC AI). Jarvis 4's fabric (Deyao, 2026-11-20):
+    /// the bucket grew by an image of about 4 GB with every pin.
+    #[serde(default)]
+    pub prune_images: bool,
 }
 
 impl AwsJson {
@@ -324,6 +337,15 @@ pub struct OpsJson {
     pub deployments: Vec<String>,
     pub pod_node_prefix: String,
     pub budget_watch: f64,
+    /// A chat beside this hermit (magpie and egress, whose summaries the page reads: people, View as, the budget,
+    /// model errors). `false`: a hermit with no chat (Jarvis 4's fabric), whose page reads neither and shows no
+    /// "could not read" for them. Absent: `true`.
+    #[serde(default = "ops_chat")]
+    pub chat: bool,
+}
+
+fn ops_chat() -> bool {
+    true
 }
 
 /// hermit's configuration as the core uses it: the file, checked, with its derived values and the text files read.
@@ -408,6 +430,7 @@ impl Config {
             ("activityEverySeconds", s.activity_every_seconds),
             ("startDeadlineSeconds", s.start_deadline_seconds),
             ("supervisorWaitSeconds", s.supervisor_wait_seconds),
+            ("silenceSeconds", s.silence_seconds.unwrap_or(1)), // optional: positive when set
             ("pids", s.pids),
             ("openFiles", s.open_files),
         ] {

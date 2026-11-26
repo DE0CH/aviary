@@ -19,7 +19,9 @@ on:
 
 concurrency:
   group: yyc-android-${{ github.ref }}
-  cancel-in-progress: false
+  # a newer push to the same branch cancels this run (it carries this workflow's result for the branch); main's runs all
+  # finish (they build what the deploy ships)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -188,7 +190,7 @@ jobs:
         if: matrix.build == 'yyc-ai'
         working-directory: .
         run: |
-          sudo apt-get install -y -qq age > /dev/null
+          sudo apt-get -o Acquire::Retries=5 install -y -qq age > /dev/null
           age -r "$AGE_RECIPIENT" -o yyc-ai-android.apk.age out/yyc-ai.apk
           rm out/yyc-ai.apk
           ls -l yyc-ai-android.apk.age

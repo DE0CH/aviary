@@ -1327,8 +1327,14 @@ async fn a_lease_never_records_hermits_answer_over_a_newer_feed_record() {
 }
 
 #[tokio::test]
-async fn a_large_transcript_reads_and_rewrites_in_bounded_time() {
-    let (db, _r, s) = setup("cc_large").await;
+async fn a_large_transcript_reads_and_rewrites_with_bounded_database_work() {
+    let db = common::fresh_db("cc_large").await;
+    // a follower replica: its pool's counts are this test's requests alone
+    let lock = common::hold_job_lock(&db.url).await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
     let sql = common::sql(&db.url);
     let p = main_path();
     set_main(&sql, s.conversation, &p).await;
@@ -1349,13 +1355,18 @@ async fn a_large_transcript_reads_and_rewrites_in_bounded_time() {
         s.write(&p, (i << 20) as u64, chunk).await.unwrap();
     }
     let events = visible(&sql, s.conversation).await.len();
-    // a whole read: batches seek with the index (a read that fetched every row to the end per batch took seconds)
+    // a whole read: batches seek with the index (a read that fetched every row to the end per batch read each row
+    // again and again): about one row per line
     let t0 = std::time::Instant::now();
+    let c0 = r.pool().counts();
     assert_eq!(s.read(&p).await.unwrap(), content);
+    let read_work = r.pool().counts() - c0;
     let read = t0.elapsed();
-    // Claude Code's whole-file rewrite: O_TRUNC (one statement), then the same bytes in 1 MiB writes
+    // Claude Code's whole-file rewrite: O_TRUNC, then the same bytes in 1 MiB writes
     let t0 = std::time::Instant::now();
+    let c0 = r.pool().counts();
     s.truncate(&p, 0).await.unwrap();
+    let truncate_work = r.pool().counts() - c0;
     let truncate = t0.elapsed();
     for (i, chunk) in content.chunks(1 << 20).enumerate() {
         s.write(&p, (i << 20) as u64, chunk).await.unwrap();
@@ -1365,13 +1376,17 @@ async fn a_large_transcript_reads_and_rewrites_in_bounded_time() {
     assert_eq!(flush(&sql, s.conversation).await, 0);
     assert_eq!(visible(&sql, s.conversation).await.len(), events);
     eprintln!(
-        "{} lines, {} bytes: read {read:?}, truncate(0) {truncate:?}, truncate and rewrite {rewrite:?}",
+        "{} lines, {} bytes: read {read:?}, truncate(0) {truncate:?}, truncate and rewrite {rewrite:?} (a report)",
         30_000,
         content.len()
     );
-    assert!(read < Duration::from_secs(10), "read {read:?}");
-    assert!(truncate < Duration::from_secs(3), "truncate {truncate:?}");
-    assert!(rewrite < Duration::from_secs(60), "rewrite {rewrite:?}");
+    eprintln!("read {read_work:?}; truncate {truncate_work:?}");
+    assert!(read_work.rows <= 2 * 30_000, "a read row by row: {read_work:?}");
+    assert_eq!(
+        truncate_work.transactions, 1,
+        "a truncate is one transaction: {truncate_work:?}"
+    );
+    lock.release().await;
 }
 
 #[tokio::test]
@@ -1481,7 +1496,8 @@ async fn a_cc_write_takes_its_body_from_the_buffered_body_budget() {
             .map(|v| v.size)
             .map_err(|e| e.to_string())
     });
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // the whole budget is held until the drop below: the write cannot be answered before it
+    tokio::task::yield_now().await;
     assert!(!w.is_finished(), "a cc write was read with the body budget all taken");
     drop(all);
     let size = tokio::time::timeout(Duration::from_secs(20), w)

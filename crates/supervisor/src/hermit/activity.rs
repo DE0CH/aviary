@@ -156,21 +156,27 @@ impl Activity {
         }
     }
 
-    /// The final `released` report of a release: retried until `deadline`, and every attempt ends by it (a hermit
-    /// that holds the request never keeps the release past its deadline).
+    /// The final `released` report of a release: retried until `deadline` (on the lifecycle's clock), and every
+    /// attempt ends by it (a hermit that holds the request never keeps the release past its deadline).
     pub fn final_report(self: &Arc<Self>, deadline: tokio::time::Instant) -> BoxFuture<'static, ()> {
         let me = self.clone();
         Box::pin(async move {
+            let clock = me.lifecycle.agent().clock();
             loop {
-                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
-                if left.is_zero() {
-                    tracing::warn!("the final released report was not accepted by the release's deadline");
-                    return;
+                let sent = if clock.now() >= deadline {
+                    None
+                } else {
+                    clock.timeout_at(deadline, me.send(HERMIT_TIMEOUT)).await.ok()
+                };
+                match sent {
+                    Some((true, _)) => return,
+                    Some(_) => {}
+                    None => {
+                        tracing::warn!("the final released report was not accepted by the release's deadline");
+                        return;
+                    }
                 }
-                if me.send(left).await.0 {
-                    return;
-                }
-                tokio::time::sleep_until((tokio::time::Instant::now() + ACTIVITY_RETRY).min(deadline)).await;
+                clock.sleep_until((clock.now() + ACTIVITY_RETRY).min(deadline)).await;
             }
         })
     }
@@ -188,6 +194,7 @@ impl Activity {
     pub async fn run(self: Arc<Self>) {
         let mut status = self.lifecycle.agent().status();
         let mut phases = self.lifecycle.phases();
+        let clock = self.lifecycle.agent().clock();
         loop {
             // the state this report carried: a change while it was in flight is a change to send at once
             let (ok, sent_state) = self.send(HERMIT_TIMEOUT).await;
@@ -195,11 +202,11 @@ impl Activity {
                 return;
             }
             let wait = if ok { self.cadence() } else { ACTIVITY_RETRY };
-            let until = tokio::time::Instant::now() + wait;
+            let until = clock.now() + wait;
             // wait for the cadence, or a change of state (not every output line)
             loop {
                 tokio::select! {
-                    () = tokio::time::sleep_until(until) => break,
+                    () = clock.sleep_until(until) => break,
                     () = self.lifecycle.activity_now.notified() => break,
                     r = status.changed() => {
                         if r.is_err() || status.borrow_and_update().state != sent_state {

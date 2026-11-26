@@ -129,6 +129,8 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
     let (tz, day, month) = day_and_month(tz, OffsetDateTime::now_utc());
     let cfg = &core.cfg.file;
     let up = &core.ops.up;
+    // a hermit with no chat beside it (ops.chat false) asks neither magpie nor egress: nothing to read, no error
+    let chat = cfg.ops.chat;
     let (
         service,
         hosts,
@@ -154,26 +156,44 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         section(&errors, "hostsGone", hosts_gone(core)),
         section(&errors, "events", events_section(core)),
         section(&errors, "starts", starts_section(core)),
-        section(&errors, "egress", async {
-            up.egress_summary(&tz, RECENT_MINUTES).await
-        }),
-        section(&errors, "people", async {
-            up.magpie
-                .service(None)
-                .ops_people(&magpie_api::ops::PeopleQuery { tz: Some(tz.clone()) })
-                .await
-                .map_err(s)
-        }),
-        section(&errors, "viewAs", async {
-            up.magpie
-                .service(None)
-                .ops_view_as(&magpie_api::ops::ViewAsLogQuery {
-                    limit: Some(VIEW_AS_SHOWN),
-                    before: None,
-                })
-                .await
-                .map_err(s)
-        }),
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "egress", async {
+                up.egress_summary(&tz, RECENT_MINUTES).await
+            })
+            .await
+        },
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "people", async {
+                up.magpie
+                    .service(None)
+                    .ops_people(&magpie_api::ops::PeopleQuery { tz: Some(tz.clone()) })
+                    .await
+                    .map_err(s)
+            })
+            .await
+        },
+        async {
+            if !chat {
+                return None;
+            }
+            section(&errors, "viewAs", async {
+                up.magpie
+                    .service(None)
+                    .ops_view_as(&magpie_api::ops::ViewAsLogQuery {
+                        limit: Some(VIEW_AS_SHOWN),
+                        before: None,
+                    })
+                    .await
+                    .map_err(s)
+            })
+            .await
+        },
         section(&errors, "controls", controls_section(core)),
         section(&errors, "replicas", replicas_section(core)),
         section(&errors, "fabricOps", core.providers.fabric.ops()),
@@ -315,6 +335,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         "scaler": scaler,
         "recent": recent,
         "budget": budget,
+        "chat": chat,
         "openrouter": openrouter,
         // history
         "hostsGone": hosts_gone,
@@ -431,6 +452,9 @@ pub async fn live_hosts(core: &Core) -> Result<Vec<Value>, aviary_pg::Error> {
             &[&HOST_FRESH_S],
         )
         .await?;
+    // the gateway as this replica heard it (each replica asks it every tick): a row the scaler could not write says
+    // nothing about the gateway
+    let heard = core.providers.fabric.gateway_heard();
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
         let info: Option<Value> = r.try_get(11)?;
@@ -458,6 +482,13 @@ pub async fn live_hosts(core: &Core) -> Result<Vec<Value>, aviary_pg::Error> {
             "load1": info["loadAvg"][0].as_f64(),
             "gvisor": info["gvisorRelease"].clone(),
         }));
+        if let (true, Some((answering, at)), Some(x)) = (kind == "gateway", heard, out.last_mut()) {
+            x["reachable"] = json!(answering && at > 0 && crate::fabric::gvisor::now_ms() - at < HOST_FRESH_S * 1000);
+            if at > 0 {
+                x["lastSeenAt"] = iso(OffsetDateTime::from_unix_timestamp_nanos(i128::from(at) * 1_000_000)
+                    .unwrap_or(OffsetDateTime::UNIX_EPOCH));
+            }
+        }
     }
     Ok(out)
 }

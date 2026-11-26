@@ -3,7 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, Object, RecyclingMethod, Runtime};
@@ -31,6 +31,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const POOL_TIMEOUT: Duration = Duration::from_secs(5);
 /// The role-level backstop (platform 11.1), also set per connection.
 const IDLE_IN_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How much longer than its `statement_timeout` a statement, a `COMMIT` or a `ROLLBACK` may wait for the server's
+/// answer before it fails with [`Error::Timeout`]. The server ends a slow statement itself at `statement_timeout`; the
+/// deadline is for a server that does not answer at all (YYC, 2026-11-20: a primary whose storage stalled held every
+/// commit for 15 minutes, and Postgres does not apply `statement_timeout` to a commit's wait).
+pub const DEADLINE_MARGIN: Duration = Duration::from_secs(5);
 
 /// Run on every pooled connection before it is handed out again (deadpool's recycle). First a check that it is
 /// outside any transaction: a multi-statement simple query runs in one implicit transaction that starts with the
@@ -63,8 +68,12 @@ pub(crate) type Connection = tokio_postgres::Connection<Socket, <MakeRustlsConne
 #[derive(Clone)]
 pub struct Pool {
     inner: deadpool_postgres::Pool,
+    /// What this pool ran ([`Pool::counts`]), shared by its clones, its [`Conn`]s and its transactions.
+    counts: Arc<Counters>,
     config: Arc<tokio_postgres::Config>,
     tls: MakeRustlsConnect,
+    /// `statement_timeout` + [`DEADLINE_MARGIN`]: the longest any answer is waited for.
+    deadline: Duration,
 }
 
 impl fmt::Debug for Pool {
@@ -174,8 +183,10 @@ fn build(
         .map_err(|e| Error::Config(e.to_string()))?;
     Ok(Pool {
         inner: pool,
+        counts: Arc::default(),
         config: Arc::new(config),
         tls,
+        deadline: statement_timeout + DEADLINE_MARGIN,
     })
 }
 
@@ -188,10 +199,18 @@ impl Pool {
     /// [`crate::retry::RETRY_FOR`].
     pub async fn get(&self) -> Result<Conn, Error> {
         Ok(Conn {
-            client: tokio::sync::Mutex::new(crate::retry::get(&self.inner).await?),
+            client: tokio::sync::Mutex::new(Some(crate::retry::get(&self.inner).await?)),
             pool: self.inner.clone(),
+            counts: self.counts.clone(),
             doubt: AtomicBool::new(false),
+            deadline: self.deadline,
         })
+    }
+
+    /// The longest any answer from the server is waited for (`statement_timeout` + [`DEADLINE_MARGIN`]).
+    #[must_use]
+    pub fn deadline(&self) -> Duration {
+        self.deadline
     }
 
     /// The pool's size, idle connections and waiters (for metrics). The deadpool pool itself is not handed out:
@@ -203,6 +222,22 @@ impl Pool {
 
     pub(crate) fn deadpool(&self) -> &deadpool_postgres::Pool {
         &self.inner
+    }
+
+    /// How many statements, committed transactions and returned rows this pool has had, through every clone, [`Conn`] and
+    /// [`crate::tx!`] (not the dedicated connections). A test asserts a path's database work with the difference of two
+    /// readings: a count, which does not depend on how fast the machine is, where a time would.
+    #[must_use]
+    pub fn counts(&self) -> Counts {
+        Counts {
+            statements: self.counts.statements.load(Ordering::Relaxed),
+            transactions: self.counts.transactions.load(Ordering::Relaxed),
+            rows: self.counts.rows.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn counters(&self) -> &Arc<Counters> {
+        &self.counts
     }
 
     /// Closes the pool (the last drain step, platform 3.3): waiting and later `get`s fail, idle connections close.
@@ -233,11 +268,15 @@ impl Pool {
 /// pool, which resets the connection before its next user (`RECYCLE_SQL`). Statements are prepared once per connection and cached; a stale cached statement clears the
 /// pool's caches and is retried once (`crate::stmt`).
 pub struct Conn {
-    /// Replaced by a new pooled connection when the database dropped this one ([`crate::retry`]).
-    client: tokio::sync::Mutex<Object>,
+    /// Replaced by a new pooled connection when the database dropped this one ([`crate::retry`]); `None` once a
+    /// statement got no answer within the deadline (the connection was closed, never handed back).
+    client: tokio::sync::Mutex<Option<Object>>,
     pool: deadpool_postgres::Pool,
+    counts: Arc<Counters>,
     /// Unused here (a statement outside a transaction aborts nothing); [`StmtGuard`] wants one.
     doubt: AtomicBool,
+    /// The pool's [`Pool::deadline`].
+    deadline: Duration,
 }
 
 impl fmt::Debug for Conn {
@@ -247,13 +286,31 @@ impl fmt::Debug for Conn {
 }
 
 impl Conn {
-    #[allow(clippy::unnecessary_wraps)] // the shape `statement!` expects (Tx's can fail)
-    async fn stmt_client(&self) -> Result<tokio::sync::MutexGuard<'_, Object>, Error> {
-        Ok(self.client.lock().await)
+    async fn stmt_client(&self) -> Result<tokio::sync::MappedMutexGuard<'_, Object>, Error> {
+        tokio::sync::MutexGuard::try_map(self.client.lock().await, Option::as_mut).map_err(|_| Error::Closed)
+    }
+
+    /// The deadline of one answer ([`Pool::deadline`]).
+    fn deadline(&self) -> Duration {
+        self.deadline
+    }
+
+    /// A statement got no answer within the deadline: the connection is closed (taken out of the pool, so it never
+    /// serves anyone again) and this `Conn` answers [`Error::Closed`] from now on.
+    async fn timed_out(&self) -> Error {
+        if let Some(obj) = self.client.lock().await.take() {
+            drop(Object::take(obj));
+        }
+        tracing::warn!(
+            deadline_s = self.deadline.as_secs(),
+            "postgres: no answer within the deadline"
+        );
+        Error::Timeout(self.deadline)
     }
 
     fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
         stmt::refuse_control(sql, false)?;
+        self.counts.statements.fetch_add(1, Ordering::Relaxed);
         Ok(StmtGuard::new(&self.doubt, true))
     }
 
@@ -268,8 +325,10 @@ impl Conn {
             }
             tokio::time::sleep(crate::retry::RETRY_GAP).await;
             let fresh = crate::retry::get(&self.pool).await?;
-            let old = std::mem::replace(&mut *self.client.lock().await, fresh);
-            drop(Object::take(old)); // the dead connection never goes back to the pool
+            let old = self.client.lock().await.replace(fresh);
+            if let Some(old) = old {
+                drop(Object::take(old)); // the dead connection never goes back to the pool
+            }
             return Ok(());
         }
         if !stmt::is_stale(&e) || g.retried {
@@ -295,8 +354,13 @@ impl Conn {
     /// # Errors
     /// As [`Conn::execute`].
     pub async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query)
+        let rows: Vec<Row> = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query)
+        }
+        .await?;
+        self.counts.rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs one query that returns exactly one row.
@@ -304,8 +368,13 @@ impl Conn {
     /// # Errors
     /// As [`Conn::execute`], or when it does not return exactly one row.
     pub async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query_one)
+        let rows: Row = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query_one)
+        }
+        .await?;
+        self.counts.rows.fetch_add(1, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs one query that returns at most one row.
@@ -313,8 +382,15 @@ impl Conn {
     /// # Errors
     /// As [`Conn::execute`], or when it returns more than one row.
     pub async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>, Error> {
-        let mut g = self.guard(sql)?;
-        statement!(self, g, sql, params, query_opt)
+        let rows: Option<Row> = async {
+            let mut g = self.guard(sql)?;
+            statement!(self, g, sql, params, query_opt)
+        }
+        .await?;
+        self.counts
+            .rows
+            .fetch_add(usize::from(rows.is_some()) as u64, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Runs statements without parameters (the simple query protocol), each committing on its own.
@@ -324,10 +400,14 @@ impl Conn {
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
         let mut g = self.guard(sql)?;
         loop {
-            let outcome = self.client.lock().await.batch_execute(sql).await;
+            let outcome = {
+                let client = self.stmt_client().await?;
+                tokio::time::timeout(self.deadline, client.batch_execute(sql)).await
+            };
             match outcome {
-                Ok(()) => return g.ok(Ok(())),
-                Err(e) => self.recover(&mut g, e).await?,
+                Ok(Ok(())) => return g.ok(Ok(())),
+                Ok(Err(e)) => self.recover(&mut g, e).await?,
+                Err(_) => return Err(self.timed_out().await),
             }
         }
     }
@@ -433,4 +513,33 @@ mod tests {
             .await
             .unwrap();
     }
+}
+
+/// A reading of [`Pool::counts`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Statements started (each `execute`/`query`/… call once, whatever it retried).
+    pub statements: u64,
+    /// Transactions committed through [`crate::tx!`].
+    pub transactions: u64,
+    /// Rows the queries returned.
+    pub rows: u64,
+}
+
+impl std::ops::Sub for Counts {
+    type Output = Counts;
+    fn sub(self, before: Counts) -> Counts {
+        Counts {
+            statements: self.statements - before.statements,
+            transactions: self.transactions - before.transactions,
+            rows: self.rows - before.rows,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Counters {
+    pub(crate) statements: AtomicU64,
+    pub(crate) transactions: AtomicU64,
+    pub(crate) rows: AtomicU64,
 }

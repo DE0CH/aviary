@@ -99,6 +99,7 @@ const variants = {
 };
 
 const variant = variants[appVariant] ?? variants.production;
+const siteIsPlainHttp = (process.env.YYC_SITE ?? "").startsWith("http://");
 // YYC AI's own version: the TestFlight app dev.de0ch.yycai shipped 1.0 from the SwiftUI app before this one
 // (docs/paseo-ui.md), and a version below it reads as a downgrade. The web build keeps Paseo's package version.
 const YYC_APP_VERSION = "1.1.0";
@@ -125,6 +126,9 @@ export default {
       infoPlist: {
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
+        // a build whose server is plain HTTP (only the iPhone walk's, against the stand-in at http://127.0.0.1:8787;
+        // app-ios-walk.yml) may load it, as Android's builds may (usesCleartextTraffic); every deployment's is HTTPS
+        ...(siteIsPlainHttp ? { NSAppTransportSecurity: { NSAllowsArbitraryLoads: true } } : {}),
       },
       bundleIdentifier: variant.packageId,
       buildNumber: nativeReleaseVersion.iosBuildNumber,

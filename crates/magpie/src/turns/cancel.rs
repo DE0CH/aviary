@@ -5,7 +5,7 @@
 //! one gets `turn.stop_requested`, the `interrupt` command and a 30 s deadline, after which the sweeper forces it
 //! (`stop.forced`, [`super::sweeper`]). A held conversation gets `stop_tasks`.
 
-use aviary_pg::Pool;
+use aviary_pg::{Pool, Tx};
 use magpie_api::changes::{AskResolvedChange, ChangeBody};
 use magpie_api::errors::ErrorCode;
 use magpie_api::events::{AskResolved, EventBody, TurnStopRequested};
@@ -36,55 +36,62 @@ pub async fn cancel(pool: &Pool, person: &Person, id: Uuid) -> Result<CancelResp
             )
             .await?;
         }
-        let Some(turn) = active(t, id).await?.filter(|t| !t.state.is_ended()) else {
-            let state: String = t
-                .query_one("select run_state from conversations where id = $1", &[&id])
-                .await?
-                .get(0);
-            if state == "held" {
-                command(t, id, "stop_tasks", None, &json!({})).await?;
-            }
-            return Ok(CancelResponse { turn_id: None });
-        };
-        if turn.state == State::Stopping {
-            return Ok(CancelResponse {
-                turn_id: Some(turn.id),
-            });
-        }
-        if turn.state == State::Parked {
-            // no sandbox runs it: its questions close and it ends at once (DECISIONS 17)
-            super::parked::cancel(t, &person.email, &turn).await?;
-            return Ok(CancelResponse {
-                turn_id: Some(turn.id),
-            });
-        }
-        // the start_turn row's lock orders this decision with a command poll that delivers it at the same moment
-        let (delivered, _) = lock_start_turn(t, &turn).await?;
-        if !delivered {
-            end::end(t, &person.email, &turn, Ending::canceled()).await?;
-            return Ok(CancelResponse {
-                turn_id: Some(turn.id),
-            });
-        }
-        let body = EventBody::TurnStopRequested(TurnStopRequested { turn_id: turn.id });
-        events::append(t, id, NewEvent::of(&body)?.turn(Some(turn.id)).viewer(person.viewer_email())).await?;
-        let by = person.viewer_email().unwrap_or_else(|| person.email.clone());
-        t.execute(
-            "update turns set state = 'stopping', stop_requested_at = now(), stop_by = $2,
-                    deadline = now() + make_interval(secs => $3), driver = null, driver_until = null
-             where id = $1",
-            &[&turn.id, &by, &secs(limits::STOP_TIMEOUT)],
-        )
-        .await?;
-        command(t, id, "interrupt", Some(turn.id), &json!({})).await?;
-        t.execute("update conversations set run_state = 'stopping' where id = $1", &[&id])
-            .await?;
-        changes::upserted(t, &person.email, id).await?;
         Ok(CancelResponse {
-            turn_id: Some(turn.id),
+            turn_id: stop(t, person, id).await?,
         })
     })
     .await
+}
+
+/// M8's stop inside the caller's transaction, the conversation locked: the active turn's id (none when nothing ran).
+///
+/// # Errors
+/// A statement error.
+pub async fn stop(t: &Tx<'_>, person: &Person, id: Uuid) -> Result<Option<Uuid>> {
+    let Some(turn) = active(t, id).await?.filter(|t| !t.state.is_ended()) else {
+        let state: String = t
+            .query_one("select run_state from conversations where id = $1", &[&id])
+            .await?
+            .get(0);
+        if state == "held" {
+            command(t, id, "stop_tasks", None, &json!({})).await?;
+        }
+        return Ok(None);
+    };
+    if turn.state == State::Stopping {
+        return Ok(Some(turn.id));
+    }
+    if turn.state == State::Parked {
+        // no sandbox runs it: its questions close and it ends at once (DECISIONS 17)
+        super::parked::cancel(t, &person.email, &turn).await?;
+        return Ok(Some(turn.id));
+    }
+    // the start_turn row's lock orders this decision with a command poll that delivers it at the same moment
+    let (delivered, _) = lock_start_turn(t, &turn).await?;
+    if !delivered {
+        end::end(t, &person.email, &turn, Ending::canceled()).await?;
+        return Ok(Some(turn.id));
+    }
+    let body = EventBody::TurnStopRequested(TurnStopRequested { turn_id: turn.id });
+    events::append(
+        t,
+        id,
+        NewEvent::of(&body)?.turn(Some(turn.id)).viewer(person.viewer_email()),
+    )
+    .await?;
+    let by = person.viewer_email().unwrap_or_else(|| person.email.clone());
+    t.execute(
+        "update turns set state = 'stopping', stop_requested_at = now(), stop_by = $2,
+                deadline = now() + make_interval(secs => $3), driver = null, driver_until = null
+         where id = $1",
+        &[&turn.id, &by, &secs(limits::STOP_TIMEOUT)],
+    )
+    .await?;
+    command(t, id, "interrupt", Some(turn.id), &json!({})).await?;
+    t.execute("update conversations set run_state = 'stopping' where id = $1", &[&id])
+        .await?;
+    changes::upserted(t, &person.email, id).await?;
+    Ok(Some(turn.id))
 }
 
 fn already_resolved() -> Error {

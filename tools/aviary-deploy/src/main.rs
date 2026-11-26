@@ -1,7 +1,8 @@
 //! aviary-deploy: the deploy run's decisions (docs/DEPLOY.md).
 //!
 //!   aviary-deploy tags deploy/images.json [REV]           image → tag (JSON)
-//!   aviary-deploy ready SHA WORKFLOW,…                     go | wait | stale (stdout); red = exit 1
+//!   aviary-deploy ready HEAD WORKFLOW,… [--again]          go SHA | wait … | nothing … (stdout); red = exit 1:
+//!                                                           the newest green commit newer than what runs (decide.rs)
 //!   aviary-deploy digests TAGS.json                         image → {tag, digest}; a missing image = exit 1
 //!   aviary-deploy set KUSTOMIZATION TAGS.json               the tags written into its `images:`
 //!   aviary-deploy fabric DIR TAGS.json DIGESTS.json         Jarvis 4's fabric (DE0CH/jarvis4 k8s/cluster/fabric): hermit's tag and
@@ -43,41 +44,106 @@ fn gh(path: &str) -> Result<serde_json::Value> {
         .with_context(|| format!("GET {path} body"))
 }
 
-fn ready(sha: &str, workflows: &str) -> Result<()> {
-    let repo = env("GITHUB_REPOSITORY")?;
-    let head = gh(&format!("/repos/{repo}/branches/main"))?["commit"]["sha"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    let mut runs = Vec::new();
-    for page in 1..=10 {
-        let v = gh(&format!(
-            "/repos/{repo}/actions/runs?head_sha={sha}&per_page=100&page={page}"
-        ))?;
-        let list = v["workflow_runs"].as_array().cloned().unwrap_or_default();
-        let n = list.len();
-        runs.extend(list.iter().map(|r| decide::Run {
-            id: r["id"].as_u64().unwrap_or_default(),
-            workflow: r["name"].as_str().unwrap_or_default().to_string(),
-            status: r["status"].as_str().unwrap_or_default().to_string(),
-            conclusion: r["conclusion"].as_str().map(String::from),
-            on_main: r["head_branch"].as_str() == Some("main")
-                && matches!(r["event"].as_str(), Some("push" | "workflow_dispatch" | "schedule")),
-        }));
-        if n < 100 {
-            break;
-        }
+/// the git of the checkout, in the current directory
+fn git(args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new("git").args(args).output().context("git")?;
+    if !out.status.success() {
+        bail!(
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn runs_of(v: &serde_json::Value) -> Vec<(String, decide::Run)> {
+    v["workflow_runs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|r| {
+                    let run = decide::Run {
+                        id: r["id"].as_u64().unwrap_or_default(),
+                        workflow: r["name"].as_str().unwrap_or_default().to_string(),
+                        status: r["status"].as_str().unwrap_or_default().to_string(),
+                        conclusion: r["conclusion"].as_str().map(String::from),
+                        on_main: r["head_branch"].as_str() == Some("main")
+                            && matches!(r["event"].as_str(), Some("push" | "workflow_dispatch" | "schedule")),
+                    };
+                    (r["head_sha"].as_str().unwrap_or_default().to_string(), run)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `ready HEAD WORKFLOWS [--again]` in a checkout of main at HEAD with its tags: the newest commit main has pointed at
+/// that is newer than every deploy (`deploy-<sha12>` tags) and whose parts are green; `--again` (the schedule's
+/// re-apply) lets the deployed commit itself count
+fn ready(head: &str, workflows: &str, again: bool) -> Result<()> {
+    let repo = env("GITHUB_REPOSITORY")?;
     let ws: Vec<String> = workflows
         .split(',')
         .map(|w| w.trim().to_string())
         .filter(|w| !w.is_empty())
         .collect();
-    match decide::ready(sha, &head, &ws, &runs) {
-        decide::Ready::Go => println!("go"),
-        decide::Ready::Stale { head } => println!("stale (main is at {head})"),
-        decide::Ready::Wait(w) => println!("wait ({})", w.join(", ")),
-        decide::Ready::Fail(f) => bail!("red: {}", f.join("; ")),
+    // what runs: the deploy tags in HEAD's history; the commits newer than all of them (and the newest of them, again)
+    let deployed: Vec<String> = git(&["tag", "-l", "deploy-*", "--merged", head])?
+        .lines()
+        .map(|t| git(&["rev-parse", &format!("{t}^{{commit}}")]))
+        .collect::<Result<_>>()?;
+    let not: Vec<String> = deployed.iter().map(|d| format!("^{d}")).collect();
+    let mut range = vec!["rev-list", head];
+    range.extend(not.iter().map(String::as_str));
+    let mut newer: std::collections::HashSet<String> = git(&range)?.lines().map(String::from).collect();
+    if again && !deployed.is_empty() {
+        let mut tips = vec!["merge-base", "--independent"];
+        tips.extend(deployed.iter().map(String::as_str));
+        newer.extend(git(&tips)?.lines().map(String::from));
+    }
+    // the commits main has pointed at: those with main's own runs, newest push first
+    let mut first_run: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for page in 1..=5 {
+        let v = gh(&format!(
+            "/repos/{repo}/actions/runs?branch=main&per_page=100&page={page}"
+        ))?;
+        let list = runs_of(&v);
+        let n = list.len();
+        for (sha, r) in list.into_iter().filter(|(_, r)| r.on_main) {
+            if newer.contains(&sha) {
+                let e = first_run.entry(sha).or_insert(r.id);
+                *e = (*e).min(r.id);
+            }
+        }
+        if n < 100 {
+            break;
+        }
+    }
+    let mut shas: Vec<(String, u64)> = first_run.into_iter().collect();
+    shas.sort_by_key(|s| std::cmp::Reverse(s.1));
+    let mut commits = Vec::new();
+    for (sha, _) in shas.into_iter().take(30) {
+        let mut runs = Vec::new();
+        for page in 1..=10 {
+            let list = runs_of(&gh(&format!(
+                "/repos/{repo}/actions/runs?head_sha={sha}&per_page=100&page={page}"
+            ))?);
+            let n = list.len();
+            runs.extend(list.into_iter().map(|(_, r)| r));
+            if n < 100 {
+                break;
+            }
+        }
+        commits.push(decide::Commit { sha, runs });
+    }
+    match decide::pick(&ws, &commits) {
+        decide::Pick::Go(sha) => println!("go {sha}"),
+        decide::Pick::Nothing(None) => println!("nothing newer than what runs"),
+        decide::Pick::Nothing(Some((sha, decide::Ready::Fail(f)))) => {
+            bail!("red, and nothing older is ready: {sha} {}", f.join("; "))
+        }
+        decide::Pick::Nothing(Some((sha, r))) => println!("wait: the newest, {sha}, is {r:?}"),
     }
     Ok(())
 }
@@ -92,7 +158,8 @@ fn main() -> Result<()> {
             let t = tags::tags(&cfg, |p| tags::git_last(dir, rev, p))?;
             println!("{}", serde_json::to_string_pretty(&t)?);
         }
-        ["ready", sha, workflows] => ready(sha, workflows)?,
+        ["ready", head, workflows] => ready(head, workflows, false)?,
+        ["ready", head, workflows, "--again"] => ready(head, workflows, true)?,
         ["digests", tags] => {
             let mut out = BTreeMap::new();
             let mut missing = Vec::new();
@@ -151,7 +218,7 @@ fn main() -> Result<()> {
             std::fs::write(dir.join("hermit/gateway.release"), format!("aviary-{aviary}\n"))?;
         }
         _ => bail!(
-            "usage: aviary-deploy tags CONFIG [REV] | ready SHA WORKFLOWS | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
+            "usage: aviary-deploy tags CONFIG [REV] | ready HEAD WORKFLOWS [--again] | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
         ),
     }
     Ok(())

@@ -17,6 +17,9 @@ magpie keeps `picked_harness` beside `picked_model`; a turn's `start_turn` names
 harness's own session (`resume`). `conversations.harness` is the harness that ran last (the one
 `provider_session_id` and `main_transcript` belong to); `harness_sessions` keeps the session of each harness that
 ran before, for a pick back.
+The supervisor resumes a session only when its main transcript is on the mount: a sandbox lost before the
+harness's first transcript write leaves none, and the turn starts that session anew (`--session-id`) instead of a
+resume the harness refuses ("No conversation found") at that turn and every later one.
 
 ## In the sandbox
 

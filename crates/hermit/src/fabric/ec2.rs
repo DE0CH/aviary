@@ -70,6 +70,16 @@ pub trait Ec2: Send + Sync + 'static {
             })
         })
     }
+    /// The objects of `bucket` under `prefix` (`ListObjectsV2`, every page): each key and when it was last written
+    /// (unix ms).
+    fn list_objects<'a>(&'a self, _bucket: &'a str, _prefix: &'a str) -> Fut<'a, Result<Vec<(String, i64)>, Ec2Error>> {
+        Box::pin(async {
+            Err(Ec2Error {
+                code: "not_supported".into(),
+                message: "no S3 here".into(),
+            })
+        })
+    }
 }
 
 /// Short-lived credentials ([`Ec2::object_credentials`]).
@@ -387,6 +397,40 @@ impl Ec2 for Aws {
                         .message()
                         .map_or_else(|| aws_sdk_s3::error::DisplayErrorContext(&e).to_string(), str::to_owned),
                 })
+        })
+    }
+
+    fn list_objects<'a>(&'a self, bucket: &'a str, prefix: &'a str) -> Fut<'a, Result<Vec<(String, i64)>, Ec2Error>> {
+        use aws_sdk_s3::error::ProvideErrorMetadata as _;
+        Box::pin(async move {
+            let mut out = Vec::new();
+            let mut token: Option<String> = None;
+            loop {
+                let page = self
+                    .s3
+                    .list_objects_v2()
+                    .bucket(bucket)
+                    .prefix(prefix)
+                    .set_continuation_token(token.take())
+                    .send()
+                    .await
+                    .map_err(|e| Ec2Error {
+                        code: e.code().unwrap_or("unknown").to_owned(),
+                        message: e
+                            .message()
+                            .map_or_else(|| aws_sdk_s3::error::DisplayErrorContext(&e).to_string(), str::to_owned),
+                    })?;
+                for o in page.contents() {
+                    if let Some(k) = o.key() {
+                        let at = o.last_modified().map_or(0, |t| t.to_millis().unwrap_or(0));
+                        out.push((k.to_owned(), at));
+                    }
+                }
+                match page.next_continuation_token() {
+                    Some(t) if page.is_truncated() == Some(true) => token = Some(t.to_owned()),
+                    _ => return Ok(out),
+                }
+            }
         })
     }
 }

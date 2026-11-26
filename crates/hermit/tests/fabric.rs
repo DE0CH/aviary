@@ -175,6 +175,7 @@ impl Server for HostSim {
         Ok(ImageDigest { digest: d })
     }
     async fn list(&self) -> Answer<Sandboxes> {
+        self.saw("list".into());
         Ok(Sandboxes {
             sandboxes: self.listed(),
         })
@@ -558,6 +559,8 @@ struct FakeEc2 {
     credentials: Mutex<Vec<String>>,
     /// `bucket/key` of the objects deleted.
     deleted: Mutex<Vec<String>>,
+    /// `bucket/key` of the objects written just now (`ListObjectsV2` dates every other one 2020).
+    fresh: Mutex<Vec<String>>,
 }
 
 impl FakeEc2 {
@@ -573,6 +576,7 @@ impl FakeEc2 {
             objects: Mutex::default(),
             credentials: Mutex::default(),
             deleted: Mutex::default(),
+            fresh: Mutex::default(),
         })
     }
 
@@ -685,6 +689,28 @@ impl Ec2 for FakeEc2 {
         Box::pin(async move {
             self.deleted.lock().unwrap().push(format!("{bucket}/{key}"));
             Ok(())
+        })
+    }
+
+    fn list_objects<'a>(&'a self, bucket: &'a str, prefix: &'a str) -> Fut<'a, Result<Vec<(String, i64)>, Ec2Error>> {
+        Box::pin(async move {
+            let fresh = self.fresh.lock().unwrap().clone();
+            Ok(self
+                .objects
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|o| o.strip_prefix(&format!("{bucket}/")))
+                .filter(|k| k.starts_with(prefix))
+                .map(|k| {
+                    let at = if fresh.contains(&format!("{bucket}/{k}")) {
+                        now_ms()
+                    } else {
+                        1_577_836_800_000
+                    };
+                    (k.to_owned(), at)
+                })
+                .collect())
         })
     }
 }
@@ -1271,50 +1297,122 @@ async fn one_host(rig: &Rig, g: &Gvisor, r: &Replica) -> String {
     a
 }
 
-/// hermit 13.7 and `vm.test.ts` "a host that stops answering loses its sandboxes and is terminated": not while the
-/// gateway has only just come back, then `gone`/`sandbox_lost` within 10 s of the host's death with the scaler
-/// running on its own; a gateway that stops answering judges nothing.
+/// The gateway of `snap`'s live hosts.
+fn gateway_of(snap: &serde_json::Value) -> serde_json::Value {
+    snap["hosts"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["gateway"] == true)
+        .cloned()
+        .unwrap_or_else(|| panic!("no gateway in {}", snap["hosts"]))
+}
+
+/// The findings of `snap`'s verdict about the gateway.
+fn gateway_findings(snap: &serde_json::Value) -> Vec<String> {
+    snap["health"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["about"] == "gateway")
+        .map(|r| r["text"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// YYC, 2026-11-20 08:28-08:47 UTC: the gateway answered all along, but hermit's Postgres stopped committing, the
+/// scaler could not write the gateway row's `last_seen_at`, and every replica reported "Gateway hermit-gw not
+/// answering" for 19 minutes. Whether the gateway answers is what each replica last heard from it (the leader and
+/// every other replica alike), never what a row says, in both directions.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn host_loss_ends_its_sandboxes_within_ten_seconds() {
-    let rig = Rig::new(
-        "fabric_loss",
-        |v| v["fabric"]["hostDeadSeconds"] = json!(2),
-        Timings {
-            scaler: Duration::from_millis(200),
-            ..manual()
-        },
-    )
-    .await;
+async fn the_gateway_answering_is_heard_from_it_not_read_from_a_row() {
+    let rig = Rig::new("fabric_gw_heard", |_| {}, manual()).await;
+    let (lead, g) = rig.replica("hermit-a").await;
+    let (other, g2) = rig.replica("hermit-b").await;
+    assert!(pass(&g, &lead).await.gateway_up);
+    // the database's copy goes stale, as when the scaler cannot write
+    rig.sql("update hosts set last_seen_at = now() - interval '10 minutes' where kind = 'gateway'")
+        .await;
+    for (r, g) in [(&lead, &g), (&other, &g2)] {
+        g.tick(r.core(), false).await; // a tick that does not lead: it writes nothing
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
+        assert_eq!(
+            gateway_of(&snap)["reachable"],
+            true,
+            "{}: the gateway answers this replica",
+            r.core().pod
+        );
+        assert_eq!(gateway_findings(&snap), Vec::<String>::new(), "{}", r.core().pod);
+    }
+    // and the other way: a gateway that stops answering is not answering, however fresh its row
+    rig.fleet.host(GATEWAY).down();
+    rig.sql("update hosts set last_seen_at = now() where kind = 'gateway'")
+        .await;
+    for (r, g) in [(&lead, &g), (&other, &g2)] {
+        g.tick(r.core(), false).await;
+        let snap = Box::pin(::hermit::snapshot::build(r.core(), "UTC")).await;
+        assert_eq!(gateway_of(&snap)["reachable"], false, "{}", r.core().pod);
+        assert!(
+            !g.gateway_settled(),
+            "{}: a silent gateway is not settled",
+            r.core().pod
+        );
+    }
+}
+
+/// hermit 13.7 and `vm.test.ts` "a host that stops answering loses its sandboxes and is terminated": not while the
+/// gateway is away or has only just come back, then `gone`/`sandbox_lost` at the first scaler pass once the host has
+/// been silent for `hostDeadSeconds`. The test runs the passes itself and ages the host's `last_seen_at` in the
+/// database (where the rule reads it), so no pass depends on how fast the machine is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn host_loss_ends_its_sandboxes() {
+    let rig = Rig::new("fabric_loss", |v| v["fabric"]["hostDeadSeconds"] = json!(2), manual()).await;
     let (r, g) = rig.replica("hermit-a").await;
-    // the replica's own scaler runs; wait for the gateway, then launch
-    assert!(eventually(|| async { rig.host_status(GATEWAY).await == "active" }).await);
+    let silent_for =
+        |host: &str| format!("update hosts set last_seen_at = now() - interval '1 minute' where name = '{host}'");
+    passes_until(&g, &r, "the gateway active", || async {
+        rig.host_status(GATEWAY).await == "active"
+    })
+    .await;
+    // the gateway counts as settled from long ago (the settle time is its own test's)
+    g.set_gateway_up_since(now_ms() - 3_600_000);
     demand(&rig, "a@example.org").await;
-    assert!(eventually(|| async { rig.ec2.launched() == 1 }).await);
+    passes_until(&g, &r, "a launch", || async { rig.ec2.launched() == 1 }).await;
     let a = rig.aws(0);
-    assert!(eventually(|| async { rig.host_status(&a).await == "active" }).await);
+    passes_until(&g, &r, "the host active", || async {
+        rig.host_status(&a).await == "active"
+    })
+    .await;
     rig.sql("delete from demand_hints").await;
     let (s, _) = rig.ready_on(&a, "198.18.0.40").await;
-    // the gateway goes away first: nothing is judged while it is away
+    // the gateway goes away first: nothing is judged while it is away, however long the host has been silent
     rig.fleet.host(GATEWAY).down();
     rig.fleet.host(&a).down();
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    rig.sql(&silent_for(&a)).await;
+    assert!(!pass(&g, &r).await.gateway_up);
     assert_eq!(
         rig.host_status(&a).await,
         "active",
         "AWS hosts are not judged while the gateway is away"
     );
     assert!(!g.gateway_settled());
-    // the gateway returns: the host is judged only once it has answered for hostDeadSeconds
+    // the gateway returns: not yet settled, nothing is judged
     rig.fleet.host(GATEWAY).up();
-    let back = tokio::time::Instant::now();
-    assert!(
-        eventually(|| async { db::load(&rig.h.pool(), s).await.unwrap().unwrap().status == SandboxState::Gone }).await
-    );
-    assert!(
-        back.elapsed() >= Duration::from_secs(2),
+    rig.sql(&silent_for(&a)).await;
+    assert!(pass(&g, &r).await.gateway_up);
+    assert!(!g.gateway_settled());
+    assert_eq!(
+        rig.host_status(&a).await,
+        "active",
         "not judged before the gateway settled"
     );
-    assert!(back.elapsed() < Duration::from_secs(10), "{:?}", back.elapsed());
+    // settled: the first pass judges the silent host
+    g.set_gateway_up_since(now_ms() - 3_600_000);
+    rig.sql(&silent_for(&a)).await;
+    pass(&g, &r).await;
+    assert_eq!(
+        db::load(&rig.h.pool(), s).await.unwrap().unwrap().status,
+        SandboxState::Gone
+    );
     let row = db::load(&rig.h.pool(), s).await.unwrap().unwrap();
     assert_eq!(row.release_reason.as_deref(), Some("host_lost"));
     assert_eq!(row.release_code.as_deref(), Some("sandbox_lost"));
@@ -1337,42 +1435,81 @@ async fn host_loss_ends_its_sandboxes_within_ten_seconds() {
     };
     assert_eq!((bytes, reason.as_str()), (None, "host_lost"));
 
-    // a host that dies with the gateway answering: within 10 s of its death
+    // a host that dies with the gateway answering: the first pass after its `hostDeadSeconds` of silence
     demand(&rig, "b@example.org").await;
-    assert!(eventually(|| async { rig.ec2.launched() == 2 }).await);
+    passes_until(&g, &r, "a second launch", || async { rig.ec2.launched() == 2 }).await;
     let b = rig.aws(1);
-    assert!(eventually(|| async { rig.host_status(&b).await == "active" }).await);
+    passes_until(&g, &r, "the second host active", || async {
+        rig.host_status(&b).await == "active"
+    })
+    .await;
     rig.sql("delete from demand_hints").await;
     let (t, _) = rig.ready_on(&b, "198.18.0.41").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    rig.fleet.host(&b).down();
-    let died = tokio::time::Instant::now();
-    assert!(
-        eventually(|| async { db::load(&rig.h.pool(), t).await.unwrap().unwrap().status == SandboxState::Gone }).await
+    pass(&g, &r).await;
+    assert_eq!(
+        db::load(&rig.h.pool(), t).await.unwrap().unwrap().status,
+        SandboxState::Ready
     );
-    assert!(died.elapsed() < Duration::from_secs(10), "{:?}", died.elapsed());
+    rig.fleet.host(&b).down();
+    rig.sql(&silent_for(&b)).await;
+    pass(&g, &r).await;
+    assert_eq!(
+        db::load(&rig.h.pool(), t).await.unwrap().unwrap().status,
+        SandboxState::Gone
+    );
     drop(r);
 }
 
+/// Waits until a migration's settle has asked both hosts `rounds` more times than `before` (the hosts' `list` calls
+/// then): while a send or a receive still runs it decides nothing, however long that takes.
+async fn settle_rounds(src: &HostSim, dst: &HostSim, before: (usize, usize), rounds: usize) {
+    let lists = |h: &HostSim| h.calls().iter().filter(|c| *c == "list").count();
+    assert!(
+        eventually(|| async { lists(src) >= before.0 + rounds && lists(dst) >= before.1 + rounds }).await,
+        "the settle asked both hosts {rounds} times"
+    );
+}
+
+fn list_calls(src: &HostSim, dst: &HostSim) -> (usize, usize) {
+    let lists = |h: &HostSim| h.calls().iter().filter(|c| *c == "list").count();
+    (lists(src), lists(dst))
+}
+
+/// Runs scaler passes until `f` holds (each pass is one step of the scaler; at most 50).
+async fn passes_until<F: std::future::Future<Output = bool>>(
+    g: &Gvisor,
+    r: &Replica,
+    what: &str,
+    mut f: impl FnMut() -> F,
+) {
+    for _ in 0..50 {
+        if f().await {
+            return;
+        }
+        pass(g, r).await;
+    }
+    assert!(f().await, "never: {what} (50 passes)");
+}
+
 /// hermit 13.4 step 3: a sandbox its host no longer lists, or lists with `alive: false` (an OOM-killed sentry),
-/// is `gone`/`sandbox_lost` (`vanished`) within 10 s; a row being migrated is never judged from its source alone.
+/// is `gone`/`sandbox_lost` (`vanished`) at the next scaler pass (the test runs them); a row being migrated is never
+/// judged from its source alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vanished_sandboxes_are_lost_within_ten_seconds() {
-    let rig = Rig::new(
-        "fabric_vanished",
-        |_| {},
-        Timings {
-            scaler: Duration::from_millis(200),
-            ..manual()
-        },
-    )
-    .await;
+async fn vanished_sandboxes_are_lost_at_the_next_pass() {
+    let rig = Rig::new("fabric_vanished", |_| {}, manual()).await;
     let (r, g) = rig.replica("hermit-a").await;
-    assert!(eventually(|| async { rig.host_status(GATEWAY).await == "active" }).await);
+    passes_until(&g, &r, "the gateway active", || async {
+        rig.host_status(GATEWAY).await == "active"
+    })
+    .await;
+    g.set_gateway_up_since(now_ms() - 3_600_000);
     demand(&rig, "a@example.org").await;
-    assert!(eventually(|| async { rig.ec2.launched() == 1 }).await);
+    passes_until(&g, &r, "a launch", || async { rig.ec2.launched() == 1 }).await;
     let a = rig.aws(0);
-    assert!(eventually(|| async { rig.host_status(&a).await == "active" }).await);
+    passes_until(&g, &r, "the host active", || async {
+        rig.host_status(&a).await == "active"
+    })
+    .await;
     rig.sql("delete from demand_hints").await;
     let (oom, oom_name) = rig.ready_on(&a, "198.18.0.50").await;
     let (gone, gone_name) = rig.ready_on(&a, "198.18.0.51").await;
@@ -1381,8 +1518,7 @@ async fn vanished_sandboxes_are_lost_within_ten_seconds() {
         "update sandboxes set migrating_to = 'aws-elsewhere' where id = '{moving}'"
     ))
     .await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    let t0 = tokio::time::Instant::now();
+    pass(&g, &r).await;
     rig.fleet
         .sim(&a)
         .sandboxes
@@ -1393,10 +1529,11 @@ async fn vanished_sandboxes_are_lost_within_ten_seconds() {
         .alive = Some(false);
     rig.fleet.sim(&a).sandboxes.lock().unwrap().remove(&gone_name);
     rig.fleet.sim(&a).sandboxes.lock().unwrap().remove(&moving_name);
+    pass(&g, &r).await;
     for id in [oom, gone] {
-        assert!(
-            eventually(|| async { db::load(&rig.h.pool(), id).await.unwrap().unwrap().status == SandboxState::Gone })
-                .await
+        assert_eq!(
+            db::load(&rig.h.pool(), id).await.unwrap().unwrap().status,
+            SandboxState::Gone
         );
         let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
         assert_eq!(
@@ -1404,8 +1541,7 @@ async fn vanished_sandboxes_are_lost_within_ten_seconds() {
             (Some("vanished"), Some("sandbox_lost"))
         );
     }
-    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    pass(&g, &r).await;
     assert_eq!(
         db::load(&rig.h.pool(), moving).await.unwrap().unwrap().status,
         SandboxState::Ready
@@ -1463,7 +1599,12 @@ async fn juicefs_gates_hosts() {
     // unmounted for longer than jfsRetireSeconds: retiring (system), its sandboxes move off
     rig.fleet.sim(&a).set(|h| h.jfs_mounted = Some(false));
     pass(&g, &r).await;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    // the mount missing since past `jfsRetireSeconds`, in the row where the scaler keeps it
+    rig.sql(&format!(
+        "update hosts set info = jsonb_set(info, '{{jfsUnmountedSince}}',
+            to_jsonb((extract(epoch from now()) * 1000)::bigint - 3600000)) where name = '{a}'"
+    ))
+    .await;
     let p = pass(&g, &r).await;
     assert_eq!(p.retired, vec![a.clone()]);
     assert_eq!(rig.host_status(&a).await, "retiring");
@@ -1721,9 +1862,9 @@ async fn a_stopped_source_never_settles_as_kept() {
     let (id, from, to) = p.migration.expect("a packing move");
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
     let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
-    // hermit's wait on the receive (3 s in the fake) ends, then the settle asks both hosts for a while
+    // hermit's wait on the receive (3 s in the fake) ends, then the settle asks both hosts, round after round
     assert!(eventually(|| async { src.calls().iter().any(|c| c.starts_with("send ")) }).await);
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    settle_rounds(&src, &dst, list_calls(&src, &dst), 2).await;
     let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
     assert_eq!(
         (row.status, row.host.as_deref(), row.migrating_to.as_deref()),
@@ -1783,8 +1924,8 @@ async fn a_source_still_sending_is_not_kept_until_its_send_ends() {
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
     let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
     assert!(eventually(|| async { src.calls().iter().any(|c| c.starts_with("send ")) }).await);
-    // hermit's wait on the receive (3 s in the fake) ends; the settle asks both hosts for a while
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    // hermit's wait on the receive (3 s in the fake) ends; the settle asks both hosts, round after round
+    settle_rounds(&src, &dst, list_calls(&src, &dst), 2).await;
     let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
     assert_eq!(
         (row.status, row.host.as_deref(), row.migrating_to.as_deref()),
@@ -1831,10 +1972,10 @@ async fn a_source_still_sending_is_adopted_when_its_send_switches() {
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
     let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
     assert!(eventually(|| async { src.calls().iter().any(|c| c.starts_with("send ")) }).await);
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    settle_rounds(&src, &dst, list_calls(&src, &dst), 2).await;
     // the checkpoint stops it (alive:false, still sending), then the hand-over
     src.sandboxes.lock().unwrap().get_mut(&name).unwrap().alive = Some(false);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    settle_rounds(&src, &dst, list_calls(&src, &dst), 2).await;
     assert_eq!(rig.host_of(id).await.as_deref(), Some(from.as_str()));
     rig.finish_move(&name, &from, &to);
     assert!(eventually(|| async { rig.host_of(id).await.as_deref() == Some(to.as_str()) }).await);
@@ -1857,22 +1998,27 @@ async fn a_receive_that_never_ends_is_ended_at_the_migration_limit() {
         "fabric_receive_forever",
         |_| {},
         Timings {
-            migration_limit: Duration::from_secs(8),
+            migration_limit: Duration::from_secs(3600),
             ..manual()
         },
     )
     .await;
     let (r1, g1) = packing_pair(&rig, |h| h.stop_and_lose_answer.store(true, Ordering::SeqCst)).await;
     let p = pass(&g1, &r1).await;
-    let (id, _from, to) = p.migration.expect("a packing move");
+    let (id, from, to) = p.migration.expect("a packing move");
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
-    let dst = rig.fleet.sim(&to);
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
+    settle_rounds(&src, &dst, list_calls(&src, &dst), 2).await;
     assert_eq!(
         db::load(&rig.h.pool(), id).await.unwrap().unwrap().status,
         SandboxState::Ready,
         "waits while the receive runs, within the limit"
     );
+    // the migration started past its limit (the settle reads `migration_started_at`)
+    rig.sql(&format!(
+        "update sandboxes set migration_started_at = now() - interval '2 hours' where id = '{id}'"
+    ))
+    .await;
     assert!(
         eventually(|| async { db::load(&rig.h.pool(), id).await.unwrap().unwrap().status == SandboxState::Gone }).await
     );
@@ -1899,7 +2045,7 @@ async fn a_receive_whose_delete_fails_is_deleted_again() {
         "fabric_receive_delete_fails",
         |_| {},
         Timings {
-            migration_limit: Duration::from_secs(4),
+            migration_limit: Duration::from_secs(3600),
             ..manual()
         },
     )
@@ -1909,8 +2055,12 @@ async fn a_receive_whose_delete_fails_is_deleted_again() {
     let (id, _from, to) = p.migration.expect("a packing move");
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
     let dst = rig.fleet.sim(&to);
-    // the migration started under a second ago; its limit is 4 s
+    // the migration started past its limit (the settle reads `migration_started_at`)
     dst.fail_deletes.store(1, Ordering::SeqCst);
+    rig.sql(&format!(
+        "update sandboxes set migration_started_at = now() - interval '2 hours' where id = '{id}'"
+    ))
+    .await;
     assert!(
         eventually(|| async { db::load(&rig.h.pool(), id).await.unwrap().unwrap().status == SandboxState::Gone }).await
     );
@@ -1933,7 +2083,7 @@ async fn past_the_limit_a_sending_source_is_kept_only_once_the_receive_is_gone()
         "fabric_sending_overdue",
         |_| {},
         Timings {
-            migration_limit: Duration::from_secs(4),
+            migration_limit: Duration::from_secs(3600),
             ..manual()
         },
     )
@@ -1943,8 +2093,12 @@ async fn past_the_limit_a_sending_source_is_kept_only_once_the_receive_is_gone()
     let (id, from, to) = p.migration.expect("a packing move");
     let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
     let dst = rig.fleet.sim(&to);
-    // two deletes fail: the one at the limit and the first of the kept branch
+    // two deletes fail: the one at the limit and the first of the kept branch; the migration started past its limit
     dst.fail_deletes.store(2, Ordering::SeqCst);
+    rig.sql(&format!(
+        "update sandboxes set migration_started_at = now() - interval '2 hours' where id = '{id}'"
+    ))
+    .await;
     assert!(
         eventually(|| async {
             db::load(&rig.h.pool(), id)
@@ -2507,23 +2661,23 @@ async fn frozen_sandboxes_are_evicted_only_when_their_slot_is_needed() {
         "update hosts set created_at = now() - interval '16 minutes' where name = '{a}'"
     ))
     .await;
-    pass(&g, &r).await;
+    let first = pass(&g, &r).await;
     assert!(
         eventually(|| evicted(&rig, y)).await,
         "y was not evicted from a host holding nothing running"
     );
-    // a following pass releases it: one may still do nothing (a pass whose gateway heartbeat went unanswered returns
+    // the pass that evicts y releases the host when the eviction ends before its release step (CI, 2026-11-20),
+    // else a following pass does; one may still do nothing (a pass whose gateway heartbeat went unanswered returns
     // before any release; CI under load, 2026-11-19)
-    let mut terminated = Vec::new();
-    let mut reports = Vec::new();
-    for _ in 0..10 {
+    let mut terminated = first.terminated.clone();
+    let mut reports = vec![format!("{first:?}")];
+    // passes until one releases it (30 s only stops a test that would hang)
+    let started = tokio::time::Instant::now();
+    while terminated.is_empty() && started.elapsed() < Duration::from_secs(30) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
         let p = pass(&g, &r).await;
         terminated.clone_from(&p.terminated);
         reports.push(format!("{p:?}"));
-        if !terminated.is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     if terminated != vec![a.clone()] {
         // what kept the host (it failed only in CI, 2026-11-19): the host's row and every row on it
@@ -2592,4 +2746,77 @@ async fn a_fabric_without_freeze_never_freezes() {
     assert_eq!(e.status().as_u16(), 501);
     let s = starting(&rig).await;
     assert_eq!(g.place(s, 2 * GIB).await.unwrap(), Place::NoSlot);
+}
+
+/// `fabric.aws.pruneImages` (Jarvis 4's fabric, Deyao 2026-11-20): the bucket's images no one uses go, with the EC2
+/// reconcile; kept are the configured image, those of sandboxes not gone, those of sandboxes started in the last 7
+/// days and those put there in the last day. Without the setting nothing ever goes (YYC AI).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn images_no_one_uses_go_from_the_bucket() {
+    for prune in [true, false] {
+        let rig = Rig::new(
+            if prune { "fabric_prune" } else { "fabric_prune_off" },
+            |v| {
+                v["fabric"]["aws"]["imageBucket"] = json!("imgs");
+                v["fabric"]["aws"]["pruneImages"] = json!(prune);
+            },
+            manual(),
+        )
+        .await;
+        let (r, g) = rig.replica("hermit-a").await;
+        let configured = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
+        let (live, recent, old, fresh) = ("1f".repeat(32), "2e".repeat(32), "3d".repeat(32), "4c".repeat(32));
+        // a sandbox not gone on `live`, a gone one started 2 days ago on `recent`, one started 30 days ago on `old`
+        for (status, image, age) in [
+            ("ready", &live, "0 days"),
+            ("gone", &recent, "2 days"),
+            ("gone", &old, "30 days"),
+        ] {
+            rig.h
+                .pool()
+                .get()
+                .await
+                .unwrap()
+                .execute(
+                    &format!(
+                        "insert into sandboxes (id, conversation_id, person, status, name, token_kid, image, cpu,
+                           memory_bytes, start_deadline, expires_at, hard_expires_at, created_at)
+                         values ($1, $2, $3, '{status}', $4, 1, $5, 1, $6, now(), now() + interval '1 hour',
+                           now() + interval '2 hours', now() - interval '{age}')"
+                    ),
+                    &[
+                        &Uuid::now_v7(),
+                        &Uuid::now_v7(),
+                        &STAFF,
+                        &format!("sbx-{}", &image[..12]),
+                        &format!("sha256:{image}"),
+                        &i64::try_from(2 * GIB).unwrap(),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+        let key = |h: &str| format!("imgs/images/{h}.tar.zst");
+        *rig.ec2.objects.lock().unwrap() = vec![
+            key(&configured),
+            key(&live),
+            key(&recent),
+            key(&old),
+            key(&fresh),
+            "imgs/frozen/x/abc".into(),
+            "imgs/images/not-a-digest.tar.zst".into(),
+        ];
+        rig.ec2.fresh.lock().unwrap().push(key(&fresh));
+        pass(&g, &r).await;
+        let deleted = rig.ec2.deleted.lock().unwrap().clone();
+        if prune {
+            assert_eq!(
+                deleted,
+                vec![key(&old)],
+                "only the image no one uses, put there long ago"
+            );
+        } else {
+            assert!(deleted.is_empty(), "nothing goes without pruneImages: {deleted:?}");
+        }
+    }
 }

@@ -35,16 +35,29 @@ async fn magpie() -> (aviary_fakes::magpie::Running, Client) {
 #[tokio::test]
 async fn latency_delays_only_its_route() {
     let (running, c) = magpie().await;
-    running
+    let f = running
         .fake
         .faults()
         .on("cc_tree", FaultKind::Latency(Duration::from_millis(400)));
     let t = Instant::now();
     c.sandbox(None).cc_tree().await.unwrap();
     assert!(t.elapsed() >= Duration::from_millis(400), "{:?}", t.elapsed());
-    let t = Instant::now();
-    c.sandbox(None).lease().await.unwrap();
-    assert!(t.elapsed() < Duration::from_millis(300), "{:?}", t.elapsed());
+    running.fake.faults().remove(f);
+    // with cc/tree an hour late, the lease still answers: a delay on every route would outlast the bound
+    running
+        .fake
+        .faults()
+        .on("cc_tree", FaultKind::Latency(Duration::from_hours(1)));
+    let slow = {
+        let c = c.clone();
+        tokio::spawn(async move { c.sandbox(None).cc_tree().await })
+    };
+    tokio::time::timeout(Duration::from_secs(30), c.sandbox(None).lease())
+        .await
+        .expect("the lease is not delayed")
+        .unwrap();
+    assert!(!slow.is_finished());
+    slow.abort();
 }
 
 #[tokio::test]

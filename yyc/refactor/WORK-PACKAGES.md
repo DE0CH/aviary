@@ -863,7 +863,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 - **Goal**: k3d harness with the real pigeon, magpie and hermit images, the real sandbox image as Pods created by
   `fake-sandboxd`, the reference gateway, mock model, fake tools and fake Access; scenarios E1-E24 gating every
   image push; images, labels, the `aviary-<sha12>` release, `nightly.yml` (soaks, Claude Code release gate).
-- **Paths**: `testing/fake-sandboxd`, `testing/e2e` (k3d config, manifests, `gen.sh`, driver crate `aviary-e2e`),
+- **Paths**: `testing/fake-sandboxd`, `testing/e2e` (k3d config, manifests, driver crate `aviary-e2e`), `testing/e2e-harness`,
   `.github/workflows/{ci.yml,nightly.yml}`, `images/*`.
 - **Inputs**: platform 5, 6, 7; supervisor 22 soak and `claude-code-gate`; every service package.
 - **Acceptance**: E1-E24 green on `main`; artefacts on failure (logs, events, admin dumps, frame log); images pushed
@@ -999,7 +999,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   Carried from WP-12: `magpie-pg`'s `postgresql.parameters` set `min_wal_size: 1GB` and `max_wal_size: 2GB` (a
   required parameter: magpie 6.10's p99 <= 150 ms for a 1 MiB image line was measured at these, 47-53 ms; at
   Postgres's defaults, 80MB / 1GB, new 16 MiB segment files cost 150-200 ms each and the p99 was 129-134 ms; see
-  DE0CH/aviary `crates/magpie/README.md` and `.github/ci/postgres-sync.sh`). A manifest test in DE0CH/YYC's CI
+  DE0CH/aviary `crates/magpie/README.md` and `testing/ci-services`). A manifest test in DE0CH/YYC's CI
   fails unless `magpie-pg.yaml`'s `spec.postgresql.parameters` has exactly `min_wal_size: 1GB` and
   `max_wal_size: 2GB` (or larger), so the setting the latency bound depends on cannot be dropped silently.
 

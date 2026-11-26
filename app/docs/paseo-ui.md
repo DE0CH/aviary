@@ -532,8 +532,8 @@ Sign-in is the iPhone's: `/api/jarvis/app-signin` in a Chrome Custom Tab, back o
   (`ANDROID_BUILD_NUMBER`), so every build installs over the one before.
 - **Out of CI**: Jarvis Chat's APK is the artifact `jarvis-chat-android`; YYC AI's carries the YYC_SITE secret, so it is
   `yyc-ai-android-encrypted`, age-encrypted to `YYC_ANDROID_CI_AGE_KEY`'s recipient.
-- **The download** (Deyao, 2026-11-20): Settings → General → Apps → Android, 「下載」 / "Download", on Android only (the
-  site in an Android browser, and the app itself for its updates; `yyc/android-app.ts`), opens
+- **The download** (Deyao, 2026-11-20): Settings → General → Apps → Android, 「下載」 / "Download", on every device (Deyao,
+  2026-11-20: an Android phone is not reliably told from its user agent; `yyc/android-app.ts`), opens
   `<deployment>/apps/android.apk`, which the browser fetches behind the deployment's Access. Served from Cloudflare's
   edge: a Worker on that path reads the R2 bucket (YYC AI: `yyc-ai-apps` on YYC's account, DE0CH/yyc-code `apps/`;
   Jarvis Chat: `jarvis-chat-apps` on Deyao's, DE0CH/deyao-ai `chat-apps/`), checks Access's token and answers from the

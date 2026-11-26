@@ -399,6 +399,7 @@ async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs_unl
                     person: ALICE.into(),
                     message: msg("wakeup-1", "Scheduled wakeup"),
                     join_running: false,
+                    interrupt_running: false,
                 },
             )
             .await
@@ -416,6 +417,7 @@ async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs_unl
                     person: ALICE.into(),
                     message: msg("watchdog-1", "Jarvis watchdog: memory pressure"),
                     join_running: true,
+                    interrupt_running: false,
                 },
             )
             .await
@@ -434,6 +436,129 @@ async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs_unl
         1,
         "only the deployment's joining message waits"
     );
+}
+
+#[tokio::test]
+async fn the_deployments_interrupting_message_stops_the_running_turn_and_runs_next() {
+    let w = World::new("midturn_interrupt").await;
+    let pigeon = w.a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let interrupt = |conv: Uuid, cmid: &str| {
+        let hermit = w.a.hermit();
+        let cmid = cmid.to_owned();
+        async move {
+            hermit
+                .service(None)
+                .hermit_send_turn(
+                    conv,
+                    &HermitSendRequest {
+                        person: ALICE.into(),
+                        message: msg(&cmid, "Jarvis watchdog: memory pressure"),
+                        join_running: false,
+                        interrupt_running: true,
+                    },
+                )
+                .await
+        }
+    };
+    let commands = async |conv: Uuid, kind: &str| -> Vec<Option<Uuid>> {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query(
+                "select turn_id from commands where conversation_id = $1 and type = $2 order by cmd_seq",
+                &[&conv, &kind],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect()
+    };
+    let turn_state = async |turn: Uuid| -> String {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select state from turns where id = $1", &[&turn])
+            .await
+            .unwrap()
+            .get(0)
+    };
+
+    // a turn whose start_turn reached no supervisor yet: the stop ends it at once, and the message starts a turn of
+    // its own at the queue's next pass, never written into the stopped turn
+    let conv = w.conversation().await;
+    let busy = alice.send_turn(conv, &msg("m1", "長任務")).await.unwrap().get().turn.id;
+    let sent = interrupt(conv, "watchdog-1").await.unwrap();
+    assert!(sent.is_new());
+    assert!(sent.get().mid_turn, "it started no turn of its own yet");
+    assert_eq!(sent.get().turn.id, busy);
+    assert_eq!(turn_state(busy).await, "canceled", "the running turn was stopped");
+    assert_eq!(
+        w.waiting(conv).await,
+        [("Jarvis watchdog: memory pressure".to_owned(), true)]
+    );
+    assert!(commands(conv, "send_message").await.is_empty());
+    let again = interrupt(conv, "watchdog-1").await.unwrap();
+    assert!(!again.is_new(), "a repeat is the same message");
+    assert_eq!(w.pass().await, 1);
+    let (state, turn, _) = w.message(conv, "watchdog-1").await;
+    assert_eq!(state, "turn");
+    assert_ne!(turn, Some(busy));
+    assert_eq!(w.sent(conv).await, ["長任務", "Jarvis watchdog: memory pressure"]);
+    assert!(w.waiting(conv).await.is_empty());
+
+    // a turn a supervisor runs: it gets the person's stop (`interrupt`, `stopping`) and the message waits for its
+    // end, held: the queue never writes it into the turn being stopped
+    let conv = w.conversation().await;
+    let busy = alice.send_turn(conv, &msg("m1", "長任務")).await.unwrap().get().turn.id;
+    w.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update commands set delivered_at = now() where conversation_id = $1 and type = 'start_turn'",
+            &[&conv],
+        )
+        .await
+        .unwrap();
+    assert!(interrupt(conv, "watchdog-2").await.unwrap().get().mid_turn);
+    assert_eq!(turn_state(busy).await, "stopping");
+    assert_eq!(commands(conv, "interrupt").await, [Some(busy)]);
+    assert_eq!(w.pass().await, 0, "it waits for the stopped turn to end");
+    assert!(commands(conv, "send_message").await.is_empty());
+    assert_eq!(
+        w.waiting(conv).await,
+        [("Jarvis watchdog: memory pressure".to_owned(), true)]
+    );
+    // a second interrupting message while the turn stops: no second stop, it waits behind the first
+    assert!(interrupt(conv, "watchdog-3").await.unwrap().get().mid_turn);
+    assert_eq!(commands(conv, "interrupt").await, [Some(busy)]);
+    assert_eq!(w.waiting(conv).await.len(), 2);
+}
+
+#[tokio::test]
+async fn the_deployments_interrupting_message_in_an_idle_conversation_is_a_turn() {
+    let w = World::new("midturn_interrupt_idle").await;
+    let conv = w.conversation().await;
+    let sent =
+        w.a.hermit()
+            .service(None)
+            .hermit_send_turn(
+                conv,
+                &HermitSendRequest {
+                    person: ALICE.into(),
+                    message: msg("watchdog-1", "Jarvis watchdog: disk pressure"),
+                    join_running: false,
+                    interrupt_running: true,
+                },
+            )
+            .await
+            .unwrap();
+    assert!(!sent.get().mid_turn);
+    assert_eq!(w.sent(conv).await, ["Jarvis watchdog: disk pressure"]);
 }
 
 #[tokio::test]

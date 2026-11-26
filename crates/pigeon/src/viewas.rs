@@ -124,7 +124,7 @@ pub async fn start(app: &App, req: Request, id: &Identity) -> Response {
         a: admin.email.clone(),
         u: user.clone(),
         s: uuid::Uuid::new_v4().to_string(),
-        e: now_secs() + LIFETIME_SECS,
+        e: now_secs(&app.0.tuning.clock) + LIFETIME_SECS,
     };
     let Some(expires_at) = timestamp(claims.e) else {
         return page(app, Page::NotRecorded, None);

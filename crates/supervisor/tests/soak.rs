@@ -22,8 +22,17 @@ use supervisor::limits::SUPERVISOR_RSS_BUDGET;
 use supervisor_api::ExecRequest;
 use supervisor_api::control::{PrepareKind, PrepareRequest};
 
-const SOAK: Duration = Duration::from_secs(20);
+/// The CI soak's rounds (about 20 s), a restart halfway.
+const SOAK_ROUNDS: u64 = 120;
 const MIB: u64 = 1024 * 1024;
+
+/// How long a soak goes on: a number of rounds (CI: the same work on every runner), or a time (the nightly soak, as
+/// long as its runner allows).
+#[derive(Clone, Copy, Debug)]
+enum Length {
+    Rounds(u64),
+    For(Duration),
+}
 
 #[test]
 #[ignore = "the supervisor process the keeper starts in the soaks"]
@@ -32,22 +41,25 @@ fn child() {
 }
 
 #[allow(clippy::too_many_lines)] // setup, drive, measure
-async fn soak(duration: Duration, restart_every: Duration) {
+/// `restart_every` and each process's warm-up (a quarter of that) are counted in rounds.
+async fn soak(length: Length, restart_every: u64) {
     let fakes = Fakes::start().await;
     let dir = common::dir("supervisor-soak");
     let k = KeeperThread::start(&dir, fakes.proxy(), "child");
     let (mut cc, mut pid) = k.ready(&fakes).await;
 
     let started = Instant::now();
-    // each process's warm-up: half of the time between restarts
-    let warm = (duration / 4).min(restart_every / 2);
+    let warm = restart_every / 4;
     let (mut peak, mut n, mut restarts) = (0u64, 0u64, 0u32);
     let mut segment = Segment::new(pid);
     let mut segments: Vec<Segment> = Vec::new();
-    let mut next_restart = started + restart_every;
     let payload = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; 256 * 1024]);
-    while started.elapsed() < duration {
-        if Instant::now() >= next_restart {
+    let more = |n: u64| match length {
+        Length::Rounds(r) => n < r,
+        Length::For(d) => started.elapsed() < d,
+    };
+    while more(n) {
+        if n > 0 && n.is_multiple_of(restart_every) {
             // a supervisor restart while hermit's activity route and magpie's lease route are away
             let a = fakes
                 .hermit
@@ -57,14 +69,21 @@ async fn soak(duration: Duration, restart_every: Duration) {
                 .magpie
                 .faults()
                 .on("lease", FaultKind::Unavailable { retry_after_secs: 1 });
+            let (hermit_before, magpie_before) = (fakes.hermit.faults().hits(), fakes.magpie.faults().hits());
             k.kill_supervisor();
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            // the new supervisor meets both outages before they end
+            let met = tokio::time::timeout(Duration::from_secs(60), async {
+                while fakes.hermit.faults().hits() == hermit_before || fakes.magpie.faults().hits() == magpie_before {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await;
+            assert!(met.is_ok(), "the restarted supervisor never asked hermit and magpie");
             fakes.hermit.faults().remove(a);
             fakes.magpie.faults().remove(l);
             (cc, pid) = k.ready(&fakes).await;
             segments.push(std::mem::replace(&mut segment, Segment::new(pid)));
             restarts += 1;
-            next_restart = Instant::now() + restart_every;
         }
         let _ = cc.health().await.unwrap();
         let _ = cc.state().await.unwrap();
@@ -93,21 +112,21 @@ async fn soak(duration: Duration, restart_every: Duration) {
         peak = peak.max(r);
         segment.sample(r, warm);
     }
+    let took = started.elapsed();
     segment.sample(rss(pid.cast_unsigned()), warm);
     segments.push(segment);
     let agent = common::lines(&dir, "agent.log");
     drop(k);
     let _ = std::fs::remove_dir_all(&dir);
     eprintln!(
-        "soak: {n} rounds in {duration:?}, {restarts} restarts, peak {} KiB, per process (after warm-up, end) KiB: {:?}",
+        "soak: {n} rounds in {took:?}, {restarts} restarts, peak {} KiB, per process (after warm-up, end) KiB: {:?}",
         peak / 1024,
         segments
             .iter()
             .map(|s| (s.pid, s.baseline / 1024, s.last / 1024))
             .collect::<Vec<_>>()
     );
-    assert!(n > 10, "only {n} rounds");
-    assert!(restarts >= 1);
+    assert!(restarts >= 1, "{n} rounds, no restart");
     // every restart re-attached to the one generation
     assert_eq!(agent.len(), 1 + restarts as usize, "{agent:?}");
     assert!(agent[1..].iter().all(|l| l.starts_with("attach alive 1 ")), "{agent:?}");
@@ -128,11 +147,11 @@ async fn soak(duration: Duration, restart_every: Duration) {
     }
 }
 
-/// One supervisor process's RSS: the sample after its warm-up and the last one.
+/// One supervisor process's RSS: the sample after its warm-up (in rounds) and the last one.
 #[derive(Debug)]
 struct Segment {
     pid: i32,
-    since: Instant,
+    rounds: u64,
     baseline: u64,
     last: u64,
 }
@@ -141,14 +160,15 @@ impl Segment {
     fn new(pid: i32) -> Self {
         Self {
             pid,
-            since: Instant::now(),
+            rounds: 0,
             baseline: 0,
             last: 0,
         }
     }
 
-    fn sample(&mut self, r: u64, warm: Duration) {
-        if self.baseline == 0 && self.since.elapsed() >= warm {
+    fn sample(&mut self, r: u64, warm: u64) {
+        self.rounds += 1;
+        if self.baseline == 0 && self.rounds > warm {
             self.baseline = r;
         }
         self.last = r;
@@ -157,7 +177,7 @@ impl Segment {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rss_stays_under_the_budget() {
-    soak(SOAK, SOAK / 2).await;
+    soak(Length::Rounds(SOAK_ROUNDS), SOAK_ROUNDS / 2).await;
 }
 
 /// The longer soak for `nightly.yml`: `SOAK_SECONDS` long (default an hour; the nightly runs 5 h), a supervisor
@@ -170,5 +190,6 @@ async fn soak_long() {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(3600);
-    soak(Duration::from_secs(secs), Duration::from_secs(600)).await;
+    // a restart about every 10 minutes (seven rounds a second)
+    soak(Length::For(Duration::from_secs(secs)), 4200).await;
 }

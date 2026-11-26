@@ -9,7 +9,7 @@ name: jarvis
 #   build would refuse at its start, among others a model that names no `reasoning` of its own (Deyao, 2026-11-17).
 on:
   push:
-    branches: ['**']  # every branch: the gate waits for it
+    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
     paths: [jarvis/**, crates/aviary-core/**, crates/aviary-pg/**, crates/hermit-api/**, crates/gateway-api/**,
             crates/magpie-api/**, crates/supervisor-api/**, testing/fakes/**, rust-toolchain.toml, deploy/images.json,
             .github/workflows/jarvis.yml]
@@ -19,6 +19,10 @@ permissions:
 concurrency:
   group: jarvis-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
+
 jobs:
   part:
     runs-on: ubuntu-24.04
@@ -97,7 +101,7 @@ jobs:
             --build-arg AVIARY_REVISION="$PART_SHA" --platform linux/amd64 --provenance=false \
             --label org.opencontainers.image.source=https://github.com/DE0CH/aviary \
             --label "org.opencontainers.image.revision=$PART_SHA" \
-            --cache-from type=gha,scope=hermit-jarvis --cache-to type=gha,mode=max,scope=hermit-jarvis
+            --cache-from type=gha,scope=hermit-jarvis --cache-to type=gha,mode=max,scope=hermit-jarvis,ignore-error=true
       - name: the chat's settings, checked by this build
         run: docker run --rm -v "$PWD/jarvis/deploy:/chat:ro" hermit-jarvis:test check-settings /chat/settings.json
       - name: push hermit-jarvis:<sha12>
