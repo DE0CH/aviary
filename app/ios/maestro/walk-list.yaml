@@ -28,8 +28,10 @@ appId: ${APP_ID}
       id: "sidebar-workspace-context-menu-.*"
     timeout: 10000
 - takeScreenshot: plain-menu
+# the menu's backdrop covers the screen; a tap on its left edge, below the status bar (which iOS keeps for itself)
+# and beside any menu (they open at the row's right), closes it
 - tapOn:
-    point: "50%,3%"
+    point: "10%,50%"
 - extendedWaitUntil:
     notVisible:
       id: "sidebar-workspace-context-menu-.*"
@@ -40,8 +42,10 @@ appId: ${APP_ID}
       id: "sidebar-workspace-context-menu-.*"
     timeout: 10000
 - takeScreenshot: pinned-menu
+# the menu's backdrop covers the screen; a tap on its left edge, below the status bar (which iOS keeps for itself)
+# and beside any menu (they open at the row's right), closes it
 - tapOn:
-    point: "50%,3%"
+    point: "10%,50%"
 - extendedWaitUntil:
     notVisible:
       id: "sidebar-workspace-context-menu-.*"
