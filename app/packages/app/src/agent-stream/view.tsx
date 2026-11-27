@@ -2,6 +2,9 @@ import { isSentFilesCall, openConversationFile, readSentCaption, readSentFiles, 
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { PersonCardView } from "@/yyc/person-cards";
+import { EaseHeight } from "@/components/ui/ease-height";
+import { StopFollowingContext, type StopFollowingHint } from "./stop-following";
+import { withLeaving, type Shown } from "@/components/ui/ease-height-motion";
 import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
 import { usePersonCardsAvailable } from "@/yyc/me";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
@@ -68,7 +71,6 @@ import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
-import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { IndentRail } from "@/components/indent-rail";
@@ -148,13 +150,43 @@ function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
 }): ReactNode {
-  if (input.pendingPermissions.length === 0) {
+  return <PendingPermissionCards pendingPermissions={input.pendingPermissions} client={input.client} />;
+}
+
+const permissionKey = (permission: PendingPermission) => permission.key;
+
+/**
+ * The answer cards at the bottom. On a phone each eases in, eases to its new height when it changes (the next
+ * question), and eases out once answered, its bottom staying put (components/ui/ease-height.tsx; Deyao, 2026-11-20);
+ * an answered card is kept, frozen, until it has eased out. Web has no motion: it goes at once.
+ */
+function PendingPermissionCards({
+  pendingPermissions,
+  client,
+}: {
+  pendingPermissions: PendingPermission[];
+  client: DaemonClient | null;
+}) {
+  const [shown, setShown] = useState<Shown<PendingPermission>[]>(() =>
+    pendingPermissions.map((item) => ({ item, leaving: false })),
+  );
+  const [lastPending, setLastPending] = useState(pendingPermissions);
+  if (lastPending !== pendingPermissions) {
+    setLastPending(pendingPermissions);
+    setShown((current) => withLeaving(current, pendingPermissions, permissionKey));
+  }
+  const drop = useStableEvent((key: string) =>
+    setShown((current) => current.filter((entry) => !(entry.leaving && entry.item.key === key))),
+  );
+  if (shown.length === 0) {
     return null;
   }
   return (
     <View style={stylesheet.permissionsContainer}>
-      {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+      {shown.map(({ item, leaving }) => (
+        <EaseHeight key={item.key} pin="bottom" fromZero leaving={leaving} onLeft={() => drop(item.key)}>
+          <PermissionRequestCard permission={item} client={client} />
+        </EaseHeight>
       ))}
     </View>
   );
@@ -707,9 +739,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
+    // every reason to stop following the newest text comes here (stop-following.ts)
+    const stopFollowing = useCallback((hint: StopFollowingHint) => {
+      viewportRef.current?.stopFollowing(hint);
+    }, []);
+
     const setTurnExpanded = useCallback((hostId: string, expanded: boolean) => {
       // A turn opens below its summary line; keep that line under the reader's pointer.
-      viewportRef.current?.holdReadingPosition();
+      stopFollowing("opened-turn");
       setExpandedTurnHostIds((previous) => {
         if (previous.has(hostId) === expanded) return previous;
         const next = new Set(previous);
@@ -896,7 +933,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           const asked = readPersonAsk(data.metadata);
           if (asked) {
             const view = cardViewWhereAsked(asked);
-            return view ? <PersonCardView card={asked} view={view} /> : null;
+            // on a phone its change of height (answered, its options filled in) eases, its bottom staying put
+            return view ? (
+              <EaseHeight pin="bottom">
+                <PersonCardView card={asked} view={view} />
+              </EaseHeight>
+            ) : null;
           }
           const read = readPersonRead(data.metadata);
           if (read.length > 0) {
@@ -1274,7 +1316,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         revealLoadedMessage={revealLoadedMessage}
         visibleMessageIds={mountedMessageIds}
       >
-        <ToolCallSheetProvider>
+        <StopFollowingContext.Provider value={stopFollowing}>
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
@@ -1322,7 +1364,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               </View>
             )}
           </AssistantSelectionCopySurface>
-        </ToolCallSheetProvider>
+        </StopFollowingContext.Provider>
       </ChatFind>
     );
   },
@@ -1493,7 +1535,6 @@ function ThoughtSlot({
       status={status === "ready" ? "completed" : "executing"}
       isLastInSequence={isLastInSequence}
       defaultExpanded={defaultExpanded}
-      forceInline={defaultExpanded}
     />
   );
 }

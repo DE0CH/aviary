@@ -1173,7 +1173,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
-      holdReadingPosition: () => {
+      stopFollowing: () => {
         cancelPendingStickToBottom();
         setFollowOutput(false);
         readingAnchor.scroll(scrollContainerRef.current?.scrollTop ?? 0);

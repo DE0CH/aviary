@@ -1,0 +1,33 @@
+# `nix build` of the given installables, from the Nix cache where it has them (flake.nix): a download is tried again
+# by Nix (its own retries), an entry no cache holds is built. A cache that times out is switched off by Nix for a while,
+# and what it holds is then built from source, which fails on the same outage (2026-11-26: cache.nixos.org timed out
+# once, and magpie's build went red building the bootstrap stdenv): a build that failed on a download runs again
+# after a pause (60, 120, 180 s); any other failure is red at once. The step's environment reaches the build (the part's
+# commit: AVIARY_REVISION, CHAT_COMMIT, DRIVE_REVISION, read by an --impure build).
+name: nix-build
+description: nix build, tried again when it failed on a download
+inputs:
+  installables:
+    description: what to build, separated by spaces (`.#herald-image .#pigeon-image`)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INSTALLABLES: ${{ inputs.installables }}
+      run: |
+        set -euo pipefail
+        read -r -a what <<< "$INSTALLABLES"
+        log="$RUNNER_TEMP/nix-build.log"
+        for try in 1 2 3 4; do
+          # the build's log to the job's and to the file (a pipeline: tee has written all of it when the status is known)
+          if nix build --impure "${what[@]}" --no-link -L --fallback --option connect-timeout 30 \
+               --option download-attempts 5 2>&1 | tee "$log"; then
+            exit 0
+          fi
+          grep -qE "unable to download|is temporarily disabled|Timeout was reached|Could not resolve host" "$log" || exit 1
+          [ "$try" = 4 ] && exit 1
+          echo "::warning title=nix build::a download failed (try $try of 4); again in $((try * 60)) s"
+          sleep $((try * 60))
+        done

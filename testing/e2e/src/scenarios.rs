@@ -1805,13 +1805,27 @@ fn rotated_jpeg() -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// E5: an image attachment (6000×4000, EXIF-rotated): the model gets one image with its long edge at most 2000 px
-/// and at most 3,932,160 bytes; the timeline's thumbnail loads with its signature and 404s with a bad one.
+/// A small upright JPEG, one the model takes as it is.
+fn small_jpeg() -> anyhow::Result<Vec<u8>> {
+    #[allow(clippy::cast_possible_truncation)] // the low byte of a coordinate, a gradient
+    let img = image::RgbImage::from_fn(300, 200, |x, y| image::Rgb([x as u8, y as u8, 64]));
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&img)?;
+    Ok(jpeg)
+}
+
+/// E5: two image attachments. A small upright JPEG reaches the model with the message, as it is; a 6000×4000
+/// EXIF-rotated one, which the model cannot take as it is, reaches the agent as a file (listed in `<files_input>`,
+/// no image of it in the request: magpie makes no copy for the model). Both show in the chat as pictures: the
+/// rotated one's thumbnail loads with its signature and 404s with a bad one.
 async fn e5(h: &Harness) -> anyhow::Result<()> {
     use base64::Engine as _;
     let token = h.mint(ALICE, 3600, None).await?;
     let jpeg = rotated_jpeg()?;
     let data = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+    let small = small_jpeg()?;
+    let small_len = small.len() as u64;
+    let small_data = base64::engine::general_purpose::STANDARD.encode(&small);
     as_alice(h, |mut ws| async move {
         let r = async {
             let id = create(&mut ws, &format!("A first message ({})", marker("E5"))).await?;
@@ -1821,29 +1835,39 @@ async fn e5(h: &Harness) -> anyhow::Result<()> {
                     "send_agent_message_request",
                     json!({"agentId": id, "text": "What is in this picture?",
                            "messageId": uuid::Uuid::new_v4().to_string(),
-                           "images": [{"data": data, "mimeType": "image/jpeg"}]}),
+                           "images": [{"data": data, "mimeType": "image/jpeg"},
+                                      {"data": small_data, "mimeType": "image/jpeg"}]}),
                 )
                 .await?;
             ensure!(p["accepted"] == true, "the send with an image: {p}");
             let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
             ensure!(end["type"] == "turn_completed", "the turn ended {end}");
             let reqs = h.model_requests(&id).await?;
-            let images: Vec<&Value> = reqs
+            let with = reqs
                 .iter()
                 .filter(|r| r["model"] == TURN_MODEL)
-                .flat_map(|r| r["images"].as_array().into_iter().flatten())
+                .find(|r| r["images"].as_array().is_some_and(|i| !i.is_empty()))
+                .context("the model got no image")?;
+            let images = with["images"].as_array().cloned().unwrap_or_default();
+            let seen: Vec<(u64, u64, u64)> = images
+                .iter()
+                .map(|i| {
+                    (
+                        i["width"].as_u64().unwrap_or(0),
+                        i["height"].as_u64().unwrap_or(0),
+                        i["bytes"].as_u64().unwrap_or(0),
+                    )
+                })
                 .collect();
-            let last = images.last().context("the model got no image")?;
-            let (w, hgt, bytes) = (
-                last["width"].as_u64().unwrap_or(0),
-                last["height"].as_u64().unwrap_or(0),
-                last["bytes"].as_u64().unwrap_or(u64::MAX),
-            );
             ensure!(
-                w.max(hgt) <= 2000 && bytes <= 3_932_160,
-                "the model's image: {w}×{hgt}, {bytes} bytes"
+                seen == vec![(300, 200, small_len)],
+                "the model got {seen:?}: only the small image, as it is"
             );
-            ensure!(hgt > w, "the EXIF rotation was not applied: {w}×{hgt}");
+            let text = with["text"].as_str().unwrap_or_default();
+            ensure!(
+                text.contains("<files_input>") && text.contains("<image_uploads>"),
+                "the rotated photo listed as a file and the small one as an image: {text}"
+            );
             let rows = timeline(&mut ws, &id).await?;
             let thumb = rows
                 .iter()

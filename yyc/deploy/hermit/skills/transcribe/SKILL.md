@@ -17,9 +17,11 @@ piece of sound of at most 30 seconds (longer pieces are cut mid-word). It finds 
 4. Each piece, several at a time (a script with 6 at once is right for a long recording):
    `jq -n --arg m "$M" --rawfile a <(base64 -w0 P.mp3) '{model:$m, temperature:0, input_audio:{data:$a, format:"mp3"}}' | curl -sS http://model/v1/audio/transcriptions -H 'Content-Type: application/json' -d @-`.
    Ask again for a piece that failed, or whose text is far longer than its speech could be (over 10 characters a
-   second). Music or noise without speech comes back empty: leave it out.
+   second). Music or noise without speech (a title sequence) comes back empty: leave it out, it needs no checking.
 5. Hong Kong Traditional characters: `python -m opencc -c s2hk -i raw.txt -o hk.txt`. Spoken Cantonese stays as spoken.
 6. The transcript: the pieces in order, each starting with its time in the recording as `[mm:ss]` (`[h:mm:ss]` past an
    hour). The model does not tell speakers apart: when the person wants speakers, label them from what is said
    (主持人, a guest's name) and say the labels are your reading. Proper names are the model's hearing: check people's
    and companies' names against the video's title, description or the web.
+7. Then send it. Re-cutting the pieces or comparing with on-screen subtitles is only for when the person asks for
+   more accuracy; a 20-minute recording should be back with them within about 10 minutes.

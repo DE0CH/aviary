@@ -7,7 +7,8 @@
 // With `appScheme` (a native app's scheme, app.config.js) it also answers the app's sign-in like pigeon's
 // /api/jarvis/app-signin after Access: straight back to the app with a token, so the Android app's emulator test
 // (scripts/android-app/emulator-test.mjs) signs in to it. `host` is where it listens (default 127.0.0.1); `quiet`
-// answers with nothing running (content.mjs `quiet`).
+// answers with nothing running (content.mjs `quiet`). `onRequest(method, path)` hears each request as it arrives (the
+// iPhone walk logs them, to tell a stand-in that never heard the app from an app that never asked).
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,10 +35,11 @@ const MIME = {
   ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".wasm": "application/wasm", ".ico": "image/x-icon",
 };
 
-export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null, quiet = false }) {
+export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme = null, quiet = false, onRequest = null }) {
   const root = path.resolve(appDir);
   if (quiet) content.quiet();
   const server = http.createServer((req, res) => {
+    onRequest?.(req.method, req.url);
     const url = new URL(req.url, "http://stand-in");
     if (appScheme && url.pathname === "/api/jarvis/app-signin") {
       const state = encodeURIComponent(url.searchParams.get("state") ?? "");
@@ -68,6 +70,7 @@ export function startStandIn({ appDir, port = 0, host = "127.0.0.1", appScheme =
   });
   const sockets = new WebSocketServer({ server, path: "/paseo-ws" });
   sockets.on("connection", (ws) => {
+    onRequest?.("WS", "/paseo-ws");
     const send = (message) => ws.send(JSON.stringify({ type: "session", message }));
     ws.on("message", (raw) => {
       const frame = JSON.parse(raw.toString());

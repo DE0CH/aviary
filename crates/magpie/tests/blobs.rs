@@ -690,7 +690,7 @@ async fn blob_locks(pool: &aviary_pg::Pool) -> i64 {
 
 #[tokio::test]
 async fn a_cancelled_upload_gives_its_blob_locks_back() {
-    // the bucket hangs; an image upload (with its model copy) is abandoned by its client mid-PUT: its locks go back
+    // the bucket hangs; an image upload is abandoned by its client mid-PUT: its locks go back
     // at once, and the GC can free the blob later
     let db = common::fresh_db("cancelled").await;
     let t = common::Tokens::new();
@@ -731,7 +731,7 @@ async fn a_cancelled_upload_gives_its_blob_locks_back() {
         "{} blob locks left after the uploads were abandoned",
         blob_locks(r.pool()).await
     );
-    // the same image again, through: then unreferenced and aged, the GC frees both blobs (a lock left on the session
+    // the same image again, through: then unreferenced and aged, the GC frees its blob (a lock left on the session
     // would keep the GC's exclusive lock from ever being had)
     let up = r
         .pigeon()
@@ -749,7 +749,7 @@ async fn a_cancelled_upload_gives_its_blob_locks_back() {
     sql.execute("update blobs set last_ref_at = now() - interval '2 days'", &[])
         .await
         .unwrap();
-    assert_eq!(gc::free(r.pool(), &r.app().blobs).await.unwrap(), 2);
+    assert_eq!(gc::free(r.pool(), &r.app().blobs).await.unwrap(), 1);
     assert_eq!(blob_locks(r.pool()).await, 0);
 }
 

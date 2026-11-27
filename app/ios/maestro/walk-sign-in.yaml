@@ -1,6 +1,7 @@
 # The iPhone walk's sign-in (scripts/ios-app/simulator-walk.mjs), against the stand-in for pigeon: iOS's prompt for the
 # server, Continue, and the stand-in answers the sign-in straight back to the app. Safe to run again: an app already
-# signed in (an earlier attempt that got as far as the token) skips to its conversation list's button.
+# signed in (an earlier attempt that got as far as the token) skips it. It ends at Continue: walk-signed-in.yaml,
+# run apart, waits for the app (scripts/ios-app/simulator-walk.mjs says why).
 appId: ${APP_ID}
 ---
 - launchApp
@@ -18,8 +19,6 @@ appId: ${APP_ID}
       - extendedWaitUntil:
           visible: ".*Wants to Use.*"
           timeout: 30000
-      - tapOn: "Continue"
-- extendedWaitUntil:
-    visible:
-      id: "menu-button"
-    timeout: 90000
+      - tapOn:
+          text: "Continue"
+          retryTapIfNoChange: false

@@ -1,0 +1,57 @@
+# The sandbox image's pins moved forward (Deyao, 2026-11-26: one commit, one image; images/sandbox/README.md): daily,
+# `sandbox-image pins` sets Debian's snapshot to today, Docker's and gh's newest releases and requirements.txt re-locked
+# at the newest versions. A change goes up as the branch claude/sandbox-pins-<date>, whose CI builds and tests the image
+# with the new pins; the gate merges it only when every workflow on it is green, so a pin moves only on a green run.
+name: sandbox-pins
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sandbox-pins
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # every curl in this workflow, its scripts included, reads .github/ci/.curlrc (retries)
+  CURL_HOME: ${{ github.workspace }}/.github/ci
+
+jobs:
+  pins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: main, persist-credentials: false}
+      - name: uv (the lock's resolver) and the tool
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv"
+          "$RUNNER_TEMP/uv/bin/pip" install -q uv==0.13.10
+          echo "$RUNNER_TEMP/uv/bin" >> "$GITHUB_PATH"
+          cargo build --release --locked -q --manifest-path tools/sandbox-image/Cargo.toml
+      - name: move the pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tools/sandbox-image/target/release/sandbox-image pins "$(date -u +%Y%m%dT000000Z)"
+      - name: the branch with the moved pins (the gate merges it once its CI is green)
+        env:
+          # the deploy key jarvis.yml pushes its release tags with: a push by the workflow token starts no workflow
+          PUSH_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- images/sandbox; then echo "the pins are the newest already"; exit 0; fi
+          git diff --stat -- images/sandbox | tee -a "$GITHUB_STEP_SUMMARY"
+          branch="claude/sandbox-pins-$(date -u +%Y%m%d)"
+          git -c user.name="aviary sandbox-pins" -c user.email="sandbox-pins@users.noreply.github.com" \
+            commit -q -m "sandbox: pins moved forward ($(date -u +%F))" -- images/sandbox
+          key=$RUNNER_TEMP/push-key
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$PUSH_KEY" > "$key"
+          GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          rm -f "$key"
+          echo "pushed $branch" | tee -a "$GITHUB_STEP_SUMMARY"

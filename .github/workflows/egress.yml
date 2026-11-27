@@ -8,7 +8,7 @@ name: egress
 # checked against the built one).
 on:
   push:
-    branches: ['**']  # every branch; not in the gate's list (merge.yml) yet
+    branches: ['**']  # every branch: the gate waits for it
     paths: ["egress/**", "crates/hermit/fixtures/catalogue-cases.json", "testing/conformance/**", "testing/mock-model/**",
             "deploy/images.json", ".github/workflows/egress.yml", "flake.nix", "flake.lock"]
   workflow_dispatch:
@@ -110,13 +110,19 @@ jobs:
           extra_nix_config: |
             extra-substituters = ${{ env.NIX_CACHE }}
             extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
-      - name: build the image (Nix, flake.nix egress-image; from the cache where it has it)
+      - name: build egress-image by Nix (from the cache where it has it; tried again on a failed download)
+        uses: ./.github/actions/nix-build
+        env:
+          # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
+          CHAT_COMMIT: ${{ needs.part.outputs.sha }}
+        with:
+          installables: .#egress-image
+      - name: the image, loaded (egress-image, built above)
         env:
           # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
           CHAT_COMMIT: ${{ needs.part.outputs.sha }}
         run: |
           set -euo pipefail
-          nix build --impure .#egress-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
           out=$(nix build --impure .#egress-image --no-link --print-out-paths)
           echo "OUT=$out" >> "$GITHUB_ENV"
           "$out" | docker load
@@ -208,13 +214,19 @@ jobs:
           extra_nix_config: |
             extra-substituters = ${{ env.NIX_CACHE }}
             extra-trusted-public-keys = aviary-nix-cache-1:FGNBBLWXtSaJL7163gqCJvlh131qDptMmiy4F4J5NTc=
-      - name: build the image (Nix, flake.nix egress-image; from the cache where it has it)
+      - name: build egress-image by Nix (from the cache where it has it; tried again on a failed download)
+        uses: ./.github/actions/nix-build
+        env:
+          # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
+          CHAT_COMMIT: ${{ needs.part.outputs.sha }}
+        with:
+          installables: .#egress-image
+      - name: the image, loaded (egress-image, built above)
         env:
           # the part's commit: CHAT_COMMIT in the image (egress's /version), its labels
           CHAT_COMMIT: ${{ needs.part.outputs.sha }}
         run: |
           set -euo pipefail
-          nix build --impure .#egress-image --no-link -L --fallback --option connect-timeout 30 --option download-attempts 5
           out=$(nix build --impure .#egress-image --no-link --print-out-paths)
           echo "OUT=$out" >> "$GITHUB_ENV"
           "$out" | docker load

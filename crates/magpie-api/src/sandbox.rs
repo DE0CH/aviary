@@ -503,9 +503,11 @@ pub struct StartImage {
     pub workspace_path: String,
     /// The original's blob.
     pub blob: BlobId,
-    /// The model copy's blob.
+    /// The original's blob again, and its MIME type: a `start_turn` image is one the model takes as it is (magpie 10.2;
+    /// any other reaches the agent as a file). Written for supervisors that read the image from them; removed once no
+    /// running sandbox has one.
     pub model_blob: BlobId,
-    /// The model copy's MIME type.
+    /// The original's MIME type again (with `model_blob`).
     pub model_mime: String,
 }
 
