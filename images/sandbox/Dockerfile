@@ -17,7 +17,7 @@ FROM node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab
 # sandbox-image tool (tools/sandbox-image) moves the pins forward, and its change merges once CI passes with it. The
 # sandbox's own apt (agents installing packages) reads the live mirrors: the image's sources are put back after the
 # last install below.
-ARG DEBIAN_SNAPSHOT=20261126T000000Z
+ARG DEBIAN_SNAPSHOT=20261127T000000Z
 RUN mv /etc/apt/sources.list.d/debian.sources /etc/apt/debian.sources.live \
  && printf '%s\n' \
       'Types: deb' "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" 'Suites: trixie trixie-updates' \
