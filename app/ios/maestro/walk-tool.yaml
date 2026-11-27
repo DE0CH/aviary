@@ -1,0 +1,43 @@
+# The iPhone walk's third part (scripts/ios-app/simulator-walk.mjs): the conversation with steps, its turn opened so
+# its tool calls show. The script reads where the first tool call's header is, then walk-tool-open.yaml opens it.
+appId: ${APP_ID}
+---
+# the Activity panel walk-activity.yaml left open goes back (its header's back button on a phone); no relaunch,
+# which would sign the app out (walk-list.yaml)
+- tapOn:
+    id: "header-back-button"
+- extendedWaitUntil:
+    visible:
+      id: "menu-button"
+    timeout: 90000
+# a tap on the list's button just after a screen change is sometimes not taken (the list stays shut: 2026-11-26,
+# once after sign-in, once after the Activity panel's back), so it is tapped again when the list does not show
+- waitForAnimationToEnd
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: "menu-button"
+      - extendedWaitUntil:
+          visible: "${STEPS}"
+          timeout: 10000
+- tapOn: "${STEPS}"
+- extendedWaitUntil:
+    visible:
+      id: "turn-summary"
+    timeout: 30000
+- tapOn:
+    id: "turn-summary"
+# the turn's tool calls are one group row ("Read 1 file"); it opens in place, as a tool call does
+- extendedWaitUntil:
+    visible:
+      id: "tool-call-group"
+    timeout: 15000
+- tapOn:
+    id: "tool-call-group"
+- extendedWaitUntil:
+    visible:
+      id: "tool-call-badge"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: tool-closed

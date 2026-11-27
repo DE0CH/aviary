@@ -1,0 +1,8 @@
+# The iPhone walk: a tap on the first tool call opens it in place (Deyao, 2026-11-20: no sheet on a phone); the script
+# then checks that its header stayed where the finger was.
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "tool-call-badge"
+- waitForAnimationToEnd
+- takeScreenshot: tool-open

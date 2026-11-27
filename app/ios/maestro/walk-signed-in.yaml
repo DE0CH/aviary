@@ -1,0 +1,9 @@
+# The iPhone walk, after walk-sign-in.yaml: the app is signed in, its conversation list's button on screen. A flow
+# of its own, so a fresh Maestro run (and XCTest runner) reads the screen once the sign-in sheet has gone
+# (scripts/ios-app/simulator-walk.mjs).
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: "menu-button"
+    timeout: 90000

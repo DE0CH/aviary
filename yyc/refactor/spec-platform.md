@@ -682,17 +682,21 @@ binary.
 
 ### 5.2 Images
 
-All `linux/amd64`, built with BuildKit, `SOURCE_DATE_EPOCH` = commit time and `rewrite-timestamp=true`, from the
-`dist/` directory of 5.1 (no compiler inside the image builds except magpie's stage).
+The service images are built by Nix (`flake.nix`, `nix build --impure .#<name>-image` with `AVIARY_REVISION` = the
+part's commit), for `linux/amd64` and `linux/arm64`, each natively on its own architecture; each is a pure function of
+the source, the lock files and nixpkgs, so a build is a lookup in the Nix cache (6.1). hermit-sandbox is built by
+BuildKit from `images/sandbox/Dockerfile` and the `dist/` of 5.1, `linux/amd64` only, `SOURCE_DATE_EPOCH` = commit time
+and `rewrite-timestamp=true`.
 
 | Image | Base | Content | User | Notes |
 |---|---|---|---|---|
-| `ghcr.io/de0ch/pigeon:<sha12>` | `gcr.io/distroless/static-debian12:nonroot` (pinned by digest) | `/usr/local/bin/pigeon` | 65532 | the app bundle is a separate image from claudecodeui (pigeon spec 17.1) |
-| `ghcr.io/de0ch/magpie:<sha12>` | `debian:bookworm-slim` (by digest) + `libheif1`, `ca-certificates` | `/usr/local/bin/magpie` | 10001 | |
-| `ghcr.io/de0ch/hermit:<sha12>` | distroless static nonroot | `hermit`, `juicefs` 1.4.1 CLI (sha256-checked) | 65532 | |
-| `ghcr.io/de0ch/sandboxd:<sha12>` | `busybox:1.37.0` (by digest) | `sandboxd`, `crane` 0.20.6, `fabric/host/gateway.sh`, a `/bin/sleep-forever` | root (the installer runs privileged, hermit spec 14.2) | gateway DaemonSet installer |
-| `ghcr.io/de0ch/hermit-sandbox:<sha12>` | `node:22-trixie-slim` (by digest) | hermit spec 17 + supervisor spec 3: tools, Python venv, fonts, Docker, Claude Code 2.1.304 at `/opt/claude-code`, `supervisor`, `supervisor-keeper`, `sandbox-secret` symlink | ENTRYPOINT keeper (PID 1, R12) | the slow layers are cached; the binaries are the last layer |
-| test images `ghcr.io/de0ch/aviary-testing:<sha12>` | distroless static | every `testing/*` binary (one image, the entrypoint picks by argv[0] symlink) | 65532 | used by the harness and by jarvis3's conformance job |
+| `ghcr.io/de0ch/pigeon:<sha12>` | distroless-like root (CA certificates, time zones, `/etc/passwd`) | `/usr/local/bin/pigeon` | 65532 | the app bundle is a separate image (pigeon spec 17.1) |
+| `ghcr.io/de0ch/magpie:<sha12>` | the same, with glibc and nixpkgs' libheif (HEVC decoder) | `/usr/local/bin/magpie` | 10001 | |
+| `ghcr.io/de0ch/hermit:<sha12>` | the same | `hermit`, `juicefs` 1.4.1 CLI (sha256-checked) | 65532 | |
+| `ghcr.io/de0ch/herald:<sha12>` | the same | `/usr/local/bin/herald` | 65532 | |
+| `ghcr.io/de0ch/sandboxd:<sha12>` | the same, with iproute2, nftables, wireguard-tools, procps, tar, zstd, crane, bash | `/usr/local/bin/sandboxd` | root | the gateway pod's image (sandboxd as its main process) |
+| `ghcr.io/de0ch/hermit-sandbox:<sha12>` | `node:22-trixie-slim` (by digest) | hermit spec 17 + supervisor spec 3: tools, Python venv, fonts, Docker, Claude Code at `/opt/claude-code`, `supervisor`, `supervisor-keeper`, `sandbox-secret` symlink | ENTRYPOINT keeper (PID 1, R12) | the slow layers are cached; the binaries are the last layer |
+| test images `ghcr.io/de0ch/aviary-testing:<sha12>` | distroless-like | every `testing/*` binary on PATH, no entrypoint (the command names the binary) | 65532 | used by the harness and by jarvis3's conformance job |
 
 ### 5.3 Labels (every image)
 
@@ -745,7 +749,7 @@ permissions: contents read (jobs that publish ask for packages: write, contents:
 | `test` | — | `cargo nextest run --workspace --locked` with service containers `ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie` (the production version) and MinIO (pinned by digest); env `AVIARY_TEST_DATABASE_URL`, `AVIARY_TEST_S3_*` (read only by test code). Covers every crate's unit and integration tests (magpie 20, hermit 24.2, pigeon 18.1-18.2 including the Node Paseo contract harness, supervisor 22's CI part with the fake `claude`) | 20 min |
 | `sandboxd-soak` | — | the 45 s soak of hermit spec 14.6 (two daemons with fake runsc/ip/nft/wg, hostile clients, RSS flat under budget) | 5 min |
 | `build` | — | 5.1: musl builds on the runner (rust-lld, no musl-gcc needed), magpie in a `debian:bookworm` job container; uploads artifact `dist` (binaries + SHA256SUMS) | 15 min |
-| `images` | build | builds every image of 5.2 with `load: true` and exports each as an OCI tar artifact `images`; GHA layer cache scopes per image | 15 min (sandbox cold 25) |
+| `images` | build | builds every image of 5.2 on an amd64 and an arm64 runner (the service images by Nix, from the Nix cache: bucket `de0ch-aviary-nix-cache`, signed by `aviary-nix-cache-1`, where this job adds what it built; hermit-sandbox by BuildKit with a GHA layer cache), runs each image's checks, and exports each as a tar artifact | 15 min (a cold Nix cache 90) |
 | `sandbox-smoke` | images | `images/sandbox/smoke.sh` against the built sandbox image under runc: hermit spec 17's list plus supervisor spec 22's image checks (keeper refuses to start without its token with the stated message; `claude` resolves to `/opt/claude-code/bin/claude`, root-owned; a test gateway sees Claude Code's model and MCP calls as proxied `http://model/…`, `http://tools/mcp`) | 8 min |
 | `gvisor` | images | installs `runsc` from DE0CH/gvisor release `precopy-20261021.2` (sha256-checked) as a Docker runtime and runs the sandbox image under it with `/dev/fuse`: the supervisor mounts `~/.claude`, a scripted turn against mock-model writes its transcript through FUSE into a test magpie, bytes compared (supervisor spec 22 items 1, 2, 4, 5 that need no AWS host) | 12 min |
 | `e2e` | images | the harness, section 7 (all scenarios in 7.8) | 25 min |
