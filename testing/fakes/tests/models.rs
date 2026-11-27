@@ -420,6 +420,7 @@ async fn magpie_commands_long_poll_and_acks() {
                 delivered: Some(true),
                 ..AckResult::default()
             },
+            by: None,
         },
     )
     .await

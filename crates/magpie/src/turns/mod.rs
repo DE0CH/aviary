@@ -386,6 +386,31 @@ async fn start_turn_row(db: &impl Db, turn: &Turn, lock: &str) -> Result<(bool, 
     Ok(row.map_or((true, true), |r| (r.get(0), r.get(1))))
 }
 
+/// The supervisor process that acknowledged the turn's `start_turn` (`AckRequest.by`): none for an agent-started turn,
+/// an unacknowledged one, or an ack from an older supervisor that does not name itself.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn start_turn_acked_by(db: &impl Db, turn: &Turn) -> Result<Option<magpie_api::sandbox::SupervisorProcess>> {
+    let Some(seq) = turn.start_cmd_seq else {
+        return Ok(None);
+    };
+    let row = db
+        .query_opt(
+            "select acked_by_boot, acked_by_restarts from commands where conversation_id = $1 and cmd_seq = $2",
+            &[&turn.conversation, &seq],
+        )
+        .await?;
+    Ok(row.and_then(|r| {
+        let boot: Option<String> = r.get(0);
+        let restarts: Option<i32> = r.get(1);
+        Some(magpie_api::sandbox::SupervisorProcess {
+            boot_id: boot?,
+            restarts: u32::try_from(restarts?).unwrap_or(0),
+        })
+    }))
+}
+
 /// A sha-256 as lower-case hex (a blob id).
 #[must_use]
 pub fn hex(bytes: &[u8]) -> String {

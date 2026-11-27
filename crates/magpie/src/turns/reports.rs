@@ -708,8 +708,24 @@ async fn reconcile_active(t: &Tx<'_>, c: &Locked, caller: &Sandbox, hb: &Heartbe
         tracing::info!(turn = %turn.id, "heartbeat reconciled: running");
         return running(t, c, caller, turn, &r).await;
     }
-    // 2: the supervisor no longer knows T
-    if acked && hb.state == HeartbeatState::Idle && hb.turn_id.is_none() && last.is_none_or(|l| l.id != turn.id) {
+    // 2: the supervisor no longer knows T: a process started after the one that accepted T says it is idle without
+    // it. A heartbeat of the accepting process itself is no evidence: it may have been built before the ack and
+    // landed after it (2026-11-27: a chaos run's turn failed 0.5 s after its start this way). An ack that does not
+    // name its process (an older supervisor) reads as before.
+    if acked
+        && hb.state == HeartbeatState::Idle
+        && hb.turn_id.is_none()
+        && last.is_none_or(|l| l.id != turn.id)
+        && super::start_turn_acked_by(t, turn)
+            .await?
+            .is_none_or(|p| p.succeeded_by(&hb.supervisor))
+    {
+        tracing::info!(
+            turn = %turn.id,
+            boot = %hb.supervisor.boot_id,
+            restarts = hb.supervisor.restarts,
+            "heartbeat reconciled: the sandbox no longer knows the turn"
+        );
         let e = ErrorInfo::new(DataCode::RunError, "the sandbox no longer knows this turn");
         return end::end(t, &c.person, turn, Ending::failed(e)).await;
     }

@@ -93,6 +93,8 @@ pub struct Magpie {
     pub blobs: Arc<Blobs>,
     /// The legacy-path set's metrics.
     pub legacy: crate::legacy::Metrics,
+    /// [`jobs::Intervals::preparing_after`], for the turn drivers this replica starts.
+    pub preparing_after: std::time::Duration,
 }
 
 impl Magpie {
@@ -211,6 +213,7 @@ impl Service {
                 hermit: hermit.clone(),
                 pod: cfg.pod.clone(),
                 draining: draining.clone(),
+                preparing_after: intervals.preparing_after,
             };
             jobs.push(turns::sweeper::start(driver.clone(), intervals.sweep));
             jobs.push(crate::schedules::fire::spawn(
@@ -237,6 +240,7 @@ impl Service {
                 this: this.clone(),
                 blobs,
                 legacy: cfg.legacy_metrics,
+                preparing_after: intervals.preparing_after,
             }),
             callers: cfg.callers,
             jobs,

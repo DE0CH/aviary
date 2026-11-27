@@ -225,6 +225,9 @@ pub struct Intervals {
     /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
     /// from a notification or a reconnect).
     pub requery: Duration,
+    /// How long a turn's sandbox may take before the preparing chip shows ([`limits::PREPARING_AFTER`]; a test of a
+    /// sandbox that is ready at once lengthens it, so that "ready first" does not depend on the test machine's speed).
+    pub preparing_after: Duration,
 }
 
 impl Default for Intervals {
@@ -241,6 +244,7 @@ impl Default for Intervals {
             blob_gc: limits::BLOB_GC_EVERY,
             schedules: crate::schedules::fire::EVERY,
             requery: limits::REQUERY,
+            preparing_after: limits::PREPARING_AFTER,
         }
     }
 }

@@ -142,6 +142,7 @@ pub fn fast() -> Intervals {
         sweep: magpie::limits::SWEEP_EVERY,
         schedules: Duration::from_millis(200),
         requery: magpie::limits::REQUERY,
+        preparing_after: magpie::limits::PREPARING_AFTER,
     }
 }
 
@@ -159,6 +160,7 @@ pub fn idle() -> Intervals {
         sweep: Duration::from_secs(3600),
         schedules: Duration::from_secs(3600),
         requery: magpie::limits::REQUERY,
+        preparing_after: magpie::limits::PREPARING_AFTER,
     }
 }
 

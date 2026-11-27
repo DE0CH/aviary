@@ -76,6 +76,8 @@ pub enum Item {
     Ack {
         seq: u64,
         result: AckResult,
+        /// the process acknowledging, as its heartbeats name it (magpie 8.5 rule 2)
+        by: Option<magpie_api::sandbox::SupervisorProcess>,
         done: Option<Done>,
     },
 }
@@ -535,8 +537,8 @@ impl Reporter {
                 })
                 .await;
             }
-            Item::Ack { seq, result, done } => {
-                let req = AckRequest { result };
+            Item::Ack { seq, result, by, done } => {
+                let req = AckRequest { result, by };
                 let ok = self
                     .retry(&what, || async {
                         match self.calls().ack_command(seq, &req).await {
@@ -751,6 +753,7 @@ mod tests {
         r.push(Item::Ack {
             seq,
             result: AckResult::default(),
+            by: None,
             done: None,
         });
         // 20 min in steps of the retry's longest pause: every step wakes the paused retries, and the next step waits

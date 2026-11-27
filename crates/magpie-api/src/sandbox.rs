@@ -568,6 +568,30 @@ pub struct AnswerAsk {
 pub struct AckRequest {
     /// The outcome.
     pub result: AckResult,
+    /// The supervisor process that acknowledges, as its heartbeats name it (`supervisor.bootId`, `.restarts`): a
+    /// heartbeat built before this ack can land after it, and only a process started after this one can have lost
+    /// the turn (magpie 8.5 rule 2). Absent from an older supervisor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<SupervisorProcess>,
+}
+
+/// One supervisor process of a sandbox: its boot and its keeper restarts within that boot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupervisorProcess {
+    /// Per boot.
+    pub boot_id: String,
+    /// Keeper restarts within the boot.
+    pub restarts: u32,
+}
+
+impl SupervisorProcess {
+    /// Whether `facts` (a heartbeat's) come from a process started after this one: another boot, or the same boot
+    /// after more keeper restarts. A heartbeat of this very process, or of one before it, is never that.
+    #[must_use]
+    pub fn succeeded_by(&self, facts: &SupervisorFacts) -> bool {
+        facts.boot_id != self.boot_id || facts.restarts > self.restarts
+    }
 }
 
 /// A command's outcome: the fields depend on the command.
@@ -1023,4 +1047,51 @@ pub struct SentFilesCommitted {
     pub kept: u32,
     /// The `files.sent` event's seq.
     pub seq: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn facts(boot: &str, restarts: u32) -> SupervisorFacts {
+        SupervisorFacts {
+            version: "supervisor-000000000000".into(),
+            boot_id: boot.into(),
+            restarts,
+        }
+    }
+
+    #[test]
+    fn only_a_later_process_can_have_lost_a_turn() {
+        let acked = SupervisorProcess {
+            boot_id: "b1".into(),
+            restarts: 2,
+        };
+        // the very process that acknowledged, in a heartbeat built before or after the ack
+        assert!(!acked.succeeded_by(&facts("b1", 2)));
+        // a process before it, whose heartbeat landed late
+        assert!(!acked.succeeded_by(&facts("b1", 1)));
+        // the keeper restarted it, or the sandbox booted again
+        assert!(acked.succeeded_by(&facts("b1", 3)));
+        assert!(acked.succeeded_by(&facts("b2", 0)));
+    }
+
+    #[test]
+    fn an_ack_without_its_process_reads_as_before() {
+        let old: AckRequest = serde_json::from_str(r#"{"result": {"delivered": true}}"#).unwrap();
+        assert_eq!(old.by, None);
+        let new = AckRequest {
+            result: AckResult::default(),
+            by: Some(SupervisorProcess {
+                boot_id: "b".into(),
+                restarts: 1,
+            }),
+        };
+        let v = serde_json::to_value(&new).unwrap();
+        assert_eq!(v["by"], serde_json::json!({"bootId": "b", "restarts": 1}));
+        assert!(
+            serde_json::to_value(AckRequest::default()).unwrap().get("by").is_none(),
+            "absent, not null"
+        );
+    }
 }

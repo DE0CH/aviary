@@ -2301,6 +2301,20 @@ async fn titles_go_to_the_model_and_back_in_the_ack() {
             .any(|c| c.param("cmdSeq") == Some("100") && c.body.as_ref().unwrap()["result"]["error"] == "unsupported")
     })
     .await;
+    // the ack names the process the heartbeats name: magpie's rule 2 compares the two (a heartbeat of the accepting
+    // process, built before the ack, is no evidence a turn was lost)
+    until("a heartbeat", || !calls.script().calls_to("heartbeat").is_empty()).await;
+    let ack = calls
+        .script()
+        .calls_to("ack_command")
+        .into_iter()
+        .find(|c| c.param("cmdSeq") == Some("100"))
+        .unwrap();
+    let hb = calls.script().calls_to("heartbeat").pop().unwrap();
+    let by = &ack.body.as_ref().unwrap()["by"];
+    let facts = &hb.body.as_ref().unwrap()["supervisor"];
+    assert!(by["bootId"].is_string(), "{by}");
+    assert_eq!((&by["bootId"], &by["restarts"]), (&facts["bootId"], &facts["restarts"]));
 }
 
 /// The conversation search's vectors (Deyao, 2026-11-17): the pieces magpie names go to the models route's embedding model

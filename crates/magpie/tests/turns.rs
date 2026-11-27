@@ -30,8 +30,8 @@ use magpie_api::errors::{DataCode, ErrorCode};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, CcFacts, CommandBody,
     CommandsQuery, CommandsResponse, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, PersonWaitEnd,
-    PersonWaitOpen, QuestionQuery, QuestionRequest, ReportError, ReportedState, SupervisorFacts, TaskReportEvent,
-    TasksReport, TurnStateReport,
+    PersonWaitOpen, QuestionQuery, QuestionRequest, ReportError, ReportedState, SupervisorFacts, SupervisorProcess,
+    TaskReportEvent, TasksReport, TurnStateReport,
 };
 use magpie_api::turns::{AgentPermissionResponse, Behavior, SendRequest, TurnOrigin, TurnOutcome, TurnPhase};
 use magpie_api::{Admitted, Timestamp};
@@ -51,6 +51,10 @@ struct World {
 
 impl World {
     async fn new(test: &str, ready_after: Option<Duration>) -> Self {
+        Self::with_intervals(test, ready_after, common::idle()).await
+    }
+
+    async fn with_intervals(test: &str, ready_after: Option<Duration>, iv: magpie::jobs::Intervals) -> Self {
         let db = common::fresh_db(test).await;
         let t = common::Tokens::new();
         let fake = FakeHermit::unguarded(HermitConfig {
@@ -58,7 +62,7 @@ impl World {
             ..HermitConfig::default()
         });
         let hermit = fake.serve().await.unwrap();
-        let a = common::replica_with(&db.url, &t, &hermit.url(), common::idle()).await;
+        let a = common::replica_with(&db.url, &t, &hermit.url(), iv).await;
         sweeper::availability_tick(a.pool()).await.unwrap();
         Self { db, t, hermit, a }
     }
@@ -240,8 +244,22 @@ impl Sup {
             .unwrap()
     }
 
+    /// Acks as a supervisor does: naming its process (the one its heartbeats name, `boot` with no restarts).
     async fn ack(&self, seq: u64, result: AckResult) {
-        self.calls().ack_command(seq, &AckRequest { result }).await.unwrap();
+        self.ack_by(
+            seq,
+            result,
+            Some(SupervisorProcess {
+                boot_id: "boot".into(),
+                restarts: 0,
+            }),
+        )
+        .await;
+    }
+
+    /// Acks as the process `by` (None: an older supervisor, which does not name itself).
+    async fn ack_by(&self, seq: u64, result: AckResult, by: Option<SupervisorProcess>) {
+        self.calls().ack_command(seq, &AckRequest { result, by }).await.unwrap();
     }
 
     async fn report(&self, turn: Uuid, state: ReportedState) -> Result<(), ClientError> {
@@ -252,6 +270,11 @@ impl Sup {
         self.heartbeat_waiting(turn, state, last, false).await;
     }
 
+    /// A heartbeat of the process after `restarts` keeper restarts (the others are `boot`'s first process).
+    async fn heartbeat_after(&self, restarts: u32, turn: Option<Uuid>, state: HeartbeatState) {
+        self.heartbeat_of(turn, state, None, false, restarts).await;
+    }
+
     /// A heartbeat that says whether a command waits on the person.
     async fn heartbeat_waiting(
         &self,
@@ -259,6 +282,17 @@ impl Sup {
         state: HeartbeatState,
         last: Option<HeartbeatLastTurn>,
         waiting: bool,
+    ) {
+        self.heartbeat_of(turn, state, last, waiting, 0).await;
+    }
+
+    async fn heartbeat_of(
+        &self,
+        turn: Option<Uuid>,
+        state: HeartbeatState,
+        last: Option<HeartbeatLastTurn>,
+        waiting: bool,
+        restarts: u32,
     ) {
         self.calls()
             .heartbeat(&Heartbeat {
@@ -271,7 +305,7 @@ impl Sup {
                 supervisor: SupervisorFacts {
                     version: "supervisor-000000000000".into(),
                     boot_id: "boot".into(),
-                    restarts: 0,
+                    restarts,
                 },
                 cc: CcFacts {
                     quota_exceeded: false,
@@ -294,18 +328,31 @@ impl Sup {
 
     /// Takes the turn's `start_turn` and acks it (no `running` report).
     async fn take(&self, turn: Uuid) {
+        self.take_by(
+            turn,
+            Some(SupervisorProcess {
+                boot_id: "boot".into(),
+                restarts: 0,
+            }),
+        )
+        .await;
+    }
+
+    /// Takes the turn's `start_turn`, acking it as the process `by` (None: an older supervisor).
+    async fn take_by(&self, turn: Uuid, by: Option<SupervisorProcess>) {
         let r = self.poll(0, 5_000).await;
         let start = r
             .commands
             .iter()
             .find(|c| matches!(c.body, CommandBody::StartTurn(_)) && c.turn_id == Some(turn))
             .expect("start_turn");
-        self.ack(
+        self.ack_by(
             start.cmd_seq,
             AckResult {
                 delivered: Some(true),
                 ..AckResult::default()
             },
+            by,
         )
         .await;
     }
@@ -335,14 +382,20 @@ fn driver(r: &common::Replica) -> Driver {
 
 #[tokio::test]
 async fn a_turn_runs_from_admission_to_completion() {
-    let w = World::new("turn_happy", Some(Duration::ZERO)).await;
+    // a sandbox that is ready at once, and a chip delay no test machine reaches: "ready first" is then the order of
+    // events, not a race of the machine's speed against 1 s (2026-11-27: it showed the chip under a parallel run)
+    let iv = magpie::jobs::Intervals {
+        preparing_after: Duration::from_secs(3600),
+        ..common::idle()
+    };
+    let w = World::with_intervals("turn_happy", Some(Duration::ZERO), iv).await;
     let conv = w.conversation().await;
     let turn = w.send(conv, "m1", "幫我整理今日有關港珠澳大橋嘅新聞").await;
     assert!(w.state_is(turn, "starting").await, "hermit's ready reached the driver");
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.run.state, RunState::Running, "a starting turn shows as running");
     assert_eq!(c.turn.as_ref().unwrap().id, turn);
-    assert_eq!(c.sandbox, None, "ready within 1 s: no preparing chip");
+    assert_eq!(c.sandbox, None, "ready before the chip's delay: no preparing chip");
     let sup = w.supervisor(conv).await;
     let cmds = sup.poll(0, 0).await;
     let kinds: Vec<_> = cmds.commands.iter().map(|c| c.body.type_name().unwrap()).collect();
@@ -1228,6 +1281,47 @@ async fn the_watchdog_counts_only_time_magpie_was_available() {
 }
 
 #[tokio::test]
+async fn a_heartbeat_built_before_the_ack_does_not_end_the_turn() {
+    let w = World::new("turn_stale_heartbeat", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let t1 = w.send(conv, "m1", "hi").await;
+    assert!(w.state_is(t1, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.run(t1).await;
+    sup.report(t1, ReportedState::Completed).await.unwrap();
+    // the supervisor takes T; the heartbeat it built a moment before (idle, the last turn t1) lands after the ack
+    // (2026-11-27: a chaos run's turn failed 0.5 s after its start this way)
+    let t2 = w.send(conv, "m2", "hi").await;
+    assert!(w.state_is(t2, "starting").await);
+    sup.take(t2).await;
+    let before = Some(HeartbeatLastTurn {
+        id: t1,
+        outcome: TurnOutcome::Completed,
+        error: None,
+    });
+    sup.heartbeat(None, HeartbeatState::Idle, before.clone()).await;
+    assert_eq!(
+        w.turn(t2).await.0,
+        "starting",
+        "a heartbeat of the process that accepted the turn is no evidence that it lost it"
+    );
+    sup.report(t2, ReportedState::Running).await.unwrap();
+    assert_eq!(
+        w.turn(t2).await.0,
+        "running",
+        "its running report finds the turn as it was"
+    );
+    sup.report(t2, ReportedState::Completed).await.unwrap();
+    // an older supervisor's ack names no process: its idle heartbeat reads as before
+    let t3 = w.send(conv, "m3", "hi").await;
+    assert!(w.state_is(t3, "starting").await);
+    sup.take_by(t3, None).await;
+    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    let (s, c, _) = w.turn(t3).await;
+    assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.error")));
+}
+
+#[tokio::test]
 async fn heartbeats_reconcile_lost_reports() {
     let w = World::new("turn_reconcile", Some(Duration::ZERO)).await;
     let conv = w.conversation().await;
@@ -1251,13 +1345,13 @@ async fn heartbeats_reconcile_lost_reports() {
     .await;
     let (s, c, _) = w.turn(t1).await;
     assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.oom")));
-    // 2: the sandbox no longer knows the turn
+    // 2: the sandbox no longer knows the turn: the keeper restarted the supervisor, and the new process is idle
     let t2 = w.send(conv, "m2", "hi").await;
     assert!(w.state_is(t2, "starting").await);
     sup.run(t2).await;
     sup.heartbeat(Some(t2), HeartbeatState::Running, None).await;
     assert_eq!(w.turn(t2).await.0, "running");
-    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    sup.heartbeat_after(1, None, HeartbeatState::Idle).await;
     let (s, c, _) = w.turn(t2).await;
     assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.error")));
     // 3: a turn Claude Code started whose report never landed
@@ -1295,11 +1389,11 @@ async fn heartbeats_reconcile_lost_reports() {
     )
     .await;
     assert_eq!(w.turn(t5).await.0, "completed", "lastTurn.id == T ends it");
-    // ... or the supervisor restarted without it
+    // ... or the supervisor restarted without it (the keeper's next process, idle)
     let t6 = w.send(conv, "m6", "hi").await;
     assert!(w.state_is(t6, "starting").await);
     sup.take(t6).await;
-    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    sup.heartbeat_after(1, None, HeartbeatState::Idle).await;
     let (s, c, _) = w.turn(t6).await;
     assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.error")));
     // 4: held, then idle

@@ -2267,6 +2267,7 @@ impl Driver {
             Item::Ack {
                 seq,
                 result,
+                by: Some(self.process()),
                 done: Some(Box::new(move |ok| {
                     if let Some(d) = me.upgrade() {
                         lock(&d.inflight).remove(&seq);
@@ -3252,12 +3253,27 @@ impl Driver {
                 })
             }),
             generation: u64::from(st.live.as_ref().map_or(st.last_gen, |g| g.n)),
-            supervisor: SupervisorFacts {
-                version: crate::hermit::version(),
-                boot_id: ctx.map(|c| c.boot_id.clone()).unwrap_or_default(),
-                restarts: ctx.map_or(0, |c| c.restarts),
+            supervisor: {
+                let p = Self::process_of(ctx);
+                SupervisorFacts {
+                    version: crate::hermit::version(),
+                    boot_id: p.boot_id,
+                    restarts: p.restarts,
+                }
             },
             cc: self.transcript.facts(),
+        }
+    }
+
+    /// This supervisor process, as its heartbeats and its acks name it: both must compare as the same process
+    fn process(&self) -> magpie_api::sandbox::SupervisorProcess {
+        Self::process_of(self.ctx())
+    }
+
+    fn process_of(ctx: Option<&Ctx>) -> magpie_api::sandbox::SupervisorProcess {
+        magpie_api::sandbox::SupervisorProcess {
+            boot_id: ctx.map(|c| c.boot_id.clone()).unwrap_or_default(),
+            restarts: ctx.map_or(0, |c| c.restarts),
         }
     }
 

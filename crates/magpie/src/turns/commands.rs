@@ -131,12 +131,14 @@ pub async fn ack(pool: &aviary_pg::Pool, caller: &Sandbox, cmd_seq: u64, req: Ac
     let req = &req;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
+        let by_boot = req.by.as_ref().map(|b| b.boot_id.as_str());
+        let by_restarts = req.by.as_ref().map(|b| i32::try_from(b.restarts).unwrap_or(i32::MAX));
         let row = t
             .query_opt(
-                "update commands set acked_at = now(), result = $3
+                "update commands set acked_at = now(), result = $3, acked_by_boot = $4, acked_by_restarts = $5
                  where conversation_id = $1 and cmd_seq = $2 and acked_at is null
                  returning type",
-                &[&c.id, &seq, &result],
+                &[&c.id, &seq, &result, &by_boot, &by_restarts],
             )
             .await?;
         let Some(row) = row else {

@@ -55,6 +55,8 @@ pub struct Driver {
     pub pod: String,
     /// The replica's drain: drivers stop (their claims are handed back by the drain).
     pub draining: aviary_core::drain::Draining,
+    /// How long the sandbox may take before the preparing chip shows ([`limits::PREPARING_AFTER`]).
+    pub preparing_after: std::time::Duration,
 }
 
 impl Driver {
@@ -66,6 +68,7 @@ impl Driver {
             hermit: app.hermit.clone(),
             pod: app.pod.clone(),
             draining: app.draining.clone(),
+            preparing_after: app.preparing_after,
         }
     }
 }
@@ -433,7 +436,7 @@ pub async fn drive(d: &Driver, turn: Uuid) -> Result<()> {
     let Some(c) = claim(d, turn).await? else {
         return Ok(());
     };
-    let preparing_at = c.created_at + limits::PREPARING_AFTER;
+    let preparing_at = c.created_at + d.preparing_after;
     let preparing = async {
         tokio::time::sleep(until(preparing_at)).await;
         if let Err(e) = step_preparing(d, c.conversation, turn).await {
