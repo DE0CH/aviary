@@ -863,6 +863,10 @@ fn admits(inner: &Arc<Inner>, sandbox: Uuid) -> bool {
 }
 
 async fn refresh_liveness(inner: Arc<Inner>, sandbox: Uuid) {
+    // an answer is as old as its question: hermit answered for the moment it was asked, so its age (and the TTL)
+    // counts from then, however long the lookup took. Stamped on arrival, an answer the gateway's clock had moved
+    // past during the lookup hid what hermit said next for another whole TTL.
+    let asked = inner.cfg.clock.now().into_std();
     let mut lookup = lookup_liveness(&inner, sandbox).await;
     if inner.cfg.faults.hermit_failure_refuses && lookup == Lookup::Failed {
         lookup = Lookup::Unknown;
@@ -870,7 +874,7 @@ async fn refresh_liveness(inner: Arc<Inner>, sandbox: Uuid) {
     let now = inner.cfg.clock.now().into_std();
     let mut live = lock(&inner.live);
     let e = live.entry(sandbox).or_default();
-    e.view.update(&lookup, now);
+    e.view.update(&lookup, asked);
     e.refreshing = false;
     e.retry_at = (lookup == Lookup::Failed).then(|| now + LIVENESS_RETRY);
 }

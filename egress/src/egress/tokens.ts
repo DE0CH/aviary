@@ -245,7 +245,7 @@ const LIVENESS_RETRY_MS = 2000;
 const LIVENESS_FORGET_MS = 600_000;
 
 interface LiveEntry {
-  /** the last definitive answer (200's `live`, or false for a 404) and when it came */
+  /** the last definitive answer (200's `live`, or false for a 404) and when it was asked for */
   live: boolean | null;
   at: number;
   refreshing: boolean;
@@ -417,6 +417,8 @@ export class SandboxTokens {
     const due = e.live === null || now - e.at >= LIVENESS_TTL_MS;
     if (!due || e.refreshing || now < e.retryAt) return;
     e.refreshing = true;
+    // an answer is as old as its question: its TTL counts from when the lookup was sent, however long it took
+    const asked = this.#now();
     void this.#lookup(id).then((v) => {
       e.refreshing = false;
       if (v === null) {
@@ -425,7 +427,7 @@ export class SandboxTokens {
         return;
       }
       e.live = v;
-      e.at = this.#now();
+      e.at = asked;
       e.retryAt = 0;
     });
   }

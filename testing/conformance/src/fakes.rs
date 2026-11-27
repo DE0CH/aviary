@@ -131,10 +131,20 @@ struct St {
     last_key_fetch: Mutex<Option<Instant>>,
     liveness: Mutex<HashMap<Uuid, Sbx>>,
     liveness_lookups: Mutex<HashMap<Uuid, u64>>,
+    holds: Mutex<HashMap<Uuid, Hold>>,
     outage: Mutex<Outage>,
     hermit_own: Mutex<Option<OwnListener>>,
     seen: Mutex<Vec<Seen>>,
     first_byte: Mutex<HashMap<String, Instant>>,
+}
+
+/// A held liveness lookup ([`Fakes::hold_liveness`]): hermit works out its answer when the lookup arrives and sends it
+/// only once released, so a check decides what happens between the question and the answer.
+#[derive(Debug)]
+struct Hold {
+    /// how many lookups are waiting
+    held: tokio::sync::watch::Sender<u64>,
+    released: tokio::sync::watch::Sender<bool>,
 }
 
 /// hermit's own listener: its address, and the server while hermit is not refusing.
@@ -178,6 +188,7 @@ impl Fakes {
                 last_key_fetch: Mutex::new(None),
                 liveness: Mutex::new(HashMap::new()),
                 liveness_lookups: Mutex::new(HashMap::new()),
+                holds: Mutex::new(HashMap::new()),
                 outage: Mutex::new(Outage::Up),
                 hermit_own: Mutex::new(None),
                 seen: Mutex::new(Vec::new()),
@@ -252,6 +263,34 @@ impl Fakes {
     pub fn flip(&self, sandbox: Uuid, live: Live) {
         if let Some(s) = lock(&self.st.liveness).get_mut(&sandbox) {
             s.live = live;
+        }
+    }
+
+    /// Holds `sandbox`'s liveness lookups from now on: each answer is worked out when its lookup arrives (as hermit
+    /// stands then) and sent once [`Fakes::release_liveness`] is called.
+    pub fn hold_liveness(&self, sandbox: Uuid) {
+        lock(&self.st.holds).insert(
+            sandbox,
+            Hold {
+                held: tokio::sync::watch::channel(0).0,
+                released: tokio::sync::watch::channel(false).0,
+            },
+        );
+    }
+
+    /// Waits until a lookup of `sandbox` is being held (its answer already worked out), however long that takes: the
+    /// gateway's lookup is then in flight.
+    pub async fn held(&self, sandbox: Uuid) {
+        let rx = lock(&self.st.holds).get(&sandbox).map(|h| h.held.subscribe());
+        if let Some(mut rx) = rx {
+            let _ = rx.wait_for(|n| *n > 0).await;
+        }
+    }
+
+    /// Sends the held answers of `sandbox`; later lookups are answered at once.
+    pub fn release_liveness(&self, sandbox: Uuid) {
+        if let Some(h) = lock(&self.st.holds).remove(&sandbox) {
+            h.released.send_replace(true);
         }
     }
 
@@ -435,7 +474,23 @@ async fn handle(st: Arc<St>, forced: Option<Name>, req: Request) -> Response {
     }
 
     match name {
-        Name::Hermit => hermit(&st, &parts.method, &path),
+        Name::Hermit => {
+            let answer = hermit(&st, &parts.method, &path);
+            // a held lookup: the answer stands as hermit was when it arrived, and goes out once released
+            let wait = path
+                .strip_prefix("/v1/sandbox-tokens/")
+                .and_then(|id| id.parse::<Uuid>().ok())
+                .and_then(|id| {
+                    lock(&st.holds).get(&id).map(|h| {
+                        h.held.send_modify(|n| *n += 1);
+                        h.released.subscribe()
+                    })
+                });
+            if let Some(mut released) = wait {
+                let _ = released.wait_for(|r| *r).await;
+            }
+            answer
+        }
         Name::Magpie => {
             if path == "/v1/sandbox/poll" {
                 let ms = query_u64(&pq, "ms").unwrap_or(0);

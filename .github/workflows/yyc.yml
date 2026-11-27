@@ -84,6 +84,7 @@ jobs:
           kubeconform -strict -summary -kubernetes-version 1.36.5 -schema-location default -schema-location "$CRDS" render.yaml
       - name: switches, zero-downtime shape, pins, policies, gateway config, placement, sizes, one cluster (2-4, 6, 8, 13)
         run: python3 yyc/tests/check_deploy.py --folder "$FOLDER" --render render.json --online --main-only pigeon-app
+      - uses: ./.github/actions/runner-apt
       - name: the checks catch their planted violations
         env: {RENDER: render.json}
         run: |

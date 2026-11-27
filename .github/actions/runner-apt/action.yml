@@ -1,0 +1,14 @@
+# The runner's apt reads Ubuntu's own archive alone: GitHub's runner image also carries packages.microsoft.com (and
+# other vendors'), which no job installs from, and an update fails on any source that fails (a 403 from
+# packages.microsoft.com turned a ci run's fabric-host red, 2026-11-26). Used before every runner-side apt-get update,
+# and before the fabric host recipe (fabric/host/setup.sh runs one on the runner): a fabric host has its
+# distribution's sources alone.
+name: runner-apt
+description: Leaves the runner's apt with Ubuntu's own sources only
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo find /etc/apt/sources.list.d -mindepth 1 ! -name ubuntu.sources -print -delete
+        test -s /etc/apt/sources.list.d/ubuntu.sources || test -s /etc/apt/sources.list

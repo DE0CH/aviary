@@ -161,6 +161,7 @@ jobs:
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+      - uses: ./.github/actions/runner-apt
       - name: libheif (magpie's HEIF/AVIF decoder; ubuntu 24.04's 1.17 is libheif-rs's minimum, feature v1_17)
         run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev
       - name: gitleaks 8.30.1
@@ -203,6 +204,7 @@ jobs:
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-nextest@0.9.150
+      - uses: ./.github/actions/runner-apt
       - name: libheif with its HEVC decoder (magpie's HEIC uploads and previews)
         run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev libheif-plugin-libde265
       - name: postgres (the production version, TLS on; testing/ci-services)
@@ -260,6 +262,7 @@ jobs:
           url=$(cargo run --locked -q -p ci-services -- postgres-sync ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3 5432)
           echo "::add-mask::$url"
           echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/runner-apt
       - name: libheif (magpie's HEIF/AVIF decoder)
         run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends libheif-dev
       - name: s3 (every magpie replica has a bucket; versitygw as in the test job)
@@ -307,6 +310,7 @@ jobs:
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: ./.github/actions/runner-apt
       - name: musl C compiler
         run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends musl-tools
       - name: sandboxd (static musl, profile sandboxd)
@@ -346,6 +350,7 @@ jobs:
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: ./.github/actions/runner-apt
       - name: musl C compiler (cc-rs builds ring's C with it; .cargo/config.toml sets CC_<arch>_unknown_linux_musl)
         run: sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends musl-tools
       - name: musl canary (rustls/ring, reqwest, tokio-postgres-rustls, AWS SDK client; linked static and run)
@@ -486,6 +491,7 @@ jobs:
           g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.95.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
           printf '%s' "$g" > "$RUNNER_TEMP/gw-bad.json"
           if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" "sandboxd:$SHA12"; then echo "the image started on a bad host.json" >&2; exit 1; fi
+      - uses: ./.github/actions/runner-apt
       - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
         run: |
           sudo apt-get -o Acquire::Retries=5 update -q && sudo apt-get -o Acquire::Retries=5 install -y -q --no-install-recommends wireguard-tools nftables
@@ -925,6 +931,7 @@ jobs:
       # first DNS query: "Could not resolve host"); a fabric host runs no Docker, so the runner is put back to accept
       - name: forwarding as on a fabric host (no Docker's FORWARD DROP)
         run: sudo iptables -S FORWARD | head -1 && sudo iptables -P FORWARD ACCEPT
+      - uses: ./.github/actions/runner-apt
       - name: the runner as a fabric host (fabric-replica up)
         run: sudo --preserve-env=CURL_HOME target/release/fabric-replica up --hermit-json "$RUNNER_TEMP/hermit.json" --aviary .
       - name: the checks (egress, pause, freeze to S3 and thaw, delete paused)
@@ -984,6 +991,7 @@ jobs:
           docker buildx build . -f session-image/Dockerfile --push --tag "$IMAGE" \
             --label "org.opencontainers.image.source=https://github.com/DE0CH/jarvis4" \
             --cache-from type=gha,scope=session-pin --cache-to type=gha,mode=max,scope=session-pin,ignore-error=true
+      - uses: ./.github/actions/runner-apt
       - name: tools (crane, flyctl, the Rust toolchain of jarvis4's rust/, WireGuard)
         run: |
           set -euo pipefail

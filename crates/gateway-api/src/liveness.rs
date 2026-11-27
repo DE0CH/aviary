@@ -22,7 +22,7 @@ pub enum Lookup {
 /// The cached view of one sandbox id.
 #[derive(Clone, Debug, Default)]
 pub struct View {
-    /// The last definitive answer and when it came.
+    /// The last definitive answer and when it was asked for.
     last: Option<(bool, Instant)>,
 }
 
@@ -32,11 +32,12 @@ impl View {
         Self::default()
     }
 
-    /// Takes a lookup's outcome; a failure changes nothing.
-    pub fn update(&mut self, lookup: &Lookup, now: Instant) {
+    /// Takes a lookup's outcome, `asked` being when the lookup was sent (an answer is as old as its question, so the
+    /// TTL counts from then, however long the answer took); a failure changes nothing.
+    pub fn update(&mut self, lookup: &Lookup, asked: Instant) {
         match lookup {
-            Lookup::Answer(a) => self.last = Some((a.live, now)),
-            Lookup::Unknown => self.last = Some((false, now)),
+            Lookup::Answer(a) => self.last = Some((a.live, asked)),
+            Lookup::Unknown => self.last = Some((false, asked)),
             Lookup::Failed => {}
         }
     }
